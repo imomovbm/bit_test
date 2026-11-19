@@ -1,0 +1,101 @@
+# TestDuel
+
+Foydalanuvchilar o'rtasida test bo'yicha bellashuv (duel) va mustaqil mashq qilish uchun veb-ilova.
+
+## Imkoniyatlar
+
+- **Duel** — ikki foydalanuvchi bitta mavzuni tanlaydi, har biriga 15 ta savol beriladi, har bir savolga 15 soniya.
+  - G'olib — ko'proq to'g'ri javob bergan; teng bo'lsa — tezroq javob bergan.
+  - Raqib aloqasi uzilsa yoki 30 soniya davomida javob bermasa — ikkinchi ishtirokchi g'olib.
+- **Taklif havolasi** — onlayn bo'lmagan do'stni duelga havola orqali chaqirish.
+- **Mashq rejimi** — vaqt cheklovisiz 10 / 30 / 50 yoki barcha savollar.
+- **Reyting** va shaxsiy statistika.
+- **Admin panel** — `.txt` test fayllarini yuklash (har yuklashda mavzu nomi so'raladi).
+- Oddiy ro'yxatdan o'tish (login + parol), yorug'/qorong'i rejim, mobil qurilmalarga moslashgan.
+
+## Ishga tushirish
+
+Python 3.11+ kerak.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python run.py
+```
+
+Brauzerda oching: <http://localhost:8080>
+
+**Birinchi ro'yxatdan o'tgan foydalanuvchi avtomatik ravishda administrator bo'ladi.**
+Ma'lumotlar bazasi (SQLite) `data/testduel.db` faylida saqlanadi.
+
+## Test fayli formati
+
+```
+Savol matni
+====
+Variant
+====
+#To'g'ri variant
+====
+Variant
+++++
+Keyingi savol
+====
+...
+```
+
+- savollar `++++` bilan ajratiladi;
+- savol matni va variantlar `====` bilan ajratiladi;
+- to'g'ri variant oldiga `#` qo'yiladi (variant matni o'zi `#` bilan boshlansa — `\#`).
+
+## Sozlamalar (muhit o'zgaruvchilari)
+
+| O'zgaruvchi | Standart | Tavsif |
+|---|---|---|
+| `TD_HOST` | `0.0.0.0` | Tinglanadigan manzil |
+| `TD_PORT` (yoki `PORT`) | `8080` | Port |
+| `TD_DATA_DIR` | `./data` | Ma'lumotlar papkasi |
+| `TD_DB_PATH` | `$TD_DATA_DIR/testduel.db` | SQLite fayli |
+| `TD_ADMINS` | — | Vergul bilan ajratilgan loginlar; ro'yxatdan o'tganda admin bo'ladi |
+| `TD_DUEL_QUESTIONS` | `15` | Dueldagi savollar soni |
+| `TD_QUESTION_TIME` | `15` | Bitta savol uchun vaqt (soniya) |
+| `TD_AFK_LIMIT` | `30` | Javobsiz qolish chegarasi (soniya) |
+| `TD_DISCONNECT_GRACE` | `10` | Aloqa uzilganda qaytish uchun vaqt (soniya) |
+
+Misol: `TD_PORT=9000 TD_ADMINS=bekzod python run.py`
+
+## Serverga joylashtirish
+
+Ilova bitta jarayonda ishlaydi (duel holati xotirada saqlanadi), shuning uchun **bitta** nusxada ishga tushiring.
+Nginx orqasida ishlatganda WebSocket uchun quyidagilarni qo'shing:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_read_timeout 3600s;
+}
+```
+
+Taklif havolalari to'g'ri ishlashi uchun saytni domen orqali (HTTPS tavsiya etiladi) oching.
+
+## Testlar
+
+```bash
+pip install pytest
+python -m pytest
+```
+
+## Loyiha tuzilishi
+
+```
+app/        backend (aiohttp): server, REST API, WebSocket, duel mexanizmi, fayl parseri, SQLite
+static/     frontend (HTML/CSS/JS)
+tests/      testlar
+run.py      ishga tushirish nuqtasi
+```
