@@ -11,7 +11,7 @@ Foydalanuvchilar o'rtasida test bo'yicha bellashuv (duel) va mustaqil mashq qili
 - **Mashq rejimi** — vaqt cheklovisiz 10 / 30 / 50 yoki barcha savollar.
 - **Balloon Pop** — sinfda bitta ekranda (proyektor/doska) o'ynaladigan jamoaviy o'yin (pastda batafsil).
 - **Reyting** va shaxsiy statistika.
-- **Admin panel** — `.txt` test fayllarini yuklash (har yuklashda mavzu nomi so'raladi).
+- **Boshqaruv paneli** (faqat administratorlar uchun) — test mavzularini yuklash va foydalanuvchilarni boshqarish (pastda batafsil).
 - Oddiy ro'yxatdan o'tish (login + parol), yorug'/qorong'i rejim, mobil qurilmalarga moslashgan.
 
 ## Ishga tushirish
@@ -43,7 +43,8 @@ O'yinni o'qituvchi bitta ekranda boshqaradi (proyektor, interaktiv doska yoki ko
 5. **Akulalar** — sharlari tugagan jamoa suvga tushadi va akulaga yem bo'ladi. Havoda qolgan jamoa g'olib.
 
 O'yin boshida tanlanadi: mavzu, ikki jamoaning nomi va rangi (8 ta rang), har bir jamoaga sharlar soni
-(10–30) va savolga javob vaqti (cheklovsiz, 20, 30 yoki 60 soniya).
+(5 dan 50 gacha istalgan son — yozib kiritiladi yoki tayyor variantlardan tanlanadi) va savolga javob vaqti
+(cheklovsiz, 20, 30 yoki 60 soniya).
 
 - O'yin holati serverda saqlanadi — sahifa yangilansa yoki brauzer yopilsa ham o'yin davom etadi.
 - Tosh-qaychi-qog'oz natijasi xato belgilansa — «Orqaga»; savol mos kelmasa — «Boshqa savol».
@@ -51,6 +52,22 @@ O'yin boshida tanlanadi: mavzu, ikki jamoaning nomi va rangi (8 ta rang), har bi
 - To'liq ekran rejimi (`F` tugmasi), klaviatura: `1`/`2` — tosh-qaychi-qog'oz g'olibi,
   `1–4` yoki `A–D` — javob, `Probel`/`Enter` — zar tashlash va davom etish.
 - Oxirgi o'yinlar tarixi va «Qayta o'ynash» (xuddi shu sozlamalar bilan yangi o'yin).
+
+## Boshqaruv paneli
+
+Menyudagi **Boshqaruv** bo'limi faqat administratorlarga ko'rinadi (server ham barcha amallarni tekshiradi).
+**Birinchi ro'yxatdan o'tgan foydalanuvchi avtomatik ravishda administrator bo'ladi**; keyin boshqalarga ham
+admin huquqini berish mumkin.
+
+- **Umumiy ko'rinish** — foydalanuvchilar, onlayn, mavzular, duellar, mashg'ulotlar va Balloon Pop o'yinlari
+  statistikasi; yangi foydalanuvchilar va so'nggi faollik.
+- **Test mavzulari** — `.txt` fayllarni yuklash (bir nechtasini birdaniga, har biriga nom so'raladi),
+  qidirish, nomini o'zgartirish, variantlarni aralashtirish, savollarni ko'rish, mavzuni **yangi fayl bilan
+  almashtirish** (nom va tarix saqlanadi), **.txt fayl sifatida yuklab olish** (tahrirlab qayta yuklash uchun), o'chirish.
+- **Foydalanuvchilar** — qidirish va saralash (adminlar, onlayn, bloklangan), **yangi akkaunt yaratish**
+  (tasodifiy parol bilan), admin huquqini berish/olish, **bloklash** (foydalanuvchi darhol tizimdan chiqariladi va
+  kira olmaydi), parolni tiklash, o'chirish.
+- **Ro'yxatdan o'tishni yopish** — yopilganda yangi akkauntlarni faqat administrator yaratadi.
 
 ## Test fayli formati
 
@@ -70,7 +87,7 @@ Keyingi savol
 
 - savollar `++++` bilan ajratiladi;
 - savol matni va variantlar `====` bilan ajratiladi;
-- to'g'ri variant oldiga `#` qo'yiladi (variant matni o'zi `#` bilan boshlansa — `\#`).
+- to'g'ri variant oldiga `#` qo'yiladi (variant matni o'zi `#` bilan boshlansa — `\#`, to'g'ri javob bo'lsa — `#\#`).
 
 ## Sozlamalar (muhit o'zgaruvchilari)
 

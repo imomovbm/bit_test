@@ -236,6 +236,7 @@ class TeamView {
       balloons,
       s('g', { class: 'bp-swing', style: { 'animation-delay': `${-this.index * 2.3}s` } }, personEl(c))));
     this.el.classList.remove('falling', 'gone', 'no-anim');
+    this.shark.classList.remove('leaping');
     this.shark.replaceChildren(s('g', { class: 'bp-shark-swim', style: { 'animation-delay': `${-this.index * 3.1}s` } },
       s('g', { class: 'bp-shark-bob' }, s('g', { class: 'bp-shark-leap' }, sharkEl(teamColor(opponent.color))))));
     this.left = total - gone.size;

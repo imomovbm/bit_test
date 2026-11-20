@@ -266,6 +266,7 @@ class DuelHub:
     def connect(self, user: dict, conn) -> None:
         uid = user["id"]
         self.logins[uid] = user["login"]
+        self._touch(uid)
         first = not self.conns.get(uid)
         self.conns.setdefault(uid, set()).add(conn)
         conn.send("hello", {
@@ -285,8 +286,16 @@ class DuelHub:
         conns.discard(conn)
         if not conns:
             del self.conns[user_id]
+            self._touch(user_id)
             self._user_offline(user_id)
         self._presence_changed()
+
+    def _touch(self, uid: int) -> None:
+        """Foydalanuvchi oxirgi marta qachon saytda bo'lganini yozib qo'yadi."""
+        try:
+            self.db.touch_user(uid)
+        except Exception:  # statistika uchun — xato o'yinni to'xtatmasin
+            log.exception("last_seen yozilmadi")
 
     def handle(self, user_id: int, conn, msg_type, data: dict) -> None:
         try:
@@ -309,6 +318,10 @@ class DuelHub:
         for conns in list(self.conns.values()):
             for c in list(conns):
                 c.send(msg_type, data)
+
+    def send_user(self, user_id: int, msg_type: str, data) -> None:
+        """Foydalanuvchining barcha ochiq oynalariga xabar yuborish (masalan, huquqlari o'zgarganda)."""
+        self._send(user_id, msg_type, data)
 
     def _send(self, user_id: int, msg_type: str, data) -> None:
         for c in list(self.conns.get(user_id, ())):
@@ -696,15 +709,18 @@ class DuelHub:
             self._send(e.user_id, "notice", {"message": "Siz kutayotgan mavzu o'chirildi", "kind": "warning"})
         self._presence_changed()
 
-    def purge_user(self, uid: int) -> None:
-        """Foydalanuvchi o'chirilishidan oldin: navbatdan chiqarish, duelini yakunlash, ulanishlarini yopish."""
+    def kick_user(self, uid: int, reason: str) -> None:
+        """Bloklangan yoki o'chirilgan foydalanuvchi: navbatdan chiqariladi, dueli yakunlanadi, oynalari yopiladi."""
         self.leave_queue(uid, notify=False)
         duel = self.duels.get(self.user_duel.get(uid, ""))
         if duel:
-            duel.players[uid].forfeit = "left"
-            self._finish(duel)
+            self._forfeit(duel.id, uid, "left")
         for c in list(self.conns.get(uid, ())):
-            c.close()
+            c.close(reason)
+
+    def purge_user(self, uid: int) -> None:
+        """Foydalanuvchi o'chirilishidan oldin: kick_user + u bilan bog'liq barcha ma'lumotlarni tozalash."""
+        self.kick_user(uid, "deleted")
         self.pending_results.pop(uid, None)
         code = self.user_code.pop(uid, None)
         if code:

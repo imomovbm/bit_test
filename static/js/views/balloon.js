@@ -7,6 +7,8 @@ import { Scene, Dice, TEAM_COLORS, teamColor, teamStyle, miniBunch, mix, wait } 
 
 const PREFS_KEY = 'td-balloon-setup';
 const BALLOON_CHOICES = [10, 15, 20, 25, 30];
+const MIN_BALLOONS = 5;
+const MAX_BALLOONS = 50; // serverdagi app/balloon.py bilan bir xil
 const TIME_CHOICES = [[0, 'Cheklovsiz'], [20, '20 s'], [30, '30 s'], [60, '60 s']];
 const DEFAULT_PREFS = {
   topicId: null,
@@ -25,8 +27,11 @@ export function balloonView(root, params, ctx) {
 function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
-    if (p && Array.isArray(p.teams) && p.teams.length === 2 && p.teams.every((t) => TEAM_COLORS[t.color])) {
-      return { ...DEFAULT_PREFS, ...p };
+    if (p && Array.isArray(p.teams) && p.teams.length === 2 && p.teams.every((t) => t && TEAM_COLORS[t.color])) {
+      const prefs = { ...DEFAULT_PREFS, ...p, teams: p.teams.map((t) => ({ color: t.color, name: String(t.name || '') })) };
+      if (!Number.isInteger(prefs.balloons) || prefs.balloons < MIN_BALLOONS || prefs.balloons > MAX_BALLOONS) prefs.balloons = DEFAULT_PREFS.balloons;
+      if (!TIME_CHOICES.some(([v]) => v === prefs.answerTime)) prefs.answerTime = DEFAULT_PREFS.answerTime;
+      return prefs;
     }
   } catch {
     /* e'tiborsiz */
@@ -84,7 +89,7 @@ function lobbyView(root, ctx) {
       const cur = prefs.teams[i];
       const other = prefs.teams[1 - i];
       Object.entries(teamStyle(cur.color)).forEach(([k, v]) => box.style.setProperty(k, v));
-      preview.replaceChildren(miniBunch(cur.color, 9));
+      preview.replaceChildren(miniBunch(cur.color, prefs.balloons));
       swatches.replaceChildren(...Object.entries(TEAM_COLORS).map(([key, c]) => {
         const taken = key === other.color;
         return h('button', {
@@ -114,7 +119,55 @@ function lobbyView(root, ctx) {
   }
   editors.forEach((e) => e.paint());
 
-  // ---- tanlovlar (sharlar soni, javob vaqti)
+  // ---- sharlar soni: istalgan sonni yozish, −/+ tugmalari yoki tayyor variantlar
+  function balloonCounter() {
+    const valid = (n) => Number.isInteger(n) && n >= MIN_BALLOONS && n <= MAX_BALLOONS;
+    if (!valid(prefs.balloons)) prefs.balloons = DEFAULT_PREFS.balloons;
+    const input = h('input.bp-count-input', {
+      type: 'number', min: MIN_BALLOONS, max: MAX_BALLOONS, step: 1, inputmode: 'numeric',
+      value: String(prefs.balloons), 'aria-label': 'Har bir jamoaga sharlar soni',
+    });
+    const minus = h('button.bp-step-btn', { type: 'button', 'aria-label': 'Bitta kamaytirish', onclick: () => set(prefs.balloons - 1) }, icon('minus', 18));
+    const plus = h('button.bp-step-btn', { type: 'button', 'aria-label': 'Bitta koʻpaytirish', onclick: () => set(prefs.balloons + 1) }, icon('plus', 18));
+    const presets = h('div.bp-chips', { 'aria-label': 'Tayyor variantlar' });
+    function set(raw) {
+      // bo'sh yoki son bo'lmagan qiymat — avvalgi son qoladi
+      let n = String(raw).trim() === '' ? NaN : Math.round(Number(raw));
+      if (!Number.isFinite(n)) n = prefs.balloons;
+      prefs.balloons = Math.max(MIN_BALLOONS, Math.min(MAX_BALLOONS, n));
+      input.value = String(prefs.balloons);
+      paint();
+    }
+    function paint() {
+      minus.disabled = prefs.balloons <= MIN_BALLOONS;
+      plus.disabled = prefs.balloons >= MAX_BALLOONS;
+      presets.replaceChildren(...BALLOON_CHOICES.map((n) => h('button', {
+        type: 'button',
+        class: `bp-chip${n === prefs.balloons ? ' selected' : ''}`,
+        'aria-pressed': String(n === prefs.balloons),
+        onclick: () => set(n),
+      }, String(n))));
+      editors.forEach((e) => e.paint()); // bog'lam ko'rinishi tanlangan sonni ko'rsatadi
+    }
+    input.addEventListener('input', () => {
+      const n = Number(input.value);
+      if (valid(n)) {
+        prefs.balloons = n;
+        paint();
+      }
+    });
+    input.addEventListener('change', () => set(input.value)); // chegaradan chiqsa — eng yaqin ruxsat etilgan son
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        set(input.value);
+      }
+    });
+    paint();
+    return { el: h('div.bp-counter', h('div.bp-stepper', minus, input, plus), presets), input, set };
+  }
+
+  // ---- tanlovlar (javob vaqti)
   const chipGroup = (options, current, onPick, label) => {
     const group = h('div.bp-chips', { role: 'radiogroup', 'aria-label': label });
     const paint = (value) => group.replaceChildren(...options.map(([v, text]) => h('button', {
@@ -130,7 +183,7 @@ function lobbyView(root, ctx) {
     paint(current);
     return group;
   };
-  const balloonChips = chipGroup(BALLOON_CHOICES.map((n) => [n, String(n)]), prefs.balloons, (v) => { prefs.balloons = v; }, 'Sharlar soni');
+  const counter = balloonCounter();
   const timeChips = chipGroup(TIME_CHOICES, prefs.answerTime, (v) => { prefs.answerTime = v; }, 'Javob vaqti');
 
   const setupCard = h('div.card.bp-setup',
@@ -138,7 +191,8 @@ function lobbyView(root, ctx) {
     h('label.field', h('span.field-label', 'Mavzu (savollar shu mavzudan beriladi)'), topicSelect, topicHint),
     h('div.field', h('span.field-label', 'Jamoalar'), h('div.bp-teams-setup', editors[0].el, h('span.bp-vs', 'VS'), editors[1].el)),
     h('div.bp-setup-row',
-      h('div.field', h('span.field-label', 'Har bir jamoaga sharlar'), balloonChips),
+      h('div.field', h('span.field-label', 'Har bir jamoaga sharlar soni'), counter.el,
+        h('span.field-hint', `${MIN_BALLOONS} dan ${MAX_BALLOONS} gacha istalgan son. Koʻproq shar — uzunroq oʻyin.`)),
       h('div.field', h('span.field-label', 'Savolga javob vaqti'), timeChips)),
     err,
     startBtn);
@@ -249,6 +303,7 @@ function lobbyView(root, ctx) {
 
   async function start() {
     err.textContent = '';
+    counter.set(counter.input.value); // yozilgan, lekin hali tasdiqlanmagan sonni ham hisobga olamiz
     const topicId = Number(topicSelect.value);
     if (!topicId) {
       err.textContent = 'Mavzuni tanlang';
@@ -294,6 +349,8 @@ function gameView(root, gameId, ctx) {
   let pickedChoice = null; // yuborilgan, lekin hali natijasi kelmagan javob
   let popGoal = 0;
   const optimistic = new Set(); // serverga yuborilgan, lekin hali tasdiqlanmagan portlatishlar
+  let shownPhase = '';
+  let phaseSince = 0;      // bosqich almashgan vaqt: tugmani ikki marta bosish keyingi bosqichga "o'tib ketmasin"
   let timerHandle = null;
   let deadline = 0;
   let lastTick = null;
@@ -603,7 +660,12 @@ function gameView(root, gameId, ctx) {
 
   function render() {
     if (!alive || !game) return;
-    section.className = `screen bp-game phase-${uiPhase()}`;
+    const phase = uiPhase();
+    if (phase !== shownPhase) {
+      shownPhase = phase;
+      phaseSince = performance.now();
+    }
+    section.className = `screen bp-game phase-${phase}`;
     renderBoard();
     renderHud();
     renderPanel();
@@ -953,7 +1015,7 @@ function gameView(root, gameId, ctx) {
   }
 
   function onKey(e) {
-    if (e.ctrlKey || e.metaKey || e.altKey || !game || document.querySelector('.modal-overlay')) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || !game || document.querySelector('.modal-overlay.show')) return;
     const tag = e.target && e.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     const k = e.key.toLowerCase();
@@ -963,7 +1025,7 @@ function gameView(root, gameId, ctx) {
       toggleFullscreen();
       return;
     }
-    if (ending || busy) return;
+    if (ending || busy || performance.now() - phaseSince < 450) return;
     if (reveal) {
       if (k === 'enter' || k === ' ') {
         e.preventDefault();

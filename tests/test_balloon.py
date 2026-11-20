@@ -58,6 +58,7 @@ def test_clean_settings():
         {"teams": [TEAMS[0], {"name": "qizil JAMOA", "color": "blue"}], "balloons": 20},
         {"teams": [TEAMS[0], {"name": "X", "color": "black"}], "balloons": 20},
         {"teams": TEAMS, "balloons": 2},
+        {"teams": TEAMS, "balloons": 51},
         {"teams": TEAMS, "balloons": "ko'p"},
         {"teams": TEAMS, "balloons": 20, "answerTime": 3},
         {"teams": [TEAMS[0], {"name": "Y" * 31, "color": "blue"}], "balloons": 20},
@@ -65,6 +66,8 @@ def test_clean_settings():
     for data in bad:
         with pytest.raises(GameError):
             balloon.clean_settings(data)
+    for n in (5, 22, 50):  # istalgan son (chegaralar ichida)
+        assert balloon.clean_settings({"teams": TEAMS, "balloons": n})["balloons"] == n
 
 
 def test_round_correct_answer_gives_both_teams_a_roll():

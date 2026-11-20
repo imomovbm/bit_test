@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Protocol
 
 COLORS = ("red", "blue", "green", "orange", "purple", "pink", "teal", "yellow")
-MIN_BALLOONS, MAX_BALLOONS = 5, 40
+MIN_BALLOONS, MAX_BALLOONS = 5, 50
 MAX_ANSWER_TIME = 600          # soniya; 0 — vaqt cheklanmagan
 MAX_TEAM_NAME = 30
 DICE_SIDES = 6

@@ -25,6 +25,9 @@ export function authView(mode) {
       passInput.focus();
     });
     const errorBox = h('div.alert.error', { hidden: true, role: 'alert' });
+    const closedBox = h('div.alert.warning.auth-closed', { hidden: true }, icon('lock', 18),
+      h('span', 'Roʻyxatdan oʻtish yopilgan. Akkaunt olish uchun administrator (oʻqituvchi)ga murojaat qiling.'));
+    const switchLine = h('p.auth-switch');
     const submitBtn = h('button.btn.primary.lg.block', { type: 'submit' }, isLogin ? 'Kirish' : 'Roʻyxatdan oʻtish', icon('right', 18));
 
     const form = h('form.auth-card', { novalidate: true },
@@ -32,13 +35,29 @@ export function authView(mode) {
         h('h2', isLogin ? 'Tizimga kirish' : 'Roʻyxatdan oʻtish'),
         h('p.muted', isLogin ? 'Login va parolingizni kiriting' : 'Faqat login va parol — boshqa hech narsa kerak emas')),
       invited ? h('div.alert.info', icon('swords', 18), h('span', 'Sizni duelga taklif qilishdi! Davom etish uchun ', isLogin ? 'tizimga kiring.' : 'roʻyxatdan oʻting.')) : null,
+      isLogin ? null : closedBox,
       h('label.field', h('span.field-label', 'Login'), loginInput),
       h('label.field', h('span.field-label', 'Parol'), h('div.input-wrap', passInput, eyeBtn)),
       errorBox,
       submitBtn,
-      h('p.auth-switch', isLogin
-        ? ['Akkauntingiz yoʻqmi? ', h('a', { href: '#/register' }, 'Roʻyxatdan oʻting')]
-        : ['Akkauntingiz bormi? ', h('a', { href: '#/login' }, 'Tizimga kiring')]));
+      switchLine);
+
+    // Administrator ro'yxatdan o'tishni yopgan bo'lishi mumkin — bunda faqat kirish mumkin.
+    function applyRegistration(open) {
+      if (isLogin) {
+        switchLine.replaceChildren(...(open
+          ? ['Akkauntingiz yoʻqmi? ', h('a', { href: '#/register' }, 'Roʻyxatdan oʻting')]
+          : ['Akkaunt olish uchun administratorga murojaat qiling.']));
+        return;
+      }
+      closedBox.hidden = open;
+      [loginInput, passInput, submitBtn].forEach((el) => {
+        el.disabled = !open;
+      });
+      switchLine.replaceChildren('Akkauntingiz bormi? ', h('a', { href: '#/login' }, 'Tizimga kiring'));
+    }
+    applyRegistration(ctx.registrationOpen);
+    api('/api/auth/me').then((r) => applyRegistration(r.registrationOpen !== false)).catch(() => {});
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -77,6 +96,7 @@ export function authView(mode) {
         h('ul.feature-list',
           feature('swords', 'Duel', '15 ta savol, har biriga 15 soniya. Koʻp toʻgʻri javob bergan gʻolib.'),
           feature('book', 'Oʻrganish rejimi', '10, 30, 50 yoki barcha savollar — vaqt chegarasisiz.'),
+          feature('balloon', 'Balloon Pop', 'Sinf uchun jamoaviy oʻyin: zar tashlang, raqib sharlarini portlating.'),
           feature('trophy', 'Reyting', 'Gʻalabalaringiz va natijalaringiz saqlanib boradi.'))),
       form));
     setTimeout(() => loginInput.focus(), 50);

@@ -8,6 +8,7 @@ import logging
 import random
 import re
 import sqlite3
+from urllib.parse import quote
 
 from aiohttp import web
 
@@ -15,7 +16,7 @@ from . import balloon, config
 from .db import now_ms
 from .hub import prepare_question
 from .keys import DB, HUB, USER
-from .parser import parse_questions
+from .parser import format_questions, parse_questions
 from .security import RateLimiter, hash_password, new_token, token_hash, verify_password
 
 log = logging.getLogger("testduel.api")
@@ -100,6 +101,15 @@ def public_user(user: dict) -> dict:
     return {"id": user["id"], "login": user["login"], "isAdmin": bool(user["is_admin"])}
 
 
+def registration_open(db) -> bool:
+    return db.setting("registration_open", "1") == "1"
+
+
+def validate_login(login: str) -> None:
+    if not LOGIN_RE.fullmatch(login):
+        raise ApiError("Login 3–32 ta harf, raqam yoki . _ - belgilaridan iborat bo'lishi kerak")
+
+
 def topic_json(t: dict) -> dict:
     return {
         "id": t["id"],
@@ -149,13 +159,15 @@ async def register(request: web.Request):
     data = await read_json(request)
     login = str(data.get("login", "")).strip()
     password = str(data.get("password", ""))
-    if not LOGIN_RE.fullmatch(login):
-        raise ApiError("Login 3–32 ta harf, raqam yoki . _ - belgilaridan iborat bo'lishi kerak")
+    validate_login(login)
     validate_password(password)
     ip = client_ip(request)
     if registrations.blocked(ip):
         raise ApiError("Juda ko'p urinish. Birozdan keyin qayta urinib ko'ring", 429)
     db = request.app[DB]
+    # Birinchi foydalanuvchi (administrator) har doim ro'yxatdan o'ta oladi.
+    if db.count_users() and not registration_open(db):
+        raise ApiError("Ro'yxatdan o'tish yopilgan. Akkaunt olish uchun administratorga murojaat qiling", 403)
     if db.user_by_login(login):
         raise ApiError("Bu login band. Boshqa login tanlang", 409)
     pass_hash = await in_thread(hash_password, password)
@@ -182,6 +194,9 @@ async def login(request: web.Request):
         login_failures.hit(key)
         raise ApiError("Login yoki parol noto'g'ri", 401)
     login_failures.reset(key)
+    if user["blocked"]:
+        raise ApiError("Akkauntingiz bloklangan. Administratorga murojaat qiling", 403)
+    request.app[DB].touch_user(user["id"])
     return await start_session(request, user)
 
 
@@ -198,7 +213,11 @@ async def logout(request: web.Request):
 @routes.get("/api/auth/me")
 async def me(request: web.Request):
     user = request.get(USER)
-    return ok({"user": public_user(user) if user else None})
+    db = request.app[DB]
+    return ok({
+        "user": public_user(user) if user else None,
+        "registrationOpen": registration_open(db) or db.count_users() == 0,
+    })
 
 
 # ------------------------------------------------------------------- topics
@@ -319,7 +338,9 @@ async def balloon_create(request: web.Request):
     topic_id = data.get("topicId")
     topic = db.get_topic(topic_id) if isinstance(topic_id, int) and not isinstance(topic_id, bool) else None
     if not topic:
-        raise ApiError("Mavzuni tanlang", 404 if topic_id is not None else 400)
+        if topic_id is None:
+            raise ApiError("Mavzuni tanlang")
+        raise ApiError("Mavzu topilmadi — u o'chirilgan bo'lishi mumkin", 404)
     if topic["question_count"] < 1:
         raise ApiError("Bu mavzuda savollar yo'q")
     state = balloon.new_game(topic_id=topic["id"], topic_name=topic["name"], now_ms=now_ms(), **settings)
@@ -441,6 +462,47 @@ async def admin_topic_questions(request: web.Request):
     return ok({"topic": topic_json(topic), "questions": db.topic_questions(topic["id"])})
 
 
+@routes.put("/api/admin/topics/{tid}/content")
+async def admin_replace_topic(request: web.Request):
+    """Mavzu savollarini yangi fayl bilan almashtirish (nom, sozlamalar va tarix saqlanadi)."""
+    user = require_admin(request)
+    db = request.app[DB]
+    tid = int_param(request, "tid")
+    topic = db.get_topic(tid)
+    if not topic:
+        raise ApiError("Mavzu topilmadi", 404)
+    data = await read_json(request)
+    parsed = parse_questions(_check_content(data))
+    if not parsed["questions"]:
+        raise ApiError("Faylda yaroqli savol topilmadi. Fayl formatini tekshiring")
+    source = str(data.get("fileName") or "")[:255] or None
+    db.replace_topic_questions(tid, parsed["questions"], source)
+    log.info("Mavzu yangilandi: %s (%d savol) — %s", topic["name"], len(parsed["questions"]), user["login"])
+    request.app[HUB].broadcast("topics", {})
+    return ok({"topic": topic_json(db.get_topic(tid)), "skipped": len(parsed["errors"])})
+
+
+@routes.get("/api/admin/topics/{tid}/export")
+async def admin_export_topic(request: web.Request):
+    """Mavzuni yuklash formatidagi .txt fayl sifatida qaytaradi."""
+    require_admin(request)
+    db = request.app[DB]
+    topic = db.get_topic(int_param(request, "tid"))
+    if not topic:
+        raise ApiError("Mavzu topilmadi", 404)
+    text = format_questions(db.topic_questions(topic["id"]))
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", topic["name"]).strip()[:100] or "mavzu"
+    return web.Response(
+        text=text,
+        content_type="text/plain",
+        charset="utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"topic-{topic['id']}.txt\"; filename*=UTF-8''{quote(name + '.txt')}",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @routes.patch("/api/admin/topics/{tid}")
 async def admin_update_topic(request: web.Request):
     require_admin(request)
@@ -469,23 +531,96 @@ async def admin_delete_topic(request: web.Request):
     return ok()
 
 
+def admin_user_json(u: dict, hub) -> dict:
+    return {
+        "id": u["id"],
+        "login": u["login"],
+        "isAdmin": bool(u["is_admin"]),
+        "blocked": bool(u["blocked"]),
+        "createdAt": u["created_at"],
+        "lastSeenAt": u.get("last_seen_at"),
+        "duels": u.get("duels", 0),
+        "practices": u.get("practices", 0),
+        "balloonGames": u.get("balloon_games", 0),
+        "online": hub.is_online(u["id"]),
+    }
+
+
+def settings_json(db) -> dict:
+    return {"registrationOpen": registration_open(db)}
+
+
+@routes.get("/api/admin/overview")
+async def admin_overview(request: web.Request):
+    require_admin(request)
+    db = request.app[DB]
+    hub = request.app[HUB]
+    stats = db.overview(now_ms() - 7 * 86_400_000)
+    stats["users"]["online"] = len(hub.conns)
+    duels = [
+        {
+            "id": d["id"],
+            "topicName": d["topic_name"],
+            "players": [d["p1_login"], d["p2_login"]],
+            "score": [d["p1_correct"], d["p2_correct"]],
+            "total": d["total"],
+            "winner": d["winner"],
+            "reason": d["reason"],
+            "finishedAt": d["finished_at"],
+        }
+        for d in db.recent_duels()
+    ]
+    games = [{"id": g["id"], "owner": g["owner"], **balloon.summary(g["state"])} for g in db.recent_balloon_games()]
+    users = [
+        {"id": u["id"], "login": u["login"], "isAdmin": bool(u["is_admin"]), "blocked": bool(u["blocked"]), "createdAt": u["created_at"], "online": hub.is_online(u["id"])}
+        for u in db.recent_users()
+    ]
+    return ok({"stats": stats, "recentUsers": users, "recentDuels": duels, "recentGames": games, "settings": settings_json(db)})
+
+
+@routes.get("/api/admin/settings")
+async def admin_settings(request: web.Request):
+    require_admin(request)
+    return ok({"settings": settings_json(request.app[DB])})
+
+
+@routes.patch("/api/admin/settings")
+async def admin_update_settings(request: web.Request):
+    user = require_admin(request)
+    data = await read_json(request)
+    db = request.app[DB]
+    if "registrationOpen" in data:
+        db.set_setting("registration_open", "1" if data["registrationOpen"] else "0")
+        log.info("Ro'yxatdan o'tish %s — %s", "ochildi" if data["registrationOpen"] else "yopildi", user["login"])
+    return ok({"settings": settings_json(db)})
+
+
 @routes.get("/api/admin/users")
 async def admin_users(request: web.Request):
     require_admin(request)
     hub = request.app[HUB]
-    users = [
-        {
-            "id": u["id"],
-            "login": u["login"],
-            "isAdmin": bool(u["is_admin"]),
-            "createdAt": u["created_at"],
-            "duels": u["duels"],
-            "practices": u["practices"],
-            "online": hub.is_online(u["id"]),
-        }
-        for u in request.app[DB].list_users()
-    ]
-    return ok({"users": users})
+    return ok({"users": [admin_user_json(u, hub) for u in request.app[DB].list_users()]})
+
+
+@routes.post("/api/admin/users")
+async def admin_create_user(request: web.Request):
+    """Administrator yangi akkaunt yaratadi (masalan, o'quvchilar uchun)."""
+    me_user = require_admin(request)
+    data = await read_json(request)
+    login = str(data.get("login", "")).strip()
+    password = str(data.get("password", ""))
+    validate_login(login)
+    validate_password(password)
+    db = request.app[DB]
+    if db.user_by_login(login):
+        raise ApiError("Bu login band. Boshqa login tanlang", 409)
+    pass_hash = await in_thread(hash_password, password)
+    try:
+        user_id = db.create_user(login, pass_hash, bool(data.get("isAdmin")))
+    except sqlite3.IntegrityError:
+        raise ApiError("Bu login band. Boshqa login tanlang", 409)
+    log.info("Administrator %s yangi foydalanuvchi yaratdi: %s", me_user["login"], login)
+    return ok({"user": admin_user_json(db.user_by_id(user_id), request.app[HUB])}, status=201)
 
 
 @routes.patch("/api/admin/users/{uid}")
@@ -497,15 +632,32 @@ async def admin_update_user(request: web.Request):
     if not target:
         raise ApiError("Foydalanuvchi topilmadi", 404)
     data = await read_json(request)
-    if "isAdmin" in data:
-        if uid == me_user["id"]:
-            raise ApiError("O'zingizning huquqlaringizni o'zgartira olmaysiz")
-        db.set_admin(uid, bool(data["isAdmin"]))
+    hub = request.app[HUB]
+    is_self = uid == me_user["id"]
+    if ("isAdmin" in data or "blocked" in data) and is_self:
+        raise ApiError("O'zingizning huquqlaringizni o'zgartira olmaysiz")
+    password_hash = None
     if "password" in data:
         password = str(data["password"])
         validate_password(password)
-        db.set_password(uid, await in_thread(hash_password, password))
-    return ok()
+        password_hash = await in_thread(hash_password, password)
+    if not db.user_by_id(uid):  # kutish vaqtida o'chirilgan bo'lishi mumkin
+        raise ApiError("Foydalanuvchi topilmadi", 404)
+    if "isAdmin" in data:
+        db.set_admin(uid, bool(data["isAdmin"]))
+        hub.send_user(uid, "account", {"isAdmin": bool(data["isAdmin"])})
+    if "blocked" in data:
+        db.set_blocked(uid, bool(data["blocked"]))
+        if data["blocked"]:
+            hub.kick_user(uid, "blocked")
+        log.info("%s %s — %s", target["login"], "bloklandi" if data["blocked"] else "blokdan chiqarildi", me_user["login"])
+    if password_hash is not None:
+        # o'z parolini o'zgartirgan administrator joriy qurilmada tizimda qoladi
+        current = request.cookies.get(config.SESSION_COOKIE)
+        db.set_password(uid, password_hash, keep_session=token_hash(current) if is_self and current else None)
+        if not is_self:
+            hub.kick_user(uid, "password")
+    return ok({"user": admin_user_json(db.user_by_id(uid), hub)})
 
 
 @routes.delete("/api/admin/users/{uid}")
