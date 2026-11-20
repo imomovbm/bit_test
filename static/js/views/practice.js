@@ -25,6 +25,11 @@ function persist() {
 }
 
 export function practiceView(root, params, ctx, query) {
+  if (session && session.userId !== ctx.user.id) {
+    // shu brauzer oynasida avval boshqa foydalanuvchi mashq qilgan — uning sessiyasini ko'rsatmaymiz
+    session = null;
+    persist();
+  }
   if (params.id) return sessionView(root, Number(params.id), ctx, query);
   return listView(root, ctx);
 }
@@ -136,7 +141,7 @@ function sessionView(root, topicId, ctx, query) {
       .then((res) => {
         if (!alive) return;
         if (!res.questions.length) throw new Error('Bu mavzuda savollar yoʻq');
-        session = { key, n, order, topicId, topicName: res.topic.name, questions: res.questions, idx: 0, answers: [], finished: false, saved: false };
+        session = { userId: ctx.user.id, key, n, order, topicId, topicName: res.topic.name, questions: res.questions, idx: 0, answers: [], finished: false, saved: false };
         persist();
         draw();
       })
@@ -284,7 +289,7 @@ function sessionView(root, topicId, ctx, query) {
 
   function retry(questions) {
     session = {
-      key: `${topicId}|retry|random`, n: 'retry', order: 'random', topicId, topicName: session.topicName,
+      userId: ctx.user.id, key: `${topicId}|retry|random`, n: 'retry', order: 'random', topicId, topicName: session.topicName,
       questions: shuffleArray(questions.slice()), idx: 0, answers: [], finished: false, saved: false,
     };
     persist();
@@ -306,7 +311,7 @@ function sessionView(root, topicId, ctx, query) {
 
   function onKey(e) {
     if (!session || session.finished || session.key !== key) return;
-    if (document.querySelector('.modal-overlay') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (document.querySelector('.modal-overlay.show') || e.ctrlKey || e.metaKey || e.altKey) return;
     const tag = e.target && e.target.tagName;
     const k = e.key.toLowerCase();
     const q = session.questions[session.idx];

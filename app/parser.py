@@ -66,6 +66,8 @@ def parse_questions(text: str) -> dict:
                 opt = opt[1:]
             elif opt.startswith("#"):
                 opt = opt[1:].strip()
+                if opt.startswith("\\#"):  # "#\#matn" — to'g'ri javob matni o'zi # bilan boshlanadi
+                    opt = opt[1:]
                 correct.append(len(options))
             options.append(opt[:MAX_OPTION_LEN])
 
@@ -89,3 +91,21 @@ def parse_questions(text: str) -> dict:
         questions.append({"text": qtext[:MAX_QUESTION_LEN], "options": options, "correct": correct[0]})
 
     return {"questions": questions, "errors": errors, "blocks": number}
+
+
+def format_questions(questions: list[dict]) -> str:
+    """Savollarni yuklash formatidagi matnga aylantiradi (``parse_questions`` ning teskarisi).
+
+    Mavzuni .txt fayl sifatida yuklab olib, tahrirlab, qayta yuklash uchun ishlatiladi.
+    """
+    blocks = []
+    for q in questions:
+        lines = [q["text"]]
+        for i, option in enumerate(q["options"]):
+            if i == q["correct"]:
+                option = f"#{option}"
+            elif option.startswith("#"):
+                option = f"\\{option}"  # oddiy variant # bilan boshlansa — \# deb yoziladi
+            lines += ["====", option]
+        blocks.append("\n".join(lines))
+    return "\n++++\n".join(blocks) + "\n"

@@ -64,8 +64,9 @@ class Conn:
         choice = q["correct"] if ok else (q["correct"] + 1) % len(q["options"])
         self.env.hub.handle(self.user["id"], self, "duel:answer", {"duelId": duel_id, "index": index, "choice": choice})
 
-    def close(self):
+    def close(self, reason="closed"):
         self.closed = True
+        self.close_reason = reason
 
     def of(self, t):
         return [d for mt, d in self.msgs if mt == t]

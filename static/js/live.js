@@ -132,8 +132,9 @@ function open() {
     ws = null;
     setStatus('offline');
     if (ev.code === 4401) {
+      // server ulanishni yopdi: sessiya tugagan, akkaunt bloklangan/o'chirilgan yoki paroli almashtirilgan
       wanted = false;
-      live.emit('unauthorized');
+      live.emit('unauthorized', ev.reason);
       return;
     }
     if (wanted) schedule();
@@ -222,6 +223,9 @@ function handle(t, d) {
       break;
     case 'topics':
       live.emit('topics');
+      break;
+    case 'account':
+      live.emit('account', d);
       break;
     case 'duel:start':
       live.result = null;

@@ -24,11 +24,12 @@ class Conn:
         if not self.closed:
             self.queue.put_nowait(json.dumps({"t": msg_type, "d": data}, ensure_ascii=False))
 
-    def close(self) -> None:
+    def close(self, reason: str = "closed") -> None:
+        """Ulanishni server tomonidan yopish. 4401 kodi mijozga "tizimdan chiqing" degani (sabab: reason)."""
         if not self.closed:
             self.closed = True
             self.queue.put_nowait(None)
-            asyncio.ensure_future(self.ws.close(code=4403, message=b"closed"))
+            asyncio.ensure_future(self.ws.close(code=4401, message=reason.encode()[:120]))
 
     async def writer(self) -> None:
         while True:

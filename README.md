@@ -1,0 +1,141 @@
+# TestDuel
+
+Foydalanuvchilar o'rtasida test bo'yicha bellashuv (duel) va mustaqil mashq qilish uchun veb-ilova.
+
+## Imkoniyatlar
+
+- **Duel** — ikki foydalanuvchi bitta mavzuni tanlaydi, har biriga 15 ta savol beriladi, har bir savolga 15 soniya.
+  - G'olib — ko'proq to'g'ri javob bergan; teng bo'lsa — tezroq javob bergan.
+  - Raqib aloqasi uzilsa yoki 30 soniya davomida javob bermasa — ikkinchi ishtirokchi g'olib.
+- **Taklif havolasi** — onlayn bo'lmagan do'stni duelga havola orqali chaqirish.
+- **Mashq rejimi** — vaqt cheklovisiz 10 / 30 / 50 yoki barcha savollar.
+- **Balloon Pop** — sinfda bitta ekranda (proyektor/doska) o'ynaladigan jamoaviy o'yin (pastda batafsil).
+- **Reyting** va shaxsiy statistika.
+- **Boshqaruv paneli** (faqat administratorlar uchun) — test mavzularini yuklash va foydalanuvchilarni boshqarish (pastda batafsil).
+- Oddiy ro'yxatdan o'tish (login + parol), yorug'/qorong'i rejim, mobil qurilmalarga moslashgan.
+
+## Ishga tushirish
+
+Python 3.11+ kerak.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python run.py
+```
+
+Brauzerda oching: <http://localhost:8080>
+
+**Birinchi ro'yxatdan o'tgan foydalanuvchi avtomatik ravishda administrator bo'ladi.**
+Ma'lumotlar bazasi (SQLite) `data/testduel.db` faylida saqlanadi.
+
+## Balloon Pop — jamoaviy sinf o'yini
+
+Har bir jamoaning odamchasi o'z rangidagi sharlarda akulalar ustida osilib turadi.
+O'yinni o'qituvchi bitta ekranda boshqaradi (proyektor, interaktiv doska yoki kompyuter).
+
+1. **Tosh, qaychi, qog'oz** — jamoalar sinfda o'ynaydi, o'qituvchi yutgan jamoani belgilaydi.
+2. **Savol** — yutqazgan jamoa tanlangan mavzudan bitta savolga javob beradi.
+3. **Zar** — yutgan jamoa birinchi bo'lib zar tashlaydi va raqibning tushgan son miqdoricha sharini portlatadi
+   (sharlarni sichqoncha/barmoq bilan bosib yoki «Avtomatik portlatish» tugmasi bilan).
+4. **Imkoniyat** — yutqazgan jamoa savolga to'g'ri javob bergan bo'lsa, u ham zar tashlaydi.
+5. **Akulalar** — sharlari tugagan jamoa suvga tushadi va akulaga yem bo'ladi. Havoda qolgan jamoa g'olib.
+
+O'yin boshida tanlanadi: mavzu, ikki jamoaning nomi va rangi (8 ta rang), har bir jamoaga sharlar soni
+(5 dan 50 gacha istalgan son — yozib kiritiladi yoki tayyor variantlardan tanlanadi) va savolga javob vaqti
+(cheklovsiz, 20, 30 yoki 60 soniya).
+
+- O'yin holati serverda saqlanadi — sahifa yangilansa yoki brauzer yopilsa ham o'yin davom etadi.
+- Tosh-qaychi-qog'oz natijasi xato belgilansa — «Orqaga»; savol mos kelmasa — «Boshqa savol».
+- O'yinni muddatidan oldin yakunlash mumkin: ko'proq shari qolgan jamoa g'olib bo'ladi.
+- To'liq ekran rejimi (`F` tugmasi), klaviatura: `1`/`2` — tosh-qaychi-qog'oz g'olibi,
+  `1–4` yoki `A–D` — javob, `Probel`/`Enter` — zar tashlash va davom etish.
+- Oxirgi o'yinlar tarixi va «Qayta o'ynash» (xuddi shu sozlamalar bilan yangi o'yin).
+
+## Boshqaruv paneli
+
+Menyudagi **Boshqaruv** bo'limi faqat administratorlarga ko'rinadi (server ham barcha amallarni tekshiradi).
+**Birinchi ro'yxatdan o'tgan foydalanuvchi avtomatik ravishda administrator bo'ladi**; keyin boshqalarga ham
+admin huquqini berish mumkin.
+
+- **Umumiy ko'rinish** — foydalanuvchilar, onlayn, mavzular, duellar, mashg'ulotlar va Balloon Pop o'yinlari
+  statistikasi; yangi foydalanuvchilar va so'nggi faollik.
+- **Test mavzulari** — `.txt` fayllarni yuklash (bir nechtasini birdaniga, har biriga nom so'raladi),
+  qidirish, nomini o'zgartirish, variantlarni aralashtirish, savollarni ko'rish, mavzuni **yangi fayl bilan
+  almashtirish** (nom va tarix saqlanadi), **.txt fayl sifatida yuklab olish** (tahrirlab qayta yuklash uchun), o'chirish.
+- **Foydalanuvchilar** — qidirish va saralash (adminlar, onlayn, bloklangan), **yangi akkaunt yaratish**
+  (tasodifiy parol bilan), admin huquqini berish/olish, **bloklash** (foydalanuvchi darhol tizimdan chiqariladi va
+  kira olmaydi), parolni tiklash, o'chirish.
+- **Ro'yxatdan o'tishni yopish** — yopilganda yangi akkauntlarni faqat administrator yaratadi.
+
+## Test fayli formati
+
+```
+Savol matni
+====
+Variant
+====
+#To'g'ri variant
+====
+Variant
+++++
+Keyingi savol
+====
+...
+```
+
+- savollar `++++` bilan ajratiladi;
+- savol matni va variantlar `====` bilan ajratiladi;
+- to'g'ri variant oldiga `#` qo'yiladi (variant matni o'zi `#` bilan boshlansa — `\#`, to'g'ri javob bo'lsa — `#\#`).
+
+## Sozlamalar (muhit o'zgaruvchilari)
+
+| O'zgaruvchi | Standart | Tavsif |
+|---|---|---|
+| `TD_HOST` | `0.0.0.0` | Tinglanadigan manzil |
+| `TD_PORT` (yoki `PORT`) | `8080` | Port |
+| `TD_DATA_DIR` | `./data` | Ma'lumotlar papkasi |
+| `TD_DB_PATH` | `$TD_DATA_DIR/testduel.db` | SQLite fayli |
+| `TD_ADMINS` | — | Vergul bilan ajratilgan loginlar; ro'yxatdan o'tganda admin bo'ladi |
+| `TD_DUEL_QUESTIONS` | `15` | Dueldagi savollar soni |
+| `TD_QUESTION_TIME` | `15` | Bitta savol uchun vaqt (soniya) |
+| `TD_AFK_LIMIT` | `30` | Javobsiz qolish chegarasi (soniya) |
+| `TD_DISCONNECT_GRACE` | `10` | Aloqa uzilganda qaytish uchun vaqt (soniya) |
+
+Misol: `TD_PORT=9000 TD_ADMINS=bekzod python run.py`
+
+## Serverga joylashtirish
+
+Ilova bitta jarayonda ishlaydi (duel holati xotirada saqlanadi), shuning uchun **bitta** nusxada ishga tushiring.
+Nginx orqasida ishlatganda WebSocket uchun quyidagilarni qo'shing:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_read_timeout 3600s;
+}
+```
+
+Taklif havolalari to'g'ri ishlashi uchun saytni domen orqali (HTTPS tavsiya etiladi) oching.
+
+## Testlar
+
+```bash
+pip install pytest
+python -m pytest
+```
+
+## Loyiha tuzilishi
+
+```
+app/        backend (aiohttp): server, REST API, WebSocket, duel mexanizmi, Balloon Pop qoidalari, fayl parseri, SQLite
+static/     frontend (HTML/CSS/JS; Balloon Pop sahnasi — static/js/balloon-scene.js)
+tests/      testlar
+run.py      ishga tushirish nuqtasi
+```

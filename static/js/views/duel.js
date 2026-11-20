@@ -157,7 +157,10 @@ function inviteCard(q) {
     h('div.input-row', input,
       h('button.btn.primary', {
         type: 'button',
-        onclick: async () => toast((await copyText(url)) ? 'Havola nusxalandi' : 'Nusxalab boʻlmadi — havolani qoʻlda belgilang', 'success'),
+        onclick: async () => {
+          const copied = await copyText(url);
+          toast(copied ? 'Havola nusxalandi' : 'Nusxalab boʻlmadi — havolani qoʻlda belgilang', copied ? 'success' : 'warning');
+        },
       }, icon('copy', 16), 'Nusxalash')),
     h('div.share-row',
       h('a.btn.share.tg', { href: `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`, target: '_blank', rel: 'noopener' }, icon('send', 16), 'Telegram'),
@@ -210,7 +213,7 @@ function waitingScreen() {
 }
 
 // ============================================================== countdown
-function countdownScreen(ctx) {
+function countdownScreen() {
   const d = live.duel;
   const num = h('div.countdown-num', '3');
   const el = h('section.screen.vs-screen',
@@ -310,7 +313,7 @@ function playScreen() {
 
   function onKey(e) {
     if (mode !== 'question' || !q || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (document.querySelector('.modal-overlay')) return;
+    if (document.querySelector('.modal-overlay.show')) return;
     const k = e.key.toLowerCase();
     let i = '123456789'.indexOf(k);
     if (i < 0) i = 'abcdefghij'.indexOf(k);

@@ -6,6 +6,7 @@ import { authView } from './views/auth.js';
 import { duelView } from './views/duel.js';
 import { inviteView } from './views/invite.js';
 import { practiceView } from './views/practice.js';
+import { balloonView } from './views/balloon.js';
 import { statsView } from './views/stats.js';
 import { adminView } from './views/admin.js';
 
@@ -16,18 +17,22 @@ const ROUTES = [
   { path: '/invite/:code', view: inviteView, nav: 'duel' },
   { path: '/practice', view: practiceView, nav: 'practice' },
   { path: '/practice/:id', view: practiceView, nav: 'practice' },
+  { path: '/balloon', view: balloonView, nav: 'balloon' },
+  { path: '/balloon/:id', view: balloonView, nav: 'balloon' },
   { path: '/stats', view: statsView, nav: 'stats' },
   { path: '/admin', view: adminView, nav: 'admin', admin: true },
+  { path: '/admin/:section', view: adminView, nav: 'admin', admin: true },
 ];
 
 const NAV = [
   { id: 'duel', href: '#/duel', icon: 'swords', label: 'Duel' },
   { id: 'practice', href: '#/practice', icon: 'book', label: 'Oʻrganish' },
+  { id: 'balloon', href: '#/balloon', icon: 'balloon', label: 'Balloon Pop' },
   { id: 'stats', href: '#/stats', icon: 'trophy', label: 'Reyting' },
   { id: 'admin', href: '#/admin', icon: 'sliders', label: 'Boshqaruv', admin: true },
 ];
 
-const state = { user: null };
+const state = { user: null, registrationOpen: true };
 const rootEl = document.getElementById('app');
 let shell = null;
 let current = null;
@@ -37,6 +42,9 @@ const baseTitle = document.title;
 const ctx = {
   get user() {
     return state.user;
+  },
+  get registrationOpen() {
+    return state.registrationOpen;
   },
   navigate,
   onLogin,
@@ -166,9 +174,19 @@ function appLayout() {
 }
 
 function buildShell() {
+  const main = h('main.app-main');
+  const banner = h('div.queue-banner', { hidden: true });
+  const s = { main, banner };
+  buildNav(s);
+  rootEl.replaceChildren(s.header, main, banner, s.bottom);
+  return s;
+}
+
+/** Sarlavha va pastki menyu (foydalanuvchi huquqlari o'zgarganda sahifani qayta yuklamasdan yangilanadi). */
+function buildNav(s) {
   const user = state.user;
   const items = NAV.filter((n) => !n.admin || user.isAdmin);
-  const topLinks = items.map((n) => h('a.nav-link', { href: n.href, dataset: { nav: n.id } }, icon(n.icon, 18), h('span', n.label)));
+  const topLinks = items.map((n) => h('a.nav-link', { href: n.href, title: n.label, 'aria-label': n.label, dataset: { nav: n.id } }, icon(n.icon, 18), h('span', n.label)));
   const bottomLinks = items.map((n) => h('a.bnav-link', { href: n.href, dataset: { nav: n.id } }, icon(n.icon, 22), h('span', n.label)));
   const onlineCount = h('b', '0');
   const onlinePill = h('a.pill.online-pill', { href: '#/duel', title: 'Hozir onlayn foydalanuvchilar' }, h('span.live-dot'), onlineCount, h('span.hide-sm', ' onlayn'));
@@ -182,15 +200,20 @@ function buildShell() {
       h('a.brand', { href: '#/duel' }, logoMark(30), h('span.brand-text', 'Test', h('b', 'Duel'))),
       h('nav.top-nav', topLinks),
       h('div.header-right', connPill, onlinePill, soundBtn, themeBtn, userBox, logoutBtn)));
-  const main = h('main.app-main');
-  const banner = h('div.queue-banner', { hidden: true });
   const bottom = h('nav.bottom-nav', bottomLinks);
-  rootEl.replaceChildren(header, main, banner, bottom);
-  const s = { header, main, banner, bottom, onlineCount, connPill, soundBtn, themeBtn };
+  Object.assign(s, { header, bottom, onlineCount, connPill, soundBtn, themeBtn });
   paintSound(s);
   paintTheme(s);
   paintHeader(s);
-  return s;
+}
+
+function refreshNav() {
+  if (!shell) return;
+  const { header, bottom } = shell;
+  buildNav(shell);
+  header.replaceWith(shell.header);
+  bottom.replaceWith(shell.bottom);
+  if (current) setActiveNav(current.route.nav);
 }
 
 function setActiveNav(id) {
@@ -325,13 +348,28 @@ live.on('duel:end', (r) => {
   }
 });
 
-live.on('unauthorized', () => {
+const SIGNED_OUT = {
+  blocked: 'Akkauntingiz administrator tomonidan bloklandi',
+  deleted: 'Akkauntingiz oʻchirildi',
+  password: 'Parolingiz administrator tomonidan oʻzgartirildi — yangi parol bilan kiring',
+};
+
+live.on('unauthorized', (reason) => {
   if (!state.user) return;
   state.user = null;
   shell = null;
   live.disconnect();
-  toast('Sessiya muddati tugagan. Qaytadan kiring', 'warning');
+  toast(SIGNED_OUT[reason] || 'Sessiya muddati tugagan. Qaytadan kiring', reason === 'blocked' || reason === 'deleted' ? 'error' : 'warning', 7000);
   navigate('/login');
+});
+
+// Administrator foydalanuvchi huquqlarini o'zgartirdi — menyuni darhol yangilaymiz.
+live.on('account', (d) => {
+  if (!state.user || !d || typeof d.isAdmin !== 'boolean' || d.isAdmin === state.user.isAdmin) return;
+  state.user = { ...state.user, isAdmin: d.isAdmin };
+  refreshNav();
+  toast(d.isAdmin ? 'Sizga administrator huquqi berildi — «Boshqaruv» boʻlimi ochildi' : 'Administrator huquqingiz olib qoʻyildi', 'info', 6000);
+  if (!d.isAdmin && current && current.route.admin) navigate('/duel');
 });
 setUnauthorizedHandler(() => live.emit('unauthorized'));
 
@@ -348,6 +386,7 @@ async function boot() {
   try {
     const r = await api('/api/auth/me');
     state.user = r.user || null;
+    state.registrationOpen = r.registrationOpen !== false;
   } catch (e) {
     toast(e.message, 'error');
   }
