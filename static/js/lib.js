@@ -10,7 +10,12 @@ export function h(tag, attrs, ...children) {
     for (const [k, v] of Object.entries(attrs)) {
       if (v === undefined || v === null || v === false) continue;
       if (k === 'class') el.className = el.className ? `${el.className} ${v}` : v;
-      else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+      else if (k === 'style' && typeof v === 'object') {
+        for (const [p, val] of Object.entries(v)) {
+          if (p.startsWith('--')) el.style.setProperty(p, val); // CSS o'zgaruvchilari faqat shu yo'l bilan
+          else el.style[p] = val;
+        }
+      }
       else if (k === 'dataset') Object.assign(el.dataset, v);
       else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
       else if (k === 'html') el.innerHTML = v; // faqat ishonchli (ichki) matn uchun
@@ -71,6 +76,14 @@ const ICONS = {
   target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/>',
   shuffle: '<path d="m18 14 4 4-4 4"/><path d="m18 2 4 4-4 4"/><path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"/><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2"/><path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"/>',
+  balloon: '<path d="M12 2c3.6 0 6.3 2.7 6.3 6.1 0 3.9-3.1 7.1-6.3 7.6-3.2-.5-6.3-3.7-6.3-7.6C5.7 4.7 8.4 2 12 2Z"/><path d="m10.8 17.4 1.2-1.6 1.2 1.6Z"/><path d="M12 17.4c-1.4.8-1.4 1.6 0 2.3s1.4 1.5 0 2.3"/><path d="M9.2 7a3.3 3.3 0 0 1 2-2.1"/>',
+  dice: '<rect width="18" height="18" x="3" y="3" rx="3.5"/><path d="M16 8h.01"/><path d="M8 8h.01"/><path d="M8 16h.01"/><path d="M16 16h.01"/><path d="M12 12h.01"/>',
+  maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  minimize: '<path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>',
+  history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  play: '<polygon points="7 4 20 12 7 20 7 4"/>',
+  sparkles: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
 };
 
 export function icon(name, size = 20) {
@@ -323,9 +336,9 @@ export function progressRing(percent, cls = '') {
   return wrap;
 }
 
-export function confetti() {
+export function confetti(palette) {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const colors = ['#5b50f0', '#f26b1d', '#12a150', '#f7b500', '#e03131', '#2563eb'];
+  const colors = palette && palette.length ? palette : ['#5b50f0', '#f26b1d', '#12a150', '#f7b500', '#e03131', '#2563eb'];
   const layer = h('div.confetti');
   for (let i = 0; i < 70; i++) {
     const piece = h('i', {
@@ -382,6 +395,72 @@ export function initAudio() {
   };
   document.addEventListener('pointerdown', unlock, { passive: true });
   document.addEventListener('keydown', unlock);
+}
+
+let noiseBuf = null;
+
+function noise(t, dur, { type = 'bandpass', freq = 1500, q = 0.8, gain = 0.4, attack = 0.003 } = {}) {
+  if (!noiseBuf) {
+    noiseBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+    const data = noiseBuf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  }
+  const src = audioCtx.createBufferSource();
+  src.buffer = noiseBuf;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = type;
+  filter.frequency.value = freq;
+  filter.Q.value = q;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(gain, t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(filter).connect(g).connect(audioCtx.destination);
+  src.start(t, Math.random() * 0.5);
+  src.stop(t + dur + 0.02);
+}
+
+function tone(t, dur, f0, f1, { type = 'sine', gain = 0.2 } = {}) {
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(f0, t);
+  osc.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(gain, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+}
+
+/** O'yin effektlari: pop (shar portlashi), roll (zar), land (zar to'xtadi), splash, chomp. */
+export function sfx(kind) {
+  if (!audioCtx || !isSoundOn()) return;
+  try {
+    const t = audioCtx.currentTime + 0.005;
+    if (kind === 'pop') {
+      noise(t, 0.13, { freq: 1700 + Math.random() * 600, q: 0.7, gain: 0.55, attack: 0.002 });
+      tone(t, 0.09, 520, 140, { type: 'triangle', gain: 0.18 });
+    } else if (kind === 'roll') {
+      let x = t;
+      for (let i = 0; i < 9; i++) {
+        noise(x, 0.04, { type: 'highpass', freq: 2500, gain: 0.22 });
+        x += 0.06 + Math.random() * 0.07;
+      }
+    } else if (kind === 'land') {
+      tone(t, 0.16, 170, 60, { gain: 0.35 });
+      noise(t, 0.05, { type: 'highpass', freq: 2200, gain: 0.25 });
+    } else if (kind === 'splash') {
+      noise(t, 0.8, { type: 'lowpass', freq: 1100, q: 0.4, gain: 0.5, attack: 0.02 });
+      for (let i = 0; i < 4; i++) tone(t + 0.25 + i * 0.11, 0.08, 500 + Math.random() * 500, 900, { gain: 0.06 });
+    } else if (kind === 'chomp') {
+      tone(t, 0.09, 140, 70, { type: 'square', gain: 0.16 });
+      tone(t + 0.16, 0.11, 120, 55, { type: 'square', gain: 0.18 });
+    }
+  } catch {
+    /* ovozsiz davom etamiz */
+  }
 }
 
 export function beep(kind) {

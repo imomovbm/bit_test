@@ -78,6 +78,18 @@ CREATE TABLE IF NOT EXISTS practice_results (
     created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_practice_user ON practice_results(user_id);
+
+CREATE TABLE IF NOT EXISTS balloon_games (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    topic_id    INTEGER REFERENCES topics(id) ON DELETE SET NULL,
+    topic_name  TEXT NOT NULL,
+    status      TEXT NOT NULL,             -- active | finished
+    state       TEXT NOT NULL,             -- o'yin holati (JSON, app/balloon.py)
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_balloon_owner ON balloon_games(owner_id, updated_at);
 """
 
 
@@ -243,6 +255,15 @@ class Database:
         ).fetchall()
         return [self._question(r) for r in rows]
 
+    def question_ids(self, topic_id: int) -> list[int]:
+        return [r[0] for r in self.conn.execute("SELECT id FROM questions WHERE topic_id = ? ORDER BY position", (topic_id,))]
+
+    def question_by_id(self, question_id: int, topic_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT id, text, options, correct FROM questions WHERE id = ? AND topic_id = ?", (question_id, topic_id)
+        ).fetchone()
+        return self._question(row) if row else None
+
     def pick_questions(self, topic_id: int, limit: int | None, random_order: bool = True) -> list[dict]:
         order = "RANDOM()" if random_order else "position"
         sql = f"SELECT id, text, options, correct FROM questions WHERE topic_id = ? ORDER BY {order}"
@@ -360,3 +381,38 @@ class Database:
                FROM practice_results WHERE user_id = ?""",
             (user_id,),
         )
+
+    # ------------------------------------------------- balloon pop o'yinlari
+    @staticmethod
+    def _balloon_row(row: dict | None) -> dict | None:
+        if row:
+            row["state"] = json.loads(row["state"])
+        return row
+
+    def create_balloon_game(self, owner_id: int, topic_id: int, topic_name: str, state: dict) -> int:
+        now = now_ms()
+        cur = self.conn.execute(
+            """INSERT INTO balloon_games (owner_id, topic_id, topic_name, status, state, created_at, updated_at)
+               VALUES (?, ?, ?, 'active', ?, ?, ?)""",
+            (owner_id, topic_id, topic_name, json.dumps(state, ensure_ascii=False), now, now),
+        )
+        return cur.lastrowid
+
+    def balloon_game(self, game_id: int) -> dict | None:
+        return self._balloon_row(self._one("SELECT * FROM balloon_games WHERE id = ?", (game_id,)))
+
+    def save_balloon_game(self, game_id: int, state: dict, status: str) -> None:
+        self.conn.execute(
+            "UPDATE balloon_games SET state = ?, status = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(state, ensure_ascii=False), status, now_ms(), game_id),
+        )
+
+    def balloon_games(self, owner_id: int, limit: int = 30) -> list[dict]:
+        rows = self._all(
+            "SELECT * FROM balloon_games WHERE owner_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (owner_id, limit),
+        )
+        return [self._balloon_row(r) for r in rows]
+
+    def delete_balloon_game(self, game_id: int) -> None:
+        self.conn.execute("DELETE FROM balloon_games WHERE id = ?", (game_id,))

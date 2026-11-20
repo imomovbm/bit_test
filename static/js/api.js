@@ -32,7 +32,9 @@ export async function api(path, { method = 'GET', body } = {}) {
   }
   if (!res.ok) {
     if (res.status === 401 && onUnauthorized && !path.startsWith('/api/auth/')) onUnauthorized();
-    throw new ApiError((data && data.error) || `Xatolik yuz berdi (${res.status})`, res.status);
+    const err = new ApiError((data && data.error) || `Xatolik yuz berdi (${res.status})`, res.status);
+    err.data = data; // masalan, o'yin holati eskirgan bo'lsa server yangi holatni ham yuboradi
+    throw err;
   }
   return data;
 }

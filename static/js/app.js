@@ -6,6 +6,7 @@ import { authView } from './views/auth.js';
 import { duelView } from './views/duel.js';
 import { inviteView } from './views/invite.js';
 import { practiceView } from './views/practice.js';
+import { balloonView } from './views/balloon.js';
 import { statsView } from './views/stats.js';
 import { adminView } from './views/admin.js';
 
@@ -16,6 +17,8 @@ const ROUTES = [
   { path: '/invite/:code', view: inviteView, nav: 'duel' },
   { path: '/practice', view: practiceView, nav: 'practice' },
   { path: '/practice/:id', view: practiceView, nav: 'practice' },
+  { path: '/balloon', view: balloonView, nav: 'balloon' },
+  { path: '/balloon/:id', view: balloonView, nav: 'balloon' },
   { path: '/stats', view: statsView, nav: 'stats' },
   { path: '/admin', view: adminView, nav: 'admin', admin: true },
 ];
@@ -23,6 +26,7 @@ const ROUTES = [
 const NAV = [
   { id: 'duel', href: '#/duel', icon: 'swords', label: 'Duel' },
   { id: 'practice', href: '#/practice', icon: 'book', label: 'Oʻrganish' },
+  { id: 'balloon', href: '#/balloon', icon: 'balloon', label: 'Balloon Pop' },
   { id: 'stats', href: '#/stats', icon: 'trophy', label: 'Reyting' },
   { id: 'admin', href: '#/admin', icon: 'sliders', label: 'Boshqaruv', admin: true },
 ];
@@ -168,7 +172,7 @@ function appLayout() {
 function buildShell() {
   const user = state.user;
   const items = NAV.filter((n) => !n.admin || user.isAdmin);
-  const topLinks = items.map((n) => h('a.nav-link', { href: n.href, dataset: { nav: n.id } }, icon(n.icon, 18), h('span', n.label)));
+  const topLinks = items.map((n) => h('a.nav-link', { href: n.href, title: n.label, 'aria-label': n.label, dataset: { nav: n.id } }, icon(n.icon, 18), h('span', n.label)));
   const bottomLinks = items.map((n) => h('a.bnav-link', { href: n.href, dataset: { nav: n.id } }, icon(n.icon, 22), h('span', n.label)));
   const onlineCount = h('b', '0');
   const onlinePill = h('a.pill.online-pill', { href: '#/duel', title: 'Hozir onlayn foydalanuvchilar' }, h('span.live-dot'), onlineCount, h('span.hide-sm', ' onlayn'));

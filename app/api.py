@@ -1,15 +1,18 @@
-"""REST API: ro'yxatdan o'tish, mavzular, o'rganish rejimi, statistika va boshqaruv."""
+"""REST API: ro'yxatdan o'tish, mavzular, o'rganish rejimi, Balloon Pop, statistika va boshqaruv."""
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
+import random
 import re
 import sqlite3
 
 from aiohttp import web
 
-from . import config
+from . import balloon, config
+from .db import now_ms
 from .hub import prepare_question
 from .keys import DB, HUB, USER
 from .parser import parse_questions
@@ -262,6 +265,103 @@ async def my_stats(request: web.Request):
         "practiceSummary": db.practice_summary(user["id"]),
         "practice": db.user_practice(user["id"]),
     })
+
+
+# -------------------------------------------------------------- balloon pop
+balloon_rng = random.SystemRandom()
+
+
+class TopicQuestions:
+    """O'yin uchun savollar manbai: savollar bazadan bittadan olinadi (variantlar kerak bo'lsa aralashtiriladi)."""
+
+    def __init__(self, db, topic_id: int | None):
+        self.db = db
+        self.topic_id = topic_id
+        topic = db.get_topic(topic_id) if topic_id is not None else None
+        self.shuffle = bool(topic["shuffle_options"]) if topic else True
+
+    def ids(self) -> list[int]:
+        return self.db.question_ids(self.topic_id) if self.topic_id is not None else []
+
+    def load(self, qid: int) -> dict | None:
+        row = self.db.question_by_id(qid, self.topic_id) if self.topic_id is not None else None
+        return prepare_question(row, self.shuffle) if row else None
+
+
+def balloon_json(game_id: int, state: dict) -> dict:
+    return {"id": game_id, **balloon.public(state, now_ms())}
+
+
+def own_balloon_game(request: web.Request) -> dict:
+    user = require_user(request)
+    game = request.app[DB].balloon_game(int_param(request, "gid"))
+    if not game or game["owner_id"] != user["id"]:
+        raise ApiError("O'yin topilmadi", 404)
+    return game
+
+
+@routes.get("/api/balloon/games")
+async def balloon_list(request: web.Request):
+    user = require_user(request)
+    games = [{"id": g["id"], **balloon.summary(g["state"])} for g in request.app[DB].balloon_games(user["id"])]
+    return ok({"games": games})
+
+
+@routes.post("/api/balloon/games")
+async def balloon_create(request: web.Request):
+    user = require_user(request)
+    data = await read_json(request)
+    try:
+        settings = balloon.clean_settings(data)
+    except balloon.GameError as e:
+        raise ApiError(str(e), e.status)
+    db = request.app[DB]
+    topic_id = data.get("topicId")
+    topic = db.get_topic(topic_id) if isinstance(topic_id, int) and not isinstance(topic_id, bool) else None
+    if not topic:
+        raise ApiError("Mavzuni tanlang", 404 if topic_id is not None else 400)
+    if topic["question_count"] < 1:
+        raise ApiError("Bu mavzuda savollar yo'q")
+    state = balloon.new_game(topic_id=topic["id"], topic_name=topic["name"], now_ms=now_ms(), **settings)
+    game_id = db.create_balloon_game(user["id"], topic["id"], topic["name"], state)
+    log.info("Balloon Pop #%d: %s vs %s (%s) — %s", game_id, *(t["name"] for t in settings["teams"]), topic["name"], user["login"])
+    return ok({"game": balloon_json(game_id, state)}, status=201)
+
+
+@routes.get("/api/balloon/games/{gid}")
+async def balloon_get(request: web.Request):
+    game = own_balloon_game(request)
+    return ok({"game": balloon_json(game["id"], game["state"])})
+
+
+@routes.post("/api/balloon/games/{gid}/action")
+async def balloon_action(request: web.Request):
+    # Avval so'rov tanasini o'qiymiz: shundan keyin holatni o'qish, o'zgartirish va saqlash orasida
+    # `await` yo'q — bir vaqtda kelgan ikki so'rov bir-birining natijasini o'chirib yubormaydi.
+    data = await read_json(request)
+    game = own_balloon_game(request)
+    db = request.app[DB]
+    state = game["state"]
+    if "rev" in data and data["rev"] != state["rev"]:
+        return web.json_response(
+            {"error": "O'yin holati boshqa oynada o'zgargan — yangilandi", "game": balloon_json(game["id"], state)},
+            status=409,
+            dumps=_dumps,
+        )
+    work = copy.deepcopy(state)
+    try:
+        event = balloon.apply(work, data, source=TopicQuestions(db, game["topic_id"]), rng=balloon_rng, now_ms=now_ms())
+    except balloon.GameError as e:
+        return web.json_response({"error": str(e), "game": balloon_json(game["id"], state)}, status=e.status, dumps=_dumps)
+    db.save_balloon_game(game["id"], work, "finished" if work["phase"] == "finished" else "active")
+    return ok({"game": balloon_json(game["id"], work), "event": event})
+
+
+@routes.delete("/api/balloon/games/{gid}")
+async def balloon_delete(request: web.Request):
+    game = own_balloon_game(request)
+    request.app[DB].delete_balloon_game(game["id"])
+    return ok()
 
 
 # ------------------------------------------------------------------ invites

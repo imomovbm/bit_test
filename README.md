@@ -9,6 +9,7 @@ Foydalanuvchilar o'rtasida test bo'yicha bellashuv (duel) va mustaqil mashq qili
   - Raqib aloqasi uzilsa yoki 30 soniya davomida javob bermasa — ikkinchi ishtirokchi g'olib.
 - **Taklif havolasi** — onlayn bo'lmagan do'stni duelga havola orqali chaqirish.
 - **Mashq rejimi** — vaqt cheklovisiz 10 / 30 / 50 yoki barcha savollar.
+- **Balloon Pop** — sinfda bitta ekranda (proyektor/doska) o'ynaladigan jamoaviy o'yin (pastda batafsil).
 - **Reyting** va shaxsiy statistika.
 - **Admin panel** — `.txt` test fayllarini yuklash (har yuklashda mavzu nomi so'raladi).
 - Oddiy ro'yxatdan o'tish (login + parol), yorug'/qorong'i rejim, mobil qurilmalarga moslashgan.
@@ -28,6 +29,28 @@ Brauzerda oching: <http://localhost:8080>
 
 **Birinchi ro'yxatdan o'tgan foydalanuvchi avtomatik ravishda administrator bo'ladi.**
 Ma'lumotlar bazasi (SQLite) `data/testduel.db` faylida saqlanadi.
+
+## Balloon Pop — jamoaviy sinf o'yini
+
+Har bir jamoaning odamchasi o'z rangidagi sharlarda akulalar ustida osilib turadi.
+O'yinni o'qituvchi bitta ekranda boshqaradi (proyektor, interaktiv doska yoki kompyuter).
+
+1. **Tosh, qaychi, qog'oz** — jamoalar sinfda o'ynaydi, o'qituvchi yutgan jamoani belgilaydi.
+2. **Savol** — yutqazgan jamoa tanlangan mavzudan bitta savolga javob beradi.
+3. **Zar** — yutgan jamoa birinchi bo'lib zar tashlaydi va raqibning tushgan son miqdoricha sharini portlatadi
+   (sharlarni sichqoncha/barmoq bilan bosib yoki «Avtomatik portlatish» tugmasi bilan).
+4. **Imkoniyat** — yutqazgan jamoa savolga to'g'ri javob bergan bo'lsa, u ham zar tashlaydi.
+5. **Akulalar** — sharlari tugagan jamoa suvga tushadi va akulaga yem bo'ladi. Havoda qolgan jamoa g'olib.
+
+O'yin boshida tanlanadi: mavzu, ikki jamoaning nomi va rangi (8 ta rang), har bir jamoaga sharlar soni
+(10–30) va savolga javob vaqti (cheklovsiz, 20, 30 yoki 60 soniya).
+
+- O'yin holati serverda saqlanadi — sahifa yangilansa yoki brauzer yopilsa ham o'yin davom etadi.
+- Tosh-qaychi-qog'oz natijasi xato belgilansa — «Orqaga»; savol mos kelmasa — «Boshqa savol».
+- O'yinni muddatidan oldin yakunlash mumkin: ko'proq shari qolgan jamoa g'olib bo'ladi.
+- To'liq ekran rejimi (`F` tugmasi), klaviatura: `1`/`2` — tosh-qaychi-qog'oz g'olibi,
+  `1–4` yoki `A–D` — javob, `Probel`/`Enter` — zar tashlash va davom etish.
+- Oxirgi o'yinlar tarixi va «Qayta o'ynash» (xuddi shu sozlamalar bilan yangi o'yin).
 
 ## Test fayli formati
 
@@ -94,8 +117,8 @@ python -m pytest
 ## Loyiha tuzilishi
 
 ```
-app/        backend (aiohttp): server, REST API, WebSocket, duel mexanizmi, fayl parseri, SQLite
-static/     frontend (HTML/CSS/JS)
+app/        backend (aiohttp): server, REST API, WebSocket, duel mexanizmi, Balloon Pop qoidalari, fayl parseri, SQLite
+static/     frontend (HTML/CSS/JS; Balloon Pop sahnasi — static/js/balloon-scene.js)
 tests/      testlar
 run.py      ishga tushirish nuqtasi
 ```
