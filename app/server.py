@@ -13,7 +13,7 @@ from pathlib import Path
 from aiohttp import WSCloseCode, web
 
 from . import config
-from .api import ensure_superadmin, error_middleware, routes, session_middleware
+from .api import ensure_superadmin, error_middleware, guard_middleware, routes, session_middleware
 from .db import Database
 from .hub import DuelHub, LoopClock
 from .keys import DB, HUB, SOCKETS
@@ -113,7 +113,7 @@ async def _on_cleanup(app: web.Application) -> None:
 
 def create_app(db_path: Path | str | None = None, lan_url: str | None = None, clock=None) -> web.Application:
     app = web.Application(
-        middlewares=[error_middleware, session_middleware],
+        middlewares=[error_middleware, guard_middleware, session_middleware],
         client_max_size=config.MAX_UPLOAD_CHARS * 4 + 1024 * 1024,
     )
     db = Database(db_path or config.DB_PATH)

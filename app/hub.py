@@ -399,8 +399,8 @@ class DuelHub:
         if uid in self.user_duel:
             raise HubError("Siz hozir duelda qatnashyapsiz")
         topic = self.db.get_topic(topic_id) if topic_id is not None else None
-        if not topic:
-            raise HubError("Mavzu topilmadi")
+        if not topic or not topic["active"]:
+            raise HubError("Mavzu topilmadi yoki yopilgan")
         if topic["question_count"] < 1:
             raise HubError("Bu mavzuda savollar yo'q")
         old = self.waiting.pop(uid, None)
@@ -701,12 +701,13 @@ class DuelHub:
         }
 
     # ========================================================= admin hooks
-    def topic_removed(self, topic_id: int) -> None:
+    def topic_removed(self, topic_id: int, message: str = "Siz kutayotgan mavzu o'chirildi") -> None:
+        """Mavzu o'chirilgan yoki yopilgan: uni kutayotganlar navbatdan chiqariladi."""
         for e in [e for e in self.waiting.values() if e.topic_id == topic_id]:
             self.waiting.pop(e.user_id, None)
             _cancel(e.expire_timer)
             self._send(e.user_id, "queue", None)
-            self._send(e.user_id, "notice", {"message": "Siz kutayotgan mavzu o'chirildi", "kind": "warning"})
+            self._send(e.user_id, "notice", {"message": message, "kind": "warning"})
         self._presence_changed()
 
     def kick_user(self, uid: int, reason: str) -> None:

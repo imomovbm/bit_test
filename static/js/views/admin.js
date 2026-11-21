@@ -32,7 +32,7 @@ export function adminView(root, params, ctx, query) {
     return null;
   }
   const section = SECTIONS.find((s) => s.id === (params.section || 'overview'));
-  if (!section) {
+  if (!section || (params.id && section.id !== 'topics')) {
     setTimeout(() => ctx.navigate('/admin'), 0);
     return null;
   }
@@ -66,7 +66,8 @@ export function adminView(root, params, ctx, query) {
     },
   };
   state.loadOverview();
-  ({ overview: overviewSection, topics: topicsSection, users: usersSection })[section.id](body, ctx, state, query);
+  if (params.id) topicEditor(body, ctx, state, Number(params.id));
+  else ({ overview: overviewSection, topics: topicsSection, users: usersSection })[section.id](body, ctx, state, query);
   return () => {
     state.alive = false;
     state.cleanups.forEach((fn) => fn());
@@ -193,7 +194,7 @@ function topicsSection(body, ctx, state) {
     input,
     h('span.drop-ic', icon('upload', 28)),
     h('b', '.txt test faylini shu yerga tashlang yoki tanlash uchun bosing'),
-    h('span.muted.small', 'Bir nechta faylni birdaniga tanlash mumkin — har biri alohida mavzu boʻladi.'));
+    h('span.muted.small', 'Fayldagi savollar bilan yangi mavzu yaratiladi. Bir nechta faylni birdaniga tanlash mumkin — har biri alohida mavzu boʻladi.'));
   input.addEventListener('change', () => {
     const files = [...input.files];
     input.value = '';
@@ -212,8 +213,11 @@ function topicsSection(body, ctx, state) {
   const search = searchBox('Mavzu nomi boʻyicha qidirish', () => paint());
   const list = h('div', spinner());
   body.append(
+    h('div.card.adm-quick',
+      h('div.adm-reg-text', h('b', 'Mavzu yarating va savollarni qoʻlda qoʻshing'), h('span.small.muted', 'Yoki quyida .txt faylni yuklang — mavzu savollari bilan birga yaratiladi.')),
+      h('button.btn.primary', { type: 'button', onclick: () => createTopic(ctx) }, icon('plus', 16), 'Yangi mavzu')),
     h('div.upload-grid',
-      h('div.card', h('h2.card-title', icon('upload', 18), 'Yangi test yuklash'), drop),
+      h('div.card', h('h2.card-title', icon('upload', 18), 'Fayldan yangi mavzu'), drop),
       h('div.card.format-card',
         h('h2.card-title', icon('file', 18), 'Fayl formati'),
         h('ul.format-rules',
@@ -268,7 +272,7 @@ function topicsSection(body, ctx, state) {
       h('p.small.muted.adm-summary', `${topics.length} ta mavzu · ${total} ta savol${q ? ` · topildi: ${shown.length}` : ''}`),
       shown.length
         ? h('div.card.table-card', h('div.table-wrap', h('table.table.adm-table.adm-topics',
-          h('thead', h('tr', h('th', 'Mavzu'), h('th.num', 'Savollar'), h('th.hide-sm', 'Variantlar'), h('th.hide-sm', 'Yuklangan'), h('th.right', 'Amallar'))),
+          h('thead', h('tr', h('th', 'Mavzu'), h('th', 'Holat'), h('th.num', 'Savollar'), h('th.hide-sm', 'Variantlar'), h('th.hide-sm', 'Yaratilgan'), h('th.right', 'Amallar'))),
           h('tbody', shown.map(topicRow)))))
         : h('div.card.muted.center', 'Hech narsa topilmadi.'));
   }
@@ -285,40 +289,18 @@ function topicsSection(body, ctx, state) {
         toast(e.message, 'error');
       }
     });
-    const replaceInput = h('input', { type: 'file', accept: '.txt,text/plain', hidden: true });
-    replaceInput.addEventListener('change', async () => {
-      const file = replaceInput.files[0];
-      replaceInput.value = '';
-      if (file && (await reviewFile(file, { replace: t })) === 'saved' && state.alive) {
-        load();
-        state.loadOverview();
-      }
-    });
     const btn = (ic, title, onclick, cls = '') => h(`button.icon-btn${cls}`, { type: 'button', title, 'aria-label': title, onclick }, icon(ic, 17));
-    return h('tr',
-      h('td.adm-td-main', h('div.topic-cell', h('b', t.name), h('span.small.muted', t.sourceFile || ''))),
+    const href = `#/admin/topics/${t.id}`;
+    return h(`tr${t.active ? '' : '.is-inactive'}`,
+      h('td.adm-td-main', h('div.topic-cell', h('a.adm-topic-link', { href }, t.name), h('span.small.muted', t.sourceFile || (t.questionCount ? 'qoʻlda kiritilgan' : 'savol qoʻshilmagan')))),
+      h('td.adm-td-role', activeSwitch(t, () => paint())),
       h('td.num.adm-td-count', String(t.questionCount), h('span.adm-sm-only', ' ta savol')),
       h('td.hide-sm', h('label.switch', { title: 'Javob variantlarini har safar aralashtirish' }, sw, h('span.slider'), h('span.small', 'aralash'))),
       h('td.hide-sm.small.nowrap', fmtDate(t.createdAt), t.createdBy ? h('div.muted', t.createdBy) : null),
       h('td.right.nowrap',
-        replaceInput,
-        btn('eye', 'Savollarni koʻrish', () => viewQuestions(t)),
+        h('a.icon-btn', { href, title: 'Savollarni boshqarish', 'aria-label': `Savollarni boshqarish: ${t.name}` }, icon('edit', 17)),
         h('a.icon-btn', { href: `/api/admin/topics/${t.id}/export`, download: `${t.name}.txt`, title: '.txt fayl sifatida yuklab olish', 'aria-label': 'Yuklab olish' }, icon('download', 17)),
-        btn('upload', 'Yangi fayl bilan almashtirish', () => replaceInput.click()),
-        btn('edit', 'Nomini oʻzgartirish', () => rename(t)),
         btn('trash', 'Oʻchirish', () => remove(t), '.danger')));
-  }
-
-  async function rename(t) {
-    const name = await promptDialog({ title: 'Mavzu nomini oʻzgartirish', label: 'Yangi nom', value: t.name, validate: (v) => (v ? '' : 'Nomni kiriting') });
-    if (!name || name === t.name) return;
-    try {
-      await api(`/api/admin/topics/${t.id}`, { method: 'PATCH', body: { name } });
-      toast('Mavzu nomi oʻzgartirildi', 'success');
-      load();
-    } catch (e) {
-      toast(e.message, 'error');
-    }
   }
 
   async function remove(t) {
@@ -357,7 +339,8 @@ function questionPreview(q, i) {
  * Faylni tekshirib ko'rsatadi va saqlaydi: yangi mavzu (nom so'raladi) yoki mavjud mavzuni almashtirish (opts.replace).
  * Natija: 'saved' | 'skip' | 'stop'.
  */
-async function reviewFile(file, { k = 1, n = 1, replace = null } = {}) {
+async function reviewFile(file, { k = 1, n = 1, replace = null, append = null } = {}) {
+  const target = replace || append; // mavjud mavzu bilan ishlash (yangi mavzu emas)
   let text;
   try {
     text = await readTextFile(file);
@@ -391,12 +374,15 @@ async function reviewFile(file, { k = 1, n = 1, replace = null } = {}) {
       replace && parsed.count
         ? h('div.alert.warning', icon('refresh', 18), h('span', `«${replace.name}» mavzusidagi ${replace.questionCount} ta savol shu fayldagi ${parsed.count} ta savol bilan almashtiriladi. Mavzu nomi, sozlamalari va oʻyinlar tarixi saqlanib qoladi.`))
         : null,
+      append && parsed.count
+        ? h('div.alert.info', icon('plus', 18), h('span', `${parsed.count} ta savol «${append.name}» mavzusi oxiriga qoʻshiladi (hozir ${append.questionCount} ta).`))
+        : null,
       errorsBlock,
       parsed.preview.length
         ? h('details.preview', h('summary', icon('eye', 16), `Dastlabki ${parsed.preview.length} ta savolni koʻrish`), h('ol.preview-list', parsed.preview.map(questionPreview)))
         : null,
-      !replace && parsed.count ? h('label.field', h('span.field-label', 'Mavzu nomi'), nameInput, h('span.field-hint', 'Bu nom duel, oʻrganish va Balloon Pop boʻlimlarida koʻrinadi.')) : null,
-      !replace && parsed.count ? h('label.check', shuffle, h('span', 'Javob variantlari tartibini har safar aralashtirish')) : null,
+      !target && parsed.count ? h('label.field', h('span.field-label', 'Mavzu nomi'), nameInput, h('span.field-hint', 'Bu nom duel, oʻrganish va Balloon Pop boʻlimlarida koʻrinadi.')) : null,
+      !target && parsed.count ? h('label.check', shuffle, h('span', 'Javob variantlari tartibini har safar aralashtirish')) : null,
       err,
     ];
     const save = async (m) => {
@@ -405,6 +391,9 @@ async function reviewFile(file, { k = 1, n = 1, replace = null } = {}) {
         if (replace) {
           const res = await api(`/api/admin/topics/${replace.id}/content`, { method: 'PUT', body: { content: text, fileName: file.name } });
           toast(`«${res.topic.name}» yangilandi — ${res.topic.questionCount} ta savol`, 'success', 5000);
+        } else if (append) {
+          const res = await api(`/api/admin/topics/${append.id}/append`, { method: 'POST', body: { content: text, fileName: file.name } });
+          toast(`${res.added} ta savol qoʻshildi — jami ${res.topic.questionCount} ta`, 'success', 5000);
         } else {
           const name = nameInput.value.trim();
           if (!name) {
@@ -421,19 +410,19 @@ async function reviewFile(file, { k = 1, n = 1, replace = null } = {}) {
       } catch (e) {
         err.textContent = e.message;
         err.hidden = false;
-        if (!replace) nameInput.focus();
+        if (!target) nameInput.focus();
       }
     };
     const many = n > 1 && k < n;
     const modal = openModal({
-      title: replace ? `Mavzuni yangilash: ${replace.name}` : n > 1 ? `Yangi mavzu (${k}/${n})` : 'Yangi mavzu',
+      title: replace ? `Mavzuni yangilash: ${replace.name}` : append ? `Savollar qoʻshish: ${append.name}` : n > 1 ? `Yangi mavzu (${k}/${n})` : 'Yangi mavzu',
       body,
       wide: true,
       onClose: () => resolve(result),
       actions: [
         many ? { text: 'Hammasini bekor qilish', onClick: (m) => { result = 'stop'; m.close(); } } : null,
         { text: many ? 'Bu faylni oʻtkazish' : 'Bekor qilish' },
-        parsed.count ? { text: replace ? 'Almashtirish' : 'Saqlash', kind: 'primary', icon: 'check', onClick: save } : null,
+        parsed.count ? { text: replace ? 'Almashtirish' : append ? 'Qoʻshish' : 'Saqlash', kind: 'primary', icon: 'check', onClick: save } : null,
       ],
     });
     nameInput.addEventListener('keydown', (e) => {
@@ -442,19 +431,293 @@ async function reviewFile(file, { k = 1, n = 1, replace = null } = {}) {
         save(modal);
       }
     });
-    if (!replace) setTimeout(() => nameInput.select(), 60);
+    if (!target) setTimeout(() => nameInput.select(), 60);
   });
 }
 
-async function viewQuestions(t) {
-  const listEl = h('div', spinner());
-  openModal({ title: t.name, body: listEl, wide: true, actions: [{ text: 'Yopish' }] });
-  try {
-    const { questions } = await api(`/api/admin/topics/${t.id}/questions`);
-    listEl.replaceChildren(h('p.muted.small', `${questions.length} ta savol (fayldagi tartibda). Toʻgʻri javoblar yashil rangda.`), h('ol.preview-list', questions.map(questionPreview)));
-  } catch (e) {
-    listEl.replaceChildren(h('div.alert.error', e.message));
+/** Mavzuni faol/nofaol qilish: nofaol mavzu foydalanuvchilarga ko'rinmaydi (duel, o'rganish, Balloon Pop). */
+function activeSwitch(t, onChange) {
+  const input = h('input', { type: 'checkbox', checked: t.active, 'aria-label': `Faol: ${t.name}` });
+  const text = h('span.small');
+  const paint = () => {
+    text.textContent = input.checked ? 'faol' : 'yopiq';
+    text.className = `small ${input.checked ? 'adm-on' : 'adm-off'}`;
+  };
+  paint();
+  input.addEventListener('change', async () => {
+    input.disabled = true;
+    try {
+      const res = await api(`/api/admin/topics/${t.id}`, { method: 'PATCH', body: { active: input.checked } });
+      t.active = res.topic.active;
+      toast(t.active ? `«${t.name}» foydalanuvchilarga ochildi` : `«${t.name}» yopildi — foydalanuvchilarga koʻrinmaydi`, 'success');
+      if (onChange) onChange(t);
+    } catch (e) {
+      input.checked = !input.checked;
+      toast(e.message, 'error');
+    } finally {
+      input.disabled = false;
+      paint();
+    }
+  });
+  return h('label.switch', { title: 'Faol mavzular foydalanuvchilarga koʻrinadi' }, input, h('span.slider'), text);
+}
+
+function createTopic(ctx) {
+  const name = h('input', { type: 'text', maxlength: 120, placeholder: 'Masalan: Dasturiy taʼminotni testlash' });
+  const shuffle = h('input', { type: 'checkbox', checked: true });
+  const err = h('div.field-error');
+  const submit = async (m) => {
+    err.textContent = '';
+    if (!name.value.trim()) {
+      err.textContent = 'Mavzu nomini kiriting';
+      name.focus();
+      return;
+    }
+    try {
+      const res = await api('/api/admin/topics', { method: 'POST', body: { name: name.value.trim(), shuffle: shuffle.checked } });
+      m.close();
+      toast(`«${res.topic.name}» yaratildi — endi savollar qoʻshing`, 'success');
+      ctx.navigate(`/admin/topics/${res.topic.id}`);
+    } catch (e) {
+      err.textContent = e.message;
+      name.focus();
+    }
+  };
+  const m = openModal({
+    title: 'Yangi mavzu',
+    body: [
+      h('label.field', h('span.field-label', 'Mavzu nomi'), name, h('span.field-hint', 'Savollarni keyingi sahifada qoʻlda yoki fayldan qoʻshasiz.')),
+      h('label.check', shuffle, h('span', 'Javob variantlari tartibini har safar aralashtirish')),
+      err,
+    ],
+    actions: [{ text: 'Bekor qilish' }, { text: 'Yaratish', kind: 'primary', icon: 'plus', onClick: submit }],
+  });
+  name.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submit(m);
+    }
+  });
+  setTimeout(() => name.focus(), 60);
+}
+
+// ========================================================= mavzu sahifasi
+function topicEditor(body, ctx, state, tid) {
+  let topic = null;
+  let questions = null;
+  const head = h('div');
+  const search = searchBox('Savol yoki variant matni boʻyicha qidirish', () => paint());
+  const list = h('div', spinner('Savollar yuklanmoqda…'));
+  const fileInput = (onFile) => {
+    const input = h('input', { type: 'file', accept: '.txt,text/plain', hidden: true });
+    input.addEventListener('change', () => {
+      const file = input.files[0];
+      input.value = '';
+      if (file) onFile(file);
+    });
+    return input;
+  };
+  const appendInput = fileInput(async (file) => {
+    if ((await reviewFile(file, { append: topic })) === 'saved') reload();
+  });
+  const replaceInput = fileInput(async (file) => {
+    if ((await reviewFile(file, { replace: topic })) === 'saved') reload();
+  });
+  body.append(
+    h('a.back-link.adm-back', { href: '#/admin/topics' }, icon('left', 16), 'Barcha mavzular'),
+    head,
+    h('div.adm-toolbar', search.el, h('span.small.muted.adm-q-count')),
+    list,
+    appendInput,
+    replaceInput);
+
+  async function reload() {
+    try {
+      const data = await api(`/api/admin/topics/${tid}/questions`);
+      if (!state.alive) return;
+      topic = data.topic;
+      questions = data.questions;
+    } catch (e) {
+      if (state.alive) body.replaceChildren(emptyState('alert', 'Mavzuni ochib boʻlmadi', e.message, h('a.btn.primary', { href: '#/admin/topics' }, 'Mavzular')));
+      return;
+    }
+    paintHead();
+    paint();
+    state.loadOverview();
   }
+
+  function paintHead() {
+    const shuffle = h('input', { type: 'checkbox', checked: topic.shuffle, 'aria-label': 'Variantlarni aralashtirish' });
+    shuffle.addEventListener('change', async () => {
+      try {
+        const res = await api(`/api/admin/topics/${tid}`, { method: 'PATCH', body: { shuffle: shuffle.checked } });
+        topic.shuffle = res.topic.shuffle;
+        toast(topic.shuffle ? 'Variantlar endi aralashtiriladi' : 'Variantlar kiritilgan tartibda beriladi', 'success');
+      } catch (e) {
+        shuffle.checked = !shuffle.checked;
+        toast(e.message, 'error');
+      }
+    });
+    head.replaceChildren(h('div.card.adm-topic-head',
+      h('div.adm-topic-title',
+        h('h2', topic.name),
+        h('button.icon-btn', { type: 'button', title: 'Nomini oʻzgartirish', 'aria-label': 'Nomini oʻzgartirish', onclick: rename }, icon('edit', 17)),
+        topic.active ? null : h('span.badge.bad', icon('lock', 11), 'yopiq')),
+      h('div.small.muted', `${topic.questionCount} ta savol · yaratilgan: ${fmtDate(topic.createdAt)}${topic.createdBy ? ` · ${topic.createdBy}` : ''}${topic.sourceFile ? ` · fayl: ${topic.sourceFile}` : ''}`),
+      h('div.adm-topic-switches',
+        activeSwitch(topic, () => paintHead()),
+        h('label.switch', shuffle, h('span.slider'), h('span.small', 'variantlarni aralashtirish'))),
+      h('div.adm-topic-actions',
+        h('button.btn.primary', { type: 'button', onclick: () => questionDialog(tid, null, reload) }, icon('plus', 16), 'Savol qoʻshish'),
+        h('button.btn.ghost', { type: 'button', onclick: () => appendInput.click() }, icon('upload', 16), 'Fayldan savol qoʻshish'),
+        h('button.btn.ghost', { type: 'button', onclick: () => replaceInput.click(), disabled: !topic.questionCount }, icon('refresh', 16), 'Fayl bilan almashtirish'),
+        topic.questionCount ? h('a.btn.ghost', { href: `/api/admin/topics/${tid}/export`, download: `${topic.name}.txt` }, icon('download', 16), 'Yuklab olish') : null)));
+  }
+
+  function paint() {
+    const q = search.value().toLocaleLowerCase();
+    const shown = questions
+      .map((item, i) => ({ item, n: i + 1 }))
+      .filter(({ item }) => !q || item.text.toLocaleLowerCase().includes(q) || item.options.some((o) => o.toLocaleLowerCase().includes(q)));
+    body.querySelector('.adm-q-count').textContent = q ? `topildi: ${shown.length} / ${questions.length}` : `${questions.length} ta savol`;
+    if (!questions.length) {
+      list.replaceChildren(emptyState('file', 'Bu mavzuda hali savol yoʻq',
+        'Savollarni qoʻlda qoʻshing yoki .txt fayldan yuklang. Savoli yoʻq mavzu foydalanuvchilarga koʻrinmaydi.',
+        h('button.btn.primary', { type: 'button', onclick: () => questionDialog(tid, null, reload) }, icon('plus', 16), 'Birinchi savolni qoʻshish')));
+      return;
+    }
+    list.replaceChildren(shown.length
+      ? h('ol.preview-list.adm-qlist', shown.map(({ item, n }) => h('li.preview-q',
+        h('div.preview-text', h('span.review-n', String(n)), h('span', item.text),
+          h('span.adm-q-tools',
+            h('button.icon-btn', { type: 'button', title: 'Tahrirlash', 'aria-label': `${n}-savolni tahrirlash`, onclick: () => questionDialog(tid, item, reload) }, icon('edit', 16)),
+            h('button.icon-btn.danger', { type: 'button', title: 'Oʻchirish', 'aria-label': `${n}-savolni oʻchirish`, onclick: () => removeQuestion(item, n) }, icon('trash', 16)))),
+        h('ul.review-opts', item.options.map((o, j) => h('li', { class: j === item.correct ? 'is-correct' : '' }, h('span.opt-key.sm', LETTERS[j]), h('span.review-opt', o)))))))
+      : h('div.card.muted.center', 'Hech narsa topilmadi.'));
+  }
+
+  async function rename() {
+    const name = await promptDialog({ title: 'Mavzu nomini oʻzgartirish', label: 'Yangi nom', value: topic.name, validate: (v) => (v ? '' : 'Nomni kiriting') });
+    if (!name || name === topic.name) return;
+    try {
+      await api(`/api/admin/topics/${tid}`, { method: 'PATCH', body: { name } });
+      toast('Mavzu nomi oʻzgartirildi', 'success');
+      reload();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  async function removeQuestion(item, n) {
+    const ok = await confirmDialog({ title: `${n}-savolni oʻchirish`, message: `«${item.text.slice(0, 120)}» savoli oʻchiriladi.`, okText: 'Oʻchirish', danger: true });
+    if (!ok) return;
+    try {
+      await api(`/api/admin/topics/${tid}/questions/${item.id}`, { method: 'DELETE' });
+      toast('Savol oʻchirildi', 'success');
+      reload();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  reload();
+}
+
+/** Ko'p variantli savolni qo'lda qo'shish yoki tahrirlash (2–10 variant, bitta to'g'ri javob). */
+function questionDialog(tid, item, onSaved) {
+  const MAX = 10;
+  const text = h('textarea.adm-q-text', { rows: 3, maxlength: 5000, placeholder: 'Savol matni' });
+  text.value = item ? item.text : '';
+  const rows = h('div.adm-opts');
+  const err = h('div.field-error');
+  const group = `correct-${Math.random().toString(36).slice(2)}`;
+  let opts = item ? item.options.map((o, j) => ({ text: o, correct: j === item.correct })) : [0, 1, 2, 3].map(() => ({ text: '', correct: false }));
+  const addBtn = h('button.btn.ghost.sm', { type: 'button', onclick: () => { sync(); opts.push({ text: '', correct: false }); paint(opts.length - 1); } }, icon('plus', 14), 'Variant qoʻshish');
+
+  function sync() {
+    [...rows.children].forEach((row, j) => {
+      opts[j].text = row.querySelector('input[type=text]').value;
+      opts[j].correct = row.querySelector('input[type=radio]').checked;
+    });
+  }
+
+  function paint(focusIndex) {
+    rows.replaceChildren(...opts.map((o, j) => {
+      const radio = h('input', { type: 'radio', name: group, checked: o.correct, 'aria-label': `${LETTERS[j]} — toʻgʻri javob`, title: 'Toʻgʻri javob' });
+      const input = h('input', { type: 'text', value: o.text, maxlength: 2000, placeholder: `${LETTERS[j]} variant` });
+      return h(`div.adm-opt${o.correct ? '.is-correct' : ''}`,
+        h('label.adm-opt-key', radio, h('span.opt-key.sm', LETTERS[j])),
+        input,
+        h('button.icon-btn', { type: 'button', title: 'Variantni olib tashlash', 'aria-label': `${LETTERS[j]} variantni olib tashlash`, disabled: opts.length <= 2, onclick: () => { sync(); opts.splice(j, 1); paint(); } }, icon('x', 16)));
+    }));
+    rows.querySelectorAll('input[type=radio]').forEach((r) => r.addEventListener('change', () => {
+      sync();
+      paint();
+    }));
+    addBtn.disabled = opts.length >= MAX;
+    if (focusIndex !== undefined) rows.children[focusIndex]?.querySelector('input[type=text]').focus();
+  }
+
+  /** Saqlaydi; again=true bo'lsa oyna ochiq qoladi va keyingi savol uchun tozalanadi. */
+  async function save(m, again = false) {
+    sync();
+    err.textContent = '';
+    const filled = opts.filter((o) => o.text.trim());
+    const correct = filled.findIndex((o) => o.correct);
+    if (!text.value.trim()) return fail('Savol matnini kiriting', text);
+    if (filled.length < 2) return fail('Kamida 2 ta variant kiriting');
+    if (correct < 0) return fail('Toʻgʻri javobni belgilang (variant yonidagi doiracha)');
+    const body = { text: text.value, options: filled.map((o) => o.text), correct };
+    try {
+      await api(item ? `/api/admin/topics/${tid}/questions/${item.id}` : `/api/admin/topics/${tid}/questions`, { method: item ? 'PUT' : 'POST', body });
+    } catch (e) {
+      return fail(e.message);
+    }
+    toast(item ? 'Savol saqlandi' : 'Savol qoʻshildi', 'success');
+    onSaved();
+    if (!again) {
+      m.close();
+      return true;
+    }
+    text.value = '';
+    opts = [0, 1, 2, 3].map(() => ({ text: '', correct: false }));
+    paint();
+    text.focus();
+    return true;
+  }
+
+  function fail(message, el) {
+    err.textContent = message;
+    if (el) el.focus();
+    return false;
+  }
+
+  const actions = item
+    ? [{ text: 'Bekor qilish' }, { text: 'Saqlash', kind: 'primary', icon: 'check', onClick: (m) => save(m) }]
+    : [
+      { text: 'Bekor qilish' },
+      { text: 'Qoʻshish va yana', icon: 'plus', onClick: (m) => save(m, true) },
+      { text: 'Qoʻshish', kind: 'primary', icon: 'check', onClick: (m) => save(m) },
+    ];
+  const modal = openModal({
+    title: item ? 'Savolni tahrirlash' : 'Yangi savol',
+    wide: true,
+    body: [
+      h('label.field', h('span.field-label', 'Savol'), text),
+      h('div.field', h('span.field-label', 'Javob variantlari — toʻgʻrisini doiracha bilan belgilang'), rows, h('div', addBtn)),
+      h('p.small.muted', 'Hozircha faqat bitta toʻgʻri javobli test savollari. Boʻsh qolgan variantlar hisobga olinmaydi.'),
+      err,
+    ],
+    actions,
+  });
+  text.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      save(modal);
+    }
+  });
+  paint();
+  setTimeout(() => text.focus(), 60);
 }
 
 // ======================================================= foydalanuvchilar

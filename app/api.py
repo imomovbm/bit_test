@@ -8,7 +8,7 @@ import logging
 import random
 import re
 import sqlite3
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from aiohttp import web
 
@@ -16,7 +16,7 @@ from . import balloon, config
 from .db import now_ms
 from .hub import prepare_question
 from .keys import DB, HUB, USER
-from .parser import format_questions, parse_questions
+from .parser import QuestionError, format_questions, parse_questions, validate_question
 from .security import RateLimiter, hash_password, new_token, token_hash, verify_password
 
 log = logging.getLogger("testduel.api")
@@ -55,6 +55,36 @@ async def error_middleware(request: web.Request, handler):
         return web.json_response({"error": "Serverda kutilmagan xatolik yuz berdi"}, status=500, dumps=_dumps)
 
 
+def same_origin(request: web.Request) -> bool:
+    """Brauzer boshqa saytdan yuborgan so'rovlarni (CSRF, WebSocket o'g'irlash) rad etish uchun."""
+    origin = request.headers.get("Origin")
+    if not origin:
+        return True  # brauzer bo'lmagan mijozlar (curl, testlar) Origin yubormaydi
+    host = urlsplit(origin).netloc.lower()
+    allowed = {request.host.lower()}
+    if config.TRUST_PROXY and request.headers.get("X-Forwarded-Host"):
+        allowed.add(request.headers["X-Forwarded-Host"].split(",")[0].strip().lower())
+    return host in allowed
+
+
+MAX_BODY = 256 * 1024  # oddiy so'rovlar uchun; katta fayllar faqat /api/admin/ orqali yuklanadi
+
+
+@web.middleware
+async def guard_middleware(request: web.Request, handler):
+    """Boshqa saytdan yuborilgan so'rovlarni va boshqaruvdan tashqaridagi katta so'rovlarni rad etadi."""
+    writes = request.path.startswith("/api/") and request.method not in ("GET", "HEAD", "OPTIONS")
+    if (writes or request.path == "/ws") and not same_origin(request):
+        return web.json_response({"error": "So'rov boshqa saytdan yuborilgan"}, status=403, dumps=_dumps)
+    if writes and not request.path.startswith("/api/admin/"):
+        size = request.content_length
+        if size is None and request.body_exists:
+            return web.json_response({"error": "So'rov hajmi ko'rsatilmagan"}, status=411, dumps=_dumps)
+        if size and size > MAX_BODY:
+            return web.json_response({"error": "So'rov juda katta"}, status=413, dumps=_dumps)
+    return await handler(request)
+
+
 @web.middleware
 async def session_middleware(request: web.Request, handler):
     request[USER] = None
@@ -67,6 +97,8 @@ async def session_middleware(request: web.Request, handler):
 
 # ------------------------------------------------------------------ helpers
 async def read_json(request: web.Request) -> dict:
+    if request.content_type != "application/json":
+        raise ApiError("So'rov JSON formatida bo'lishi kerak", 415)
     try:
         data = await request.json()
     except Exception:
@@ -114,9 +146,28 @@ def public_user(user: dict) -> dict:
     return {"id": user["id"], "login": user["login"], "isAdmin": bool(user["is_admin"]) or owner, "isSuperadmin": owner}
 
 
+# Lotin harflariga o'xshash kirill/yunon harflari: "аdmin" (kirillcha "а") kabi soxta loginlarni aniqlash uchun.
+LOOKALIKES = str.maketrans({
+    "а": "a", "в": "b", "е": "e", "ё": "e", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c", "т": "t",
+    "у": "y", "х": "x", "і": "i", "ї": "i", "ј": "j", "ѕ": "s", "ԁ": "d", "ӏ": "i", "l": "i", "ɑ": "a", "α": "a", "ο": "o",
+    "ρ": "p", "ν": "v", "ι": "i", "κ": "k", "τ": "t", "χ": "x", "ε": "e", "μ": "m", "0": "o", "1": "i",
+    "_": "", ".": "", "-": "",
+})
+
+
+def login_skeleton(login: str) -> str:
+    return login.casefold().translate(LOOKALIKES)
+
+
 def reserved_login(db, login: str) -> bool:
-    """Bosh administrator logini band: bazada boshqa foydalanuvchilar bo'lsa, uni hech kim egallay olmaydi."""
-    return login.casefold() == config.SUPERADMIN_LOGIN.casefold() and db.count_users() > 0
+    """Bosh administrator logini (va unga o'xshatib yozilgan loginlar) boshqalar uchun band.
+
+    Aynan shu login faqat birinchi foydalanuvchi sifatida ro'yxatdan o'tkazilishi mumkin.
+    """
+    owner = config.SUPERADMIN_LOGIN
+    if login.casefold() == owner.casefold():
+        return db.count_users() > 0
+    return login_skeleton(login) == login_skeleton(owner)
 
 
 def ensure_superadmin(db) -> None:
@@ -158,13 +209,19 @@ def topic_json(t: dict) -> dict:
         "name": t["name"],
         "questionCount": t["question_count"],
         "shuffle": bool(t["shuffle_options"]),
+        "active": bool(t.get("active", 1)),
         "sourceFile": t.get("source_file"),
         "createdAt": t["created_at"],
-        "createdBy": t.get("created_by"),
+        "createdBy": t.get("author"),
     }
 
 
 def client_ip(request: web.Request) -> str:
+    if config.TRUST_PROXY:
+        # proksi qo'shgan oxirgi manzil — mijoz uni soxtalashtira olmaydi
+        forwarded = [p.strip() for p in request.headers.get("X-Forwarded-For", "").split(",") if p.strip()]
+        if forwarded:
+            return forwarded[-1]
     return request.remote or "?"
 
 
@@ -190,7 +247,7 @@ async def start_session(request: web.Request, user: dict) -> web.Response:
         httponly=True,
         samesite="Lax",
         path="/",
-        secure=request.secure,
+        secure=request.secure or (config.TRUST_PROXY and request.headers.get("X-Forwarded-Proto", "").startswith("https")),
     )
     return resp
 
@@ -266,7 +323,7 @@ async def me(request: web.Request):
 @routes.get("/api/topics")
 async def topics_list(request: web.Request):
     require_user(request)
-    topics = [topic_json(t) for t in request.app[DB].list_topics() if t["question_count"] > 0]
+    topics = [topic_json(t) for t in request.app[DB].list_topics() if t["question_count"] > 0 and t["active"]]
     return ok({"topics": topics})
 
 
@@ -275,8 +332,10 @@ async def practice_questions(request: web.Request):
     require_user(request)
     db = request.app[DB]
     topic = db.get_topic(int_param(request, "tid"))
-    if not topic:
+    if not topic or not topic["active"]:
         raise ApiError("Mavzu topilmadi", 404)
+    if topic["question_count"] < 1:
+        raise ApiError("Bu mavzuda savollar yo'q")
     count = request.query.get("count", "all")
     limit = None
     if count != "all":
@@ -330,6 +389,7 @@ async def my_stats(request: web.Request):
 
 # -------------------------------------------------------------- balloon pop
 balloon_rng = random.SystemRandom()
+MAX_BALLOON_GAMES = 300  # bitta foydalanuvchi uchun saqlanadigan o'yinlar
 
 
 class TopicQuestions:
@@ -379,12 +439,14 @@ async def balloon_create(request: web.Request):
     db = request.app[DB]
     topic_id = data.get("topicId")
     topic = db.get_topic(topic_id) if isinstance(topic_id, int) and not isinstance(topic_id, bool) else None
-    if not topic:
+    if not topic or not topic["active"]:
         if topic_id is None:
             raise ApiError("Mavzuni tanlang")
-        raise ApiError("Mavzu topilmadi — u o'chirilgan bo'lishi mumkin", 404)
+        raise ApiError("Mavzu topilmadi — u o'chirilgan yoki yopilgan bo'lishi mumkin", 404)
     if topic["question_count"] < 1:
         raise ApiError("Bu mavzuda savollar yo'q")
+    if db.count_balloon_games(user["id"]) >= MAX_BALLOON_GAMES:
+        raise ApiError(f"O'yinlar soni {MAX_BALLOON_GAMES} taga yetdi. Tarixdan eskilarini o'chiring")
     state = balloon.new_game(topic_id=topic["id"], topic_name=topic["name"], now_ms=now_ms(), **settings)
     game_id = db.create_balloon_game(user["id"], topic["id"], topic["name"], state)
     log.info("Balloon Pop #%d: %s vs %s (%s) — %s", game_id, *(t["name"] for t in settings["teams"]), topic["name"], user["login"])
@@ -475,9 +537,12 @@ async def admin_create_topic(request: web.Request):
     data = await read_json(request)
     db = request.app[DB]
     name = _check_topic_name(db, data.get("name"))
-    parsed = parse_questions(_check_content(data))
-    if not parsed["questions"]:
-        raise ApiError("Faylda yaroqli savol topilmadi. Fayl formatini tekshiring")
+    if data.get("content") is None:  # bo'sh mavzu: savollar keyin qo'lda yoki fayldan qo'shiladi
+        parsed = {"questions": [], "errors": []}
+    else:
+        parsed = parse_questions(_check_content(data))
+        if not parsed["questions"]:
+            raise ApiError("Faylda yaroqli savol topilmadi. Fayl formatini tekshiring")
     source = str(data.get("fileName") or "")[:255] or None
     try:
         topic_id = db.create_topic(name, parsed["questions"], bool(data.get("shuffle", True)), source, user["id"])
@@ -555,9 +620,84 @@ async def admin_update_topic(request: web.Request):
     data = await read_json(request)
     name = _check_topic_name(db, data["name"], tid) if "name" in data else None
     shuffle = bool(data["shuffle"]) if "shuffle" in data else None
-    db.update_topic(tid, name=name, shuffle=shuffle)
+    active = bool(data["active"]) if "active" in data else None
+    db.update_topic(tid, name=name, shuffle=shuffle, active=active)
+    if active is False:  # yopilgan mavzuni kutayotganlar navbatdan chiqariladi
+        request.app[HUB].topic_removed(tid, "Siz kutayotgan mavzu yopildi")
     request.app[HUB].broadcast("topics", {})
     return ok({"topic": topic_json(db.get_topic(tid))})
+
+
+# --------------------------------------------- savollarni qo'lda boshqarish
+def own_topic(request: web.Request) -> dict:
+    topic = request.app[DB].get_topic(int_param(request, "tid"))
+    if not topic:
+        raise ApiError("Mavzu topilmadi", 404)
+    return topic
+
+
+def checked_question(data: dict) -> dict:
+    try:
+        return validate_question(data)
+    except QuestionError as e:
+        raise ApiError(str(e))
+
+
+def question_json(q: dict) -> dict:
+    return {"id": q["id"], "text": q["text"], "options": q["options"], "correct": q["correct"]}
+
+
+@routes.post("/api/admin/topics/{tid}/questions")
+async def admin_add_question(request: web.Request):
+    """Mavzuga bitta savolni qo'lda qo'shish (ko'p variantli, bitta to'g'ri javob)."""
+    require_admin(request)
+    data = await read_json(request)
+    topic = own_topic(request)
+    q = checked_question(data)
+    db = request.app[DB]
+    (qid,) = db.append_questions(topic["id"], [q])
+    request.app[HUB].broadcast("topics", {})
+    return ok({"question": question_json(db.question_by_id(qid, topic["id"])), "topic": topic_json(db.get_topic(topic["id"]))}, status=201)
+
+
+@routes.put("/api/admin/topics/{tid}/questions/{qid}")
+async def admin_edit_question(request: web.Request):
+    require_admin(request)
+    data = await read_json(request)
+    topic = own_topic(request)
+    q = checked_question(data)
+    db = request.app[DB]
+    qid = int_param(request, "qid")
+    if not db.update_question(topic["id"], qid, q):
+        raise ApiError("Savol topilmadi", 404)
+    return ok({"question": question_json(db.question_by_id(qid, topic["id"]))})
+
+
+@routes.delete("/api/admin/topics/{tid}/questions/{qid}")
+async def admin_delete_question(request: web.Request):
+    require_admin(request)
+    topic = own_topic(request)
+    db = request.app[DB]
+    if not db.delete_question(topic["id"], int_param(request, "qid")):
+        raise ApiError("Savol topilmadi", 404)
+    request.app[HUB].broadcast("topics", {})
+    return ok({"topic": topic_json(db.get_topic(topic["id"]))})
+
+
+@routes.post("/api/admin/topics/{tid}/append")
+async def admin_append_questions(request: web.Request):
+    """Fayldagi savollarni mavjud mavzu oxiriga qo'shish."""
+    user = require_admin(request)
+    data = await read_json(request)
+    topic = own_topic(request)
+    parsed = parse_questions(_check_content(data))
+    if not parsed["questions"]:
+        raise ApiError("Faylda yaroqli savol topilmadi. Fayl formatini tekshiring")
+    db = request.app[DB]
+    db.append_questions(topic["id"], parsed["questions"])
+    log.info("Mavzuga %d savol qo'shildi: %s — %s", len(parsed["questions"]), topic["name"], user["login"])
+    request.app[HUB].broadcast("topics", {})
+    return ok({"topic": topic_json(db.get_topic(topic["id"])), "added": len(parsed["questions"]), "skipped": len(parsed["errors"])})
 
 
 @routes.delete("/api/admin/topics/{tid}")

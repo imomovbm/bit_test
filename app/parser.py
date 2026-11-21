@@ -93,6 +93,42 @@ def parse_questions(text: str) -> dict:
     return {"questions": questions, "errors": errors, "blocks": number}
 
 
+class QuestionError(ValueError):
+    """Qo'lda kiritilgan savol noto'g'ri (xabar foydalanuvchiga ko'rsatiladi)."""
+
+
+def _plain(value, what: str, limit: int) -> str:
+    if not isinstance(value, str):
+        raise QuestionError(f"{what} matn bo'lishi kerak")
+    text = _clean(value.replace("\r\n", "\n").replace("\r", "\n"))
+    if not text:
+        raise QuestionError(f"{what} bo'sh bo'lmasin")
+    if len(text) > limit:
+        raise QuestionError(f"{what} {limit} belgidan oshmasin")
+    if QUESTION_SEP.search(text) or OPTION_SEP.search(text):
+        raise QuestionError(f"{what} ichida ==== yoki ++++ bo'lmasin (bu belgilar fayl formatida ajratuvchi)")
+    return text
+
+
+def validate_question(data) -> dict:
+    """Boshqaruv panelida qo'lda kiritilgan savolni tekshiradi: {"text", "options", "correct"}."""
+    if not isinstance(data, dict):
+        raise QuestionError("Savol ma'lumotlari noto'g'ri")
+    text = _plain(data.get("text"), "Savol matni", MAX_QUESTION_LEN)
+    raw = data.get("options")
+    if not isinstance(raw, list):
+        raise QuestionError("Javob variantlari ro'yxat bo'lishi kerak")
+    if not 2 <= len(raw) <= MAX_OPTIONS:
+        raise QuestionError(f"Javob variantlari 2 tadan {MAX_OPTIONS} tagacha bo'lishi kerak")
+    options = [_plain(o, f"{i + 1}-variant", MAX_OPTION_LEN) for i, o in enumerate(raw)]
+    if len({o.casefold() for o in options}) != len(options):
+        raise QuestionError("Javob variantlari takrorlanmasin")
+    correct = data.get("correct")
+    if isinstance(correct, bool) or not isinstance(correct, int) or not 0 <= correct < len(options):
+        raise QuestionError("To'g'ri javobni belgilang")
+    return {"text": text, "options": options, "correct": correct}
+
+
 def format_questions(questions: list[dict]) -> str:
     """Savollarni yuklash formatidagi matnga aylantiradi (``parse_questions`` ning teskarisi).
 

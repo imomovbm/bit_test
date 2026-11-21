@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS topics (
     name            TEXT NOT NULL,
     name_key        TEXT NOT NULL UNIQUE,
     shuffle_options INTEGER NOT NULL DEFAULT 1,
+    active          INTEGER NOT NULL DEFAULT 1,
     question_count  INTEGER NOT NULL DEFAULT 0,
     source_file     TEXT,
     created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -103,6 +104,7 @@ CREATE TABLE IF NOT EXISTS settings (
 MIGRATIONS = (
     ("users", "blocked", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "last_seen_at", "INTEGER"),
+    ("topics", "active", "INTEGER NOT NULL DEFAULT 1"),
 )
 
 
@@ -236,15 +238,18 @@ class Database:
     def list_topics(self) -> list[dict]:
         return self._all(
             """
-            SELECT t.id, t.name, t.shuffle_options, t.question_count, t.source_file, t.created_at,
-                   u.login AS created_by
+            SELECT t.id, t.name, t.shuffle_options, t.active, t.question_count, t.source_file, t.created_at,
+                   u.login AS author
             FROM topics t LEFT JOIN users u ON u.id = t.created_by
             ORDER BY t.created_at DESC, t.id DESC
             """
         )
 
     def get_topic(self, topic_id: int) -> dict | None:
-        return self._one("SELECT * FROM topics WHERE id = ?", (topic_id,))
+        return self._one(
+            "SELECT t.*, u.login AS author FROM topics t LEFT JOIN users u ON u.id = t.created_by WHERE t.id = ?",
+            (topic_id,),
+        )
 
     def topic_name_taken(self, name: str, exclude_id: int | None = None) -> bool:
         row = self.conn.execute(
@@ -270,6 +275,45 @@ class Database:
             )
         return topic_id
 
+    @staticmethod
+    def _question_row(topic_id: int, position: int, q: dict) -> tuple:
+        return (topic_id, position, q["text"], json.dumps(q["options"], ensure_ascii=False), q["correct"])
+
+    def _recount(self, topic_id: int) -> None:
+        self.conn.execute(
+            "UPDATE topics SET question_count = (SELECT COUNT(*) FROM questions WHERE topic_id = ?) WHERE id = ?",
+            (topic_id, topic_id),
+        )
+
+    def append_questions(self, topic_id: int, questions: list[dict]) -> list[int]:
+        """Mavzu oxiriga savollar qo'shadi; yangi savollar identifikatorlarini qaytaradi."""
+        ids = []
+        with self.tx():
+            start = self.conn.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM questions WHERE topic_id = ?", (topic_id,)
+            ).fetchone()[0]
+            for i, q in enumerate(questions):
+                cur = self.conn.execute(
+                    "INSERT INTO questions (topic_id, position, text, options, correct) VALUES (?, ?, ?, ?, ?)",
+                    self._question_row(topic_id, start + i, q),
+                )
+                ids.append(cur.lastrowid)
+            self._recount(topic_id)
+        return ids
+
+    def update_question(self, topic_id: int, question_id: int, q: dict) -> bool:
+        cur = self.conn.execute(
+            "UPDATE questions SET text = ?, options = ?, correct = ? WHERE id = ? AND topic_id = ?",
+            (q["text"], json.dumps(q["options"], ensure_ascii=False), q["correct"], question_id, topic_id),
+        )
+        return cur.rowcount > 0
+
+    def delete_question(self, topic_id: int, question_id: int) -> bool:
+        with self.tx():
+            cur = self.conn.execute("DELETE FROM questions WHERE id = ? AND topic_id = ?", (question_id, topic_id))
+            self._recount(topic_id)
+        return cur.rowcount > 0
+
     def replace_topic_questions(self, topic_id: int, questions: list[dict], source_file: str | None) -> None:
         """Mavzu savollarini yangi fayldagilar bilan almashtiradi (mavzu nomi va sozlamalari saqlanadi)."""
         with self.tx():
@@ -286,7 +330,9 @@ class Database:
                 (len(questions), source_file, topic_id),
             )
 
-    def update_topic(self, topic_id: int, name: str | None = None, shuffle: bool | None = None) -> None:
+    def update_topic(self, topic_id: int, name: str | None = None, shuffle: bool | None = None, active: bool | None = None) -> None:
+        if active is not None:
+            self.conn.execute("UPDATE topics SET active = ? WHERE id = ?", (int(active), topic_id))
         if name is not None:
             name = " ".join(name.split())
             self.conn.execute("UPDATE topics SET name = ?, name_key = ? WHERE id = ?", (name, name_key(name), topic_id))
@@ -464,6 +510,9 @@ class Database:
             (owner_id, limit),
         )
         return [self._balloon_row(r) for r in rows]
+
+    def count_balloon_games(self, owner_id: int) -> int:
+        return self._scalar("SELECT COUNT(*) FROM balloon_games WHERE owner_id = ?", (owner_id,))
 
     def delete_balloon_game(self, game_id: int) -> None:
         self.conn.execute("DELETE FROM balloon_games WHERE id = ?", (game_id,))

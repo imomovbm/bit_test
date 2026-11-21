@@ -82,9 +82,14 @@ Menyudagi **Boshqaruv** bo'limi faqat administratorlarga ko'rinadi (server ham b
 
 - **Umumiy ko'rinish** — foydalanuvchilar, onlayn, mavzular, duellar, mashg'ulotlar va Balloon Pop o'yinlari
   statistikasi; yangi foydalanuvchilar va so'nggi faollik.
-- **Test mavzulari** — `.txt` fayllarni yuklash (bir nechtasini birdaniga, har biriga nom so'raladi),
-  qidirish, nomini o'zgartirish, variantlarni aralashtirish, savollarni ko'rish, mavzuni **yangi fayl bilan
-  almashtirish** (nom va tarix saqlanadi), **.txt fayl sifatida yuklab olish** (tahrirlab qayta yuklash uchun), o'chirish.
+- **Test mavzulari**
+  - **Yangi mavzu** — nom berib bo'sh mavzu yaratish, keyin savollarni qo'shish;
+  - `.txt` fayl yuklash — mavzu fayldagi savollar bilan birga yaratiladi (bir nechta faylni birdaniga);
+  - mavzu sahifasida: savollarni **qo'lda qo'shish, tahrirlash va o'chirish** (ko'p variantli, 2–10 variant,
+    bitta to'g'ri javob), **fayldan savol qo'shish** (mavzu oxiriga), fayl bilan almashtirish, `.txt` sifatida
+    yuklab olish, nomini o'zgartirish, variantlarni aralashtirish;
+  - **Faol / yopiq** — yopiq mavzu foydalanuvchilarga (duel, o'rganish, Balloon Pop) ko'rinmaydi va unda o'ynab
+    bo'lmaydi; uni kutayotganlar navbatdan chiqariladi. Savoli yo'q mavzu ham ko'rinmaydi.
 - **Foydalanuvchilar** — qidirish va saralash (adminlar, onlayn, bloklangan), **yangi akkaunt yaratish**
   (tasodifiy parol bilan), admin huquqini berish/olish, **bloklash** (foydalanuvchi darhol tizimdan chiqariladi va
   kira olmaydi), parolni tiklash, o'chirish.
@@ -121,6 +126,7 @@ Keyingi savol
 | `TD_ADMINS` | — | Vergul bilan ajratilgan loginlar; ro'yxatdan o'tganda admin bo'ladi |
 | `TD_SUPERADMIN` | `admin` | Bosh administrator (tizim egasi) logini |
 | `TD_SUPERADMIN_PASSWORD` | — | Berilsa: bosh administrator akkauntini yaratadi yoki parolini shu qiymatga tiklaydi |
+| `TD_TRUST_PROXY` | — | `1` — teskari proksi (Nginx) ortida: mijoz IP manzili `X-Forwarded-For` dan olinadi (Railway'da avtomatik) |
 | `TD_DUEL_QUESTIONS` | `15` | Dueldagi savollar soni |
 | `TD_QUESTION_TIME` | `15` | Bitta savol uchun vaqt (soniya) |
 | `TD_AFK_LIMIT` | `30` | Javobsiz qolish chegarasi (soniya) |
@@ -160,6 +166,12 @@ location / {
 ```
 
 Taklif havolalari to'g'ri ishlashi uchun saytni domen orqali (HTTPS tavsiya etiladi) oching.
+Nginx orqasida `TD_TRUST_PROXY=1` qo'ying — urinishlar cheklovi har bir foydalanuvchining haqiqiy IP manzili bo'yicha ishlaydi.
+
+**Xavfsizlik:** barcha huquqlar serverda tekshiriladi; parollar scrypt bilan saqlanadi, sessiya tokenlari bazada
+xesh ko'rinishida; boshqa saytlardan yuborilgan so'rovlar (CSRF) va WebSocket ulanishlari rad etiladi; API faqat
+JSON qabul qiladi; boshqaruvdan tashqaridagi so'rovlar hajmi cheklangan; `admin` loginiga o'xshatib yozilgan
+loginlar (masalan, kirillcha «а» bilan) ro'yxatdan o'tkazilmaydi.
 
 ## Testlar
 

@@ -42,6 +42,12 @@ SUPERADMIN_LOGIN = os.environ.get("TD_SUPERADMIN", "admin").strip() or "admin"
 # bor bo'lsa — paroli shu qiymatga tiklanadi (parol unutilganda tiklash uchun).
 SUPERADMIN_PASSWORD = os.environ.get("TD_SUPERADMIN_PASSWORD") or None
 
+# Ilova teskari proksi (Nginx, Railway va h.k.) ortida ishlasa: mijozning haqiqiy IP manzili X-Forwarded-For dan,
+# HTTPS esa X-Forwarded-Proto dan olinadi. Railway'da avtomatik yoqiladi.
+TRUST_PROXY = os.environ.get("TD_TRUST_PROXY", "") == "1" or any(
+    os.environ.get(k) for k in ("RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID")
+)
+
 SESSION_COOKIE = "td_sid"
 SESSION_DAYS = 30
 

@@ -659,6 +659,30 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
 .adm-online { color: var(--success); font-weight: 700; }
 .table tr.is-blocked td:not(:last-child) { opacity: 0.55; }
 .icon-btn.on { color: var(--primary); }
+.adm-topic-link { font-weight: 750; color: var(--text); text-decoration: none; }
+.adm-topic-link:hover { color: var(--primary); text-decoration: underline; }
+.table tr.is-inactive td.adm-td-main, .table tr.is-inactive td.adm-td-count { opacity: 0.55; }
+.adm-on { color: var(--success); font-weight: 700; }
+.adm-off { color: var(--danger); font-weight: 700; }
+.adm-back { margin-bottom: -4px; }
+.adm-topic-head { display: flex; flex-direction: column; gap: 10px; }
+.adm-topic-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.adm-topic-title h2 { font-size: 22px; overflow-wrap: anywhere; }
+.adm-topic-switches { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+.adm-topic-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; border-top: 1px dashed var(--border); padding-top: 12px; }
+.adm-q-count { margin-left: auto; }
+.adm-qlist { margin-top: 0; }
+.adm-qlist .preview-q { background: var(--surface); }
+.adm-qlist .preview-text > span:nth-child(2) { flex: 1; min-width: 0; }
+.adm-q-tools { display: inline-flex; gap: 2px; margin: -6px -6px 0 auto; flex: none; }
+textarea.adm-q-text { min-height: 84px; resize: vertical; line-height: 1.45; }
+.adm-opts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.adm-opt { display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 12px; border: 1.5px solid transparent; transition: border-color 0.15s, background-color 0.15s; }
+.adm-opt.is-correct { border-color: color-mix(in srgb, var(--success) 45%, transparent); background: var(--success-soft); }
+.adm-opt.is-correct .opt-key { background: var(--success); color: #fff; border-color: var(--success); }
+.adm-opt input[type="text"] { flex: 1; min-width: 0; min-height: 40px; padding: 8px 11px; }
+.adm-opt-key { display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; cursor: pointer; }
+.adm-opt-key input { width: 18px; height: 18px; accent-color: var(--success); margin: 0; }
 .cred-box { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; padding: 14px 16px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); font-family: var(--mono); font-size: 15px; }
 .cred-box b { overflow-wrap: anywhere; }
 .auth-closed { margin-bottom: 14px; }

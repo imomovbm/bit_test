@@ -22,6 +22,7 @@ const ROUTES = [
   { path: '/stats', view: statsView, nav: 'stats' },
   { path: '/admin', view: adminView, nav: 'admin', admin: true },
   { path: '/admin/:section', view: adminView, nav: 'admin', admin: true },
+  { path: '/admin/:section/:id', view: adminView, nav: 'admin', admin: true },
 ];
 
 const NAV = [
