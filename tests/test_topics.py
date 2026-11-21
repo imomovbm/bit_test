@@ -6,6 +6,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from app.server import create_app
 
 FILE = "\n++++\n".join(f"Fayl savoli {i}?\n====\n#Ha {i}\n====\nYo'q {i}" for i in range(3))
+OTHER = "\n++++\n".join(f"Boshqa savol {i}?\n====\n#Ha {i}\n====\nYo'q {i}" for i in range(2))
 
 
 def test_topics_questions_and_security(tmp_path):
@@ -69,7 +70,7 @@ async def _flow(tmp_path):
         assert (await call(admin, "DELETE", f"/api/admin/topics/{tid}/questions/{qid}"))[0] == 404
 
         # --- boshqa mavzuning savolini shu mavzu orqali o'zgartirib bo'lmaydi
-        status, other = await call(admin, "POST", "/api/admin/topics", {"name": "Boshqa", "content": FILE})
+        status, other = await call(admin, "POST", "/api/admin/topics", {"name": "Boshqa", "content": OTHER})
         oid = other["topic"]["id"]
         other_q = (await call(admin, "GET", f"/api/admin/topics/{oid}/questions"))[1]["questions"][0]["id"]
         assert (await call(admin, "PUT", f"/api/admin/topics/{tid}/questions/{other_q}", q))[0] == 404
@@ -127,6 +128,89 @@ async def _flow(tmp_path):
         assert r.status == 413
         r = await user.get("/ws", headers={**evil, "Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="})
         assert r.status == 403
+    finally:
+        await admin.close()
+        await user.close()
+        await server.close()
+
+
+def test_bank_api(tmp_path):
+    asyncio.run(_bank_flow(tmp_path))
+
+
+async def _bank_flow(tmp_path):
+    server = TestServer(create_app(db_path=tmp_path / "b.db"))
+    await server.start_server()
+    admin, user = TestClient(server), TestClient(server)
+    try:
+        for c in (admin, user):
+            await c.start_server()
+
+        async def call(client, method, path, body=None):
+            r = await client.request(method, path, json=body)
+            return r.status, await r.json()
+
+        await call(admin, "POST", "/api/auth/register", {"login": "admin", "password": "1234"})
+        await call(user, "POST", "/api/auth/register", {"login": "talaba", "password": "1234"})
+        # --- fayldan bankka (mavzusiz), qayta yuklash takrorlamaydi
+        status, data = await call(admin, "POST", "/api/admin/bank/upload", {"content": FILE, "fileName": "bank.txt"})
+        assert status == 200 and data == {"created": 3, "reused": 0, "skipped": 0}
+        assert (await call(admin, "POST", "/api/admin/bank/upload", {"content": FILE}))[1]["reused"] == 3
+        status, data = await call(admin, "POST", "/api/admin/bank", {"text": "Qo'lda?", "options": ["a", "b"], "correct": 0})
+        assert status == 201
+        manual = data["question"]["id"]
+        status, page = await call(admin, "GET", "/api/admin/bank?per=10&page=1")
+        assert page["total"] == 4 and len(page["questions"]) == 4 and page["questions"][0]["id"] == manual
+        assert (await call(admin, "GET", "/api/admin/bank?topic=none"))[1]["total"] == 4
+        assert (await call(admin, "GET", "/api/admin/bank?search=fayl%20savoli"))[1]["total"] == 3
+        assert (await call(admin, "GET", "/api/admin/bank?page=x"))[0] == 400
+        # juda katta sonlar 500 emas, oddiy xato qaytaradi
+        big = "9" * 25
+        assert (await call(admin, "GET", f"/api/admin/bank?page={big}"))[0] == 200
+        assert (await call(admin, "GET", f"/api/admin/bank?topic={big}"))[0] == 400
+        assert (await call(admin, "GET", f"/api/admin/topics/{big}/questions"))[0] == 404
+        assert (await call(admin, "PATCH", f"/api/admin/users/{big}", {"blocked": True}))[0] == 404
+        assert (await call(admin, "POST", "/api/admin/bank/delete", {"questionIds": [10**30]}))[0] == 400
+        assert (await call(admin, "POST", "/api/admin/bank", {"text": "x", "options": ["a", "b"], "correct": 0, "topicIds": [10**30]}))[0] == 400
+
+        # --- tanlangan savollardan yangi aralash mavzu
+        ids = (await call(admin, "GET", "/api/admin/bank/ids?search=savoli"))[1]["ids"]
+        assert len(ids) == 3
+        tid = (await call(admin, "POST", "/api/admin/topics", {"name": "Aralash"}))[1]["topic"]["id"]
+        status, data = await call(admin, "POST", f"/api/admin/topics/{tid}/link", {"questionIds": ids[:2] + [manual]})
+        assert status == 200 and data["linked"] == 3 and data["topic"]["questionCount"] == 3
+        assert (await call(admin, "POST", f"/api/admin/topics/{tid}/link", {"questionIds": ids}))[1]["linked"] == 1
+        for bad in ([], ["1"], [True], [0], list(range(1, 5003))):
+            assert (await call(admin, "POST", f"/api/admin/topics/{tid}/link", {"questionIds": bad}))[0] == 400
+        page = (await call(admin, "GET", f"/api/admin/bank?topic={tid}"))[1]
+        assert page["total"] == 4 and all({"id": tid, "name": "Aralash"} in q["topics"] for q in page["questions"])
+        assert (await call(admin, "GET", "/api/admin/bank?topic=none"))[1]["total"] == 0
+        # mavzudan olib tashlash — bankda qoladi; bankdan o'chirish — mavzudan ham
+        assert (await call(admin, "DELETE", f"/api/admin/topics/{tid}/questions/{manual}"))[1]["topic"]["questionCount"] == 3
+        assert (await call(admin, "GET", "/api/admin/bank"))[1]["total"] == 4
+        status, data = await call(admin, "DELETE", f"/api/admin/bank/{ids[0]}")
+        assert status == 200 and data["topics"] == 1
+        assert (await call(admin, "GET", f"/api/admin/topics/{tid}/questions"))[1]["topic"]["questionCount"] == 2
+        assert (await call(admin, "PUT", f"/api/admin/bank/{manual}", {"text": "Tahrir", "options": ["a", "b"], "correct": 1}))[0] == 200
+        assert (await call(admin, "DELETE", f"/api/admin/bank/{ids[0]}"))[0] == 404
+        # bir nechtasini birdan o'chirish
+        extra = (await call(admin, "POST", "/api/admin/bank", {"text": "Ortiqcha?", "options": ["a", "b"], "correct": 0, "topicIds": [tid]}))[1]["question"]["id"]
+        status, data = await call(admin, "POST", "/api/admin/bank/delete", {"questionIds": [extra, extra, 999999]})
+        assert status == 200 and data == {"deleted": 1, "topics": 1}
+        assert (await call(admin, "POST", "/api/admin/bank/delete", {"questionIds": "1"}))[0] == 400
+        assert (await call(admin, "POST", "/api/admin/bank", {"text": "x", "options": ["a", "b"], "correct": 0, "topicIds": [99999]}))[0] == 404
+        # mavzu o'chirilsa savollar bankda qoladi
+        await call(admin, "DELETE", f"/api/admin/topics/{tid}")
+        assert (await call(admin, "GET", "/api/admin/bank?topic=none"))[1]["total"] == 3
+        # oddiy foydalanuvchi bankka kira olmaydi
+        for method, path, body in [
+            ("GET", "/api/admin/bank", None), ("GET", "/api/admin/bank/ids", None),
+            ("POST", "/api/admin/bank", {"text": "x", "options": ["a", "b"], "correct": 0}),
+            ("POST", "/api/admin/bank/upload", {"content": FILE}), ("PUT", f"/api/admin/bank/{manual}", {}),
+            ("DELETE", f"/api/admin/bank/{manual}", None), ("POST", "/api/admin/bank/delete", {"questionIds": [manual]}),
+            ("POST", "/api/admin/topics/1/link", {"questionIds": [1]}),
+        ]:
+            assert (await call(user, method, path, body))[0] == 403, (method, path)
     finally:
         await admin.close()
         await user.close()

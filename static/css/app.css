@@ -689,9 +689,52 @@ textarea.adm-q-text { min-height: 84px; resize: vertical; line-height: 1.45; }
 
 .adm-sm-only { display: none; }
 
+/* --------------------------------------------------- sahifalash, bank */
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; }
+.pager:empty { display: none; }
+.pager-btn { min-width: 36px; height: 36px; padding: 0 8px; display: inline-grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer; }
+.pager-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.pager-btn:disabled { cursor: default; opacity: 0.45; }
+.pager-btn.active { opacity: 1; background: var(--primary); border-color: var(--primary); color: #fff; }
+.pager-gap { padding: 0 4px; color: var(--muted); }
+.pager-info { margin-left: 8px; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+select.adm-select { width: auto; max-width: 100%; min-height: 40px; padding: 8px 12px; font-size: 14px; }
+.adm-toolbar select.adm-select { flex: 0 1 280px; }
+.modal select.adm-select { width: 100%; }
+.link-btn { border: 0; background: none; padding: 0; color: var(--primary); font: inherit; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+.link-btn:hover { text-decoration: underline; }
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.tag.ok { background: var(--success-soft); color: var(--success); }
+.tag .ic, .bank-meta .ic { vertical-align: -1px; }
+.bank-selbar { position: sticky; top: calc(var(--header-h) + 8px); z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 10px 8px 14px; min-height: 52px; border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(6px); box-shadow: var(--shadow-sm); }
+.bank-selbar:empty { display: none; }
+.bank-selbar.has-sel { border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+.bank-sel-n { font-size: 14px; }
+.bank-sel-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
+.btn.bank-del { color: var(--danger); }
+.bank-check { display: inline-flex; align-items: flex-start; padding-top: 1px; cursor: pointer; flex: none; }
+.bank-check input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.bank-check-all { padding: 0; }
+.bank-q { transition: border-color 0.15s, background-color 0.15s; }
+.bank-q.is-selected { border-color: color-mix(in srgb, var(--primary) 50%, transparent); background: var(--primary-soft) !important; }
+.adm-qlist .bank-q .preview-text > span:nth-child(2) { flex: none; }
+.bank-q-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bank-q .review-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); }
+.bank-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; font-size: 12.5px; }
+.bank-chip { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 9px; border-radius: 99px; border: 1px solid var(--border-strong); color: var(--text-2); font-weight: 650; text-decoration: none; line-height: 20px; }
+.bank-chip:hover { border-color: var(--primary); color: var(--primary); }
+.bank-chip.is-target { background: var(--primary); border-color: var(--primary); color: #fff; }
+.bank-src { margin-left: auto; color: var(--muted); overflow-wrap: anywhere; }
+.bank-target { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 16px; border-color: color-mix(in srgb, var(--primary) 45%, transparent); background: var(--primary-soft); }
+.bank-target .adm-reg-text { flex: 1 1 260px; }
+.bank-target-ic { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 12px; background: var(--primary); color: #fff; }
+.bank-dest { margin: 10px 0 6px; font-weight: 650; }
+.bank-dest-field { padding-left: 28px; }
+.bank-dest-field .check { margin: 8px 0 4px; }
+
 @media (max-width: 900px) {
   .adm-layout { grid-template-columns: 1fr; gap: 12px; }
-  .adm-nav { position: static; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 5px; }
+  .adm-nav { position: static; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 5px; }
   .adm-link { justify-content: center; padding: 9px 6px; font-size: 13.5px; }
   .adm-grid2 { grid-template-columns: 1fr; }
 }
@@ -710,6 +753,14 @@ textarea.adm-q-text { min-height: 84px; resize: vertical; line-height: 1.45; }
   .adm-table td.adm-td-role, .adm-table td.adm-td-count { flex: 1; text-align: left; }
   .adm-table td.right { margin-left: auto; }
   .adm-sm-only { display: inline; }
+  .bank-src { margin-left: 0; flex-basis: 100%; }
+  .pager-info { flex-basis: 100%; text-align: center; margin: 2px 0 0; }
+}
+
+@media (max-width: 520px) {
+  .hide-xs { display: none; }
+  .bank-selbar { padding: 8px 10px; gap: 6px 10px; }
+  .adm-toolbar select.adm-select { flex: 1 1 100%; }
 }
 
 /* ------------------------------------------------------------- dialog */

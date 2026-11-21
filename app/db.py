@@ -1,6 +1,7 @@
 """SQLite ma'lumotlar bazasi bilan ishlash."""
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -39,15 +40,25 @@ CREATE TABLE IF NOT EXISTS topics (
     created_at      INTEGER NOT NULL
 );
 
+-- Savollar banki: har bir savol alohida saqlanadi va bir nechta mavzuga biriktirilishi mumkin.
 CREATE TABLE IF NOT EXISTS questions (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    topic_id  INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-    position  INTEGER NOT NULL,
-    text      TEXT NOT NULL,
-    options   TEXT NOT NULL,
-    correct   INTEGER NOT NULL
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    text        TEXT NOT NULL,
+    options     TEXT NOT NULL,
+    correct     INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL DEFAULT '',
+    source_file TEXT,
+    created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_questions_topic ON questions(topic_id, position);
+
+CREATE TABLE IF NOT EXISTS topic_questions (
+    topic_id    INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    PRIMARY KEY (topic_id, question_id)
+);
+CREATE INDEX IF NOT EXISTS idx_topic_questions_q ON topic_questions(question_id);
 
 CREATE TABLE IF NOT EXISTS duels (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,6 +127,16 @@ def name_key(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
+def _norm(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def fingerprint(q: dict) -> str:
+    """Bir xil savolni (bo'shliqlar va katta-kichik harflardan qat'i nazar) aniqlash uchun."""
+    data = json.dumps([_norm(q["text"]), [_norm(o) for o in q["options"]], q["correct"]], ensure_ascii=False)
+    return hashlib.sha1(data.encode("utf-8")).hexdigest()
+
+
 class Database:
     def __init__(self, path: Path | str):
         path = Path(path)
@@ -133,6 +154,37 @@ class Database:
             columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
             if column not in columns:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        self._migrate_question_bank()
+
+    def _migrate_question_bank(self) -> None:
+        """Eski sxema: har bir savol bitta mavzuga tegishli edi (questions.topic_id).
+        Yangi sxema: savollar banki + mavzu-savol bog'lanishlari. Savollar identifikatorlari saqlanadi."""
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(questions)")}
+        if "topic_id" in columns:
+            self.conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                with self.tx():
+                    self.conn.execute("""CREATE TABLE questions_bank (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, options TEXT NOT NULL,
+                        correct INTEGER NOT NULL, fingerprint TEXT NOT NULL DEFAULT '', source_file TEXT,
+                        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at INTEGER NOT NULL DEFAULT 0)""")
+                    self.conn.execute("""INSERT INTO questions_bank (id, text, options, correct, source_file, created_by, created_at)
+                        SELECT q.id, q.text, q.options, q.correct, t.source_file, t.created_by, COALESCE(t.created_at, 0)
+                        FROM questions q LEFT JOIN topics t ON t.id = q.topic_id""")
+                    self.conn.execute("""INSERT OR IGNORE INTO topic_questions (topic_id, question_id, position)
+                        SELECT topic_id, id, position FROM questions""")
+                    self.conn.execute("DROP TABLE questions")
+                    self.conn.execute("ALTER TABLE questions_bank RENAME TO questions")
+            finally:
+                self.conn.execute("PRAGMA foreign_keys=ON")
+        rows = self.conn.execute("SELECT id, text, options, correct FROM questions WHERE fingerprint = ''").fetchall()
+        if rows:
+            with self.tx():
+                self.conn.executemany(
+                    "UPDATE questions SET fingerprint = ? WHERE id = ?",
+                    [(fingerprint(self._question(r)), r["id"]) for r in rows],
+                )
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_questions_fp ON questions(fingerprint)")
 
     def close(self) -> None:
         self.conn.close()
@@ -262,73 +314,169 @@ class Database:
         with self.tx():
             cur = self.conn.execute(
                 """INSERT INTO topics (name, name_key, shuffle_options, question_count, source_file, created_by, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (name, name_key(name), int(shuffle), len(questions), source_file, user_id, now_ms()),
+                   VALUES (?, ?, ?, 0, ?, ?, ?)""",
+                (name, name_key(name), int(shuffle), source_file, user_id, now_ms()),
             )
             topic_id = cur.lastrowid
-            self.conn.executemany(
-                "INSERT INTO questions (topic_id, position, text, options, correct) VALUES (?, ?, ?, ?, ?)",
-                [
-                    (topic_id, i, q["text"], json.dumps(q["options"], ensure_ascii=False), q["correct"])
-                    for i, q in enumerate(questions)
-                ],
-            )
+            self._link([self._bank_insert(q, source_file, user_id) for q in questions], topic_id)
         return topic_id
 
-    @staticmethod
-    def _question_row(topic_id: int, position: int, q: dict) -> tuple:
-        return (topic_id, position, q["text"], json.dumps(q["options"], ensure_ascii=False), q["correct"])
+    # ---------------------------------------------------- savollar banki
+    def _bank_insert(self, q: dict, source_file: str | None, user_id: int | None) -> int:
+        """Savolni bankka qo'shadi; aynan shunday savol bor bo'lsa — o'shasi qaytariladi (takrorlanmaydi)."""
+        fp = fingerprint(q)
+        row = self.conn.execute("SELECT id FROM questions WHERE fingerprint = ? ORDER BY id LIMIT 1", (fp,)).fetchone()
+        if row:
+            return row[0]
+        cur = self.conn.execute(
+            """INSERT INTO questions (text, options, correct, fingerprint, source_file, created_by, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (q["text"], json.dumps(q["options"], ensure_ascii=False), q["correct"], fp, source_file, user_id, now_ms()),
+        )
+        return cur.lastrowid
+
+    def _link(self, question_ids: list[int], topic_id: int | None) -> int:
+        """Savollarni mavzu oxiriga biriktiradi (allaqachon biriktirilganlari o'tkaziladi). Yangi bog'lanishlar soni."""
+        if topic_id is None:
+            return 0
+        pos = self._scalar("SELECT COALESCE(MAX(position), -1) + 1 FROM topic_questions WHERE topic_id = ?", (topic_id,))
+        added = 0
+        for qid in dict.fromkeys(question_ids):  # tartibni saqlab, takrorlarni olib tashlash
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO topic_questions (topic_id, question_id, position) VALUES (?, ?, ?)", (topic_id, qid, pos)
+            )
+            if cur.rowcount:
+                added += 1
+                pos += 1
+        self._recount(topic_id)
+        return added
 
     def _recount(self, topic_id: int) -> None:
         self.conn.execute(
-            "UPDATE topics SET question_count = (SELECT COUNT(*) FROM questions WHERE topic_id = ?) WHERE id = ?",
+            "UPDATE topics SET question_count = (SELECT COUNT(*) FROM topic_questions WHERE topic_id = ?) WHERE id = ?",
             (topic_id, topic_id),
         )
 
-    def append_questions(self, topic_id: int, questions: list[dict]) -> list[int]:
-        """Mavzu oxiriga savollar qo'shadi; yangi savollar identifikatorlarini qaytaradi."""
-        ids = []
+    def add_questions(self, questions: list[dict], topic_ids: list[int] = (), source_file: str | None = None,
+                      user_id: int | None = None) -> dict:
+        """Savollarni bankka qo'shadi va ko'rsatilgan mavzularga biriktiradi."""
         with self.tx():
-            start = self.conn.execute(
-                "SELECT COALESCE(MAX(position), -1) + 1 FROM questions WHERE topic_id = ?", (topic_id,)
-            ).fetchone()[0]
-            for i, q in enumerate(questions):
-                cur = self.conn.execute(
-                    "INSERT INTO questions (topic_id, position, text, options, correct) VALUES (?, ?, ?, ?, ?)",
-                    self._question_row(topic_id, start + i, q),
-                )
-                ids.append(cur.lastrowid)
-            self._recount(topic_id)
-        return ids
+            before = self.bank_count()
+            ids = [self._bank_insert(q, source_file, user_id) for q in questions]
+            created = self.bank_count() - before
+            for tid in topic_ids:
+                self._link(ids, tid)
+        return {"ids": ids, "created": created, "reused": len(ids) - created}
 
-    def update_question(self, topic_id: int, question_id: int, q: dict) -> bool:
+    def append_questions(self, topic_id: int, questions: list[dict], source_file: str | None = None,
+                         user_id: int | None = None) -> list[int]:
+        """Mavzu oxiriga savollar qo'shadi (bank orqali); savollar identifikatorlarini qaytaradi."""
+        return self.add_questions(questions, [topic_id], source_file, user_id)["ids"]
+
+    def link_questions(self, topic_id: int, question_ids: list[int]) -> int:
+        """Bankdagi mavjud savollarni mavzuga biriktiradi."""
+        with self.tx():
+            marks = ",".join("?" * len(question_ids)) or "NULL"
+            existing = {r[0] for r in self.conn.execute(f"SELECT id FROM questions WHERE id IN ({marks})", question_ids)}
+            return self._link([q for q in question_ids if q in existing], topic_id)
+
+    def unlink_question(self, topic_id: int, question_id: int) -> bool:
+        """Savolni mavzudan olib tashlaydi — savol bankda qoladi."""
+        with self.tx():
+            cur = self.conn.execute("DELETE FROM topic_questions WHERE topic_id = ? AND question_id = ?", (topic_id, question_id))
+            self._recount(topic_id)
+        return cur.rowcount > 0
+
+    def update_question(self, question_id: int, q: dict) -> bool:
+        """Bankdagi savolni tahrirlaydi — o'zgarish u biriktirilgan barcha mavzularda ko'rinadi."""
         cur = self.conn.execute(
-            "UPDATE questions SET text = ?, options = ?, correct = ? WHERE id = ? AND topic_id = ?",
-            (q["text"], json.dumps(q["options"], ensure_ascii=False), q["correct"], question_id, topic_id),
+            "UPDATE questions SET text = ?, options = ?, correct = ?, fingerprint = ? WHERE id = ?",
+            (q["text"], json.dumps(q["options"], ensure_ascii=False), q["correct"], fingerprint(q), question_id),
         )
         return cur.rowcount > 0
 
-    def delete_question(self, topic_id: int, question_id: int) -> bool:
+    def delete_bank_question(self, question_id: int) -> list[int] | None:
+        """Savolni bankdan butunlay o'chiradi; u biriktirilgan mavzular ro'yxatini qaytaradi (topilmasa — None)."""
         with self.tx():
-            cur = self.conn.execute("DELETE FROM questions WHERE id = ? AND topic_id = ?", (question_id, topic_id))
-            self._recount(topic_id)
-        return cur.rowcount > 0
+            topics = [r[0] for r in self.conn.execute("SELECT topic_id FROM topic_questions WHERE question_id = ?", (question_id,))]
+            cur = self.conn.execute("DELETE FROM questions WHERE id = ?", (question_id,))
+            if not cur.rowcount:
+                return None
+            for tid in topics:
+                self._recount(tid)
+        return topics
 
-    def replace_topic_questions(self, topic_id: int, questions: list[dict], source_file: str | None) -> None:
-        """Mavzu savollarini yangi fayldagilar bilan almashtiradi (mavzu nomi va sozlamalari saqlanadi)."""
+    def delete_bank_questions(self, question_ids: list[int]) -> tuple[int, int]:
+        """Bir nechta savolni bankdan o'chiradi; (o'chirilganlar, ta'sirlangan mavzular) sonini qaytaradi."""
+        ids = list(dict.fromkeys(question_ids))
+        deleted, topics = 0, set()
         with self.tx():
-            self.conn.execute("DELETE FROM questions WHERE topic_id = ?", (topic_id,))
-            self.conn.executemany(
-                "INSERT INTO questions (topic_id, position, text, options, correct) VALUES (?, ?, ?, ?, ?)",
-                [
-                    (topic_id, i, q["text"], json.dumps(q["options"], ensure_ascii=False), q["correct"])
-                    for i, q in enumerate(questions)
-                ],
-            )
-            self.conn.execute(
-                "UPDATE topics SET question_count = ?, source_file = COALESCE(?, source_file) WHERE id = ?",
-                (len(questions), source_file, topic_id),
-            )
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                marks = ",".join("?" * len(chunk))
+                topics.update(r[0] for r in self.conn.execute(
+                    f"SELECT DISTINCT topic_id FROM topic_questions WHERE question_id IN ({marks})", chunk))
+                deleted += self.conn.execute(f"DELETE FROM questions WHERE id IN ({marks})", chunk).rowcount
+            for tid in topics:
+                self._recount(tid)
+        return deleted, len(topics)
+
+    def replace_topic_questions(self, topic_id: int, questions: list[dict], source_file: str | None,
+                                user_id: int | None = None) -> None:
+        """Mavzu savollarini yangi fayldagilar bilan almashtiradi; eski savollar bankda qoladi."""
+        with self.tx():
+            self.conn.execute("DELETE FROM topic_questions WHERE topic_id = ?", (topic_id,))
+            self._link([self._bank_insert(q, source_file, user_id) for q in questions], topic_id)
+            if source_file:
+                self.conn.execute("UPDATE topics SET source_file = ? WHERE id = ?", (source_file, topic_id))
+
+    def bank_count(self) -> int:
+        return self._scalar("SELECT COUNT(*) FROM questions")
+
+    def _bank_where(self, search: str, topic_id: int | None, unassigned: bool) -> tuple[str, list]:
+        where, args = [], []
+        if search:
+            like = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            where.append("(q.text LIKE ? ESCAPE '\\' OR q.options LIKE ? ESCAPE '\\')")
+            args += [like, like]
+        if topic_id is not None:
+            where.append("EXISTS (SELECT 1 FROM topic_questions tq WHERE tq.question_id = q.id AND tq.topic_id = ?)")
+            args.append(topic_id)
+        if unassigned:
+            where.append("NOT EXISTS (SELECT 1 FROM topic_questions tq WHERE tq.question_id = q.id)")
+        return (" WHERE " + " AND ".join(where)) if where else "", args
+
+    def bank_page(self, search: str = "", topic_id: int | None = None, unassigned: bool = False,
+                  offset: int = 0, limit: int = 50) -> tuple[int, list[dict]]:
+        where, args = self._bank_where(search, topic_id, unassigned)
+        total = self._scalar(f"SELECT COUNT(*) FROM questions q{where}", args)
+        rows = self.conn.execute(
+            f"""SELECT q.id, q.text, q.options, q.correct, q.source_file, q.created_at, u.login AS author
+                FROM questions q LEFT JOIN users u ON u.id = q.created_by{where}
+                ORDER BY q.id DESC LIMIT ? OFFSET ?""",
+            [*args, limit, offset],
+        ).fetchall()
+        items = [{**self._question(r), "sourceFile": r["source_file"], "createdAt": r["created_at"], "author": r["author"]} for r in rows]
+        self._attach_topics(items)
+        return total, items
+
+    def bank_ids(self, search: str = "", topic_id: int | None = None, unassigned: bool = False, limit: int = 5000) -> list[int]:
+        where, args = self._bank_where(search, topic_id, unassigned)
+        return [r[0] for r in self.conn.execute(f"SELECT q.id FROM questions q{where} ORDER BY q.id DESC LIMIT ?", [*args, limit])]
+
+    def _attach_topics(self, items: list[dict]) -> None:
+        if not items:
+            return
+        marks = ",".join("?" * len(items))
+        by_q: dict[int, list] = {}
+        for r in self.conn.execute(
+            f"""SELECT tq.question_id, t.id, t.name FROM topic_questions tq JOIN topics t ON t.id = tq.topic_id
+                WHERE tq.question_id IN ({marks}) ORDER BY t.name""",
+            [i["id"] for i in items],
+        ):
+            by_q.setdefault(r[0], []).append({"id": r[1], "name": r[2]})
+        for i in items:
+            i["topics"] = by_q.get(i["id"], [])
 
     def update_topic(self, topic_id: int, name: str | None = None, shuffle: bool | None = None, active: bool | None = None) -> None:
         if active is not None:
@@ -348,26 +496,38 @@ class Database:
 
     def topic_questions(self, topic_id: int) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT id, text, options, correct FROM questions WHERE topic_id = ? ORDER BY position", (topic_id,)
+            """SELECT q.id, q.text, q.options, q.correct,
+                      (SELECT COUNT(*) FROM topic_questions x WHERE x.question_id = q.id) AS topic_count
+               FROM topic_questions tq JOIN questions q ON q.id = tq.question_id
+               WHERE tq.topic_id = ? ORDER BY tq.position""",
+            (topic_id,),
         ).fetchall()
-        return [self._question(r) for r in rows]
+        return [{**self._question(r), "topicCount": r["topic_count"]} for r in rows]
 
     def question_ids(self, topic_id: int) -> list[int]:
-        return [r[0] for r in self.conn.execute("SELECT id FROM questions WHERE topic_id = ? ORDER BY position", (topic_id,))]
+        return [r[0] for r in self.conn.execute(
+            "SELECT question_id FROM topic_questions WHERE topic_id = ? ORDER BY position", (topic_id,))]
 
-    def question_by_id(self, question_id: int, topic_id: int) -> dict | None:
-        row = self.conn.execute(
-            "SELECT id, text, options, correct FROM questions WHERE id = ? AND topic_id = ?", (question_id, topic_id)
-        ).fetchone()
+    def question_by_id(self, question_id: int, topic_id: int | None = None) -> dict | None:
+        """Savol (topic_id berilsa — faqat shu mavzuga biriktirilgan bo'lsa)."""
+        if topic_id is None:
+            row = self.conn.execute("SELECT id, text, options, correct FROM questions WHERE id = ?", (question_id,)).fetchone()
+        else:
+            row = self.conn.execute(
+                """SELECT q.id, q.text, q.options, q.correct FROM topic_questions tq JOIN questions q ON q.id = tq.question_id
+                   WHERE tq.question_id = ? AND tq.topic_id = ?""",
+                (question_id, topic_id),
+            ).fetchone()
         return self._question(row) if row else None
 
     def pick_questions(self, topic_id: int, limit: int | None, random_order: bool = True) -> list[dict]:
-        order = "RANDOM()" if random_order else "position"
-        sql = f"SELECT id, text, options, correct FROM questions WHERE topic_id = ? ORDER BY {order}"
-        args: tuple = (topic_id,)
+        order = "RANDOM()" if random_order else "tq.position"
+        sql = f"""SELECT q.id, q.text, q.options, q.correct FROM topic_questions tq JOIN questions q ON q.id = tq.question_id
+                  WHERE tq.topic_id = ? ORDER BY {order}"""
+        args: list = [topic_id]
         if limit is not None:
             sql += " LIMIT ?"
-            args = (topic_id, limit)
+            args.append(limit)
         return [self._question(r) for r in self.conn.execute(sql, args).fetchall()]
 
     # ------------------------------------------------------------ duels
@@ -541,7 +701,7 @@ class Database:
             },
             "topics": {
                 "total": one("SELECT COUNT(*) FROM topics"),
-                "questions": one("SELECT COALESCE(SUM(question_count), 0) FROM topics"),
+                "questions": one("SELECT COUNT(*) FROM questions"),
             },
             "duels": {
                 "total": one("SELECT COUNT(*) FROM duels"),

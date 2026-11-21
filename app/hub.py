@@ -57,10 +57,10 @@ def _cancel(handle) -> None:
 def _as_int(value) -> int | None:
     if isinstance(value, bool):
         return None
-    if isinstance(value, int):
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit() and len(value.strip()) <= 18:
+        value = int(value)
+    if isinstance(value, int) and abs(value) < 2**62:  # SQLite chegarasidan oshmasin
         return value
-    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
-        return int(value)
     return None
 
 

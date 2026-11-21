@@ -95,6 +95,8 @@ const ICONS = {
   crown: '<path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/>',
   bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
   minus: '<path d="M5 12h14"/>',
+  database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
+  folderPlus: '<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
 };
 
 export function icon(name, size = 20) {
@@ -336,6 +338,47 @@ export async function readTextFile(file) {
   } catch {
     return new TextDecoder('windows-1251').decode(buf);
   }
+}
+
+/**
+ * Sahifalash tugmalari. onChange(page) — sahifa tanlanganda. Bitta sahifa bo'lsa bo'sh element qaytaradi.
+ * Masalan: 1 … 4 5 [6] 7 8 … 20
+ */
+export function pager({ page, pages, total, per, onChange }) {
+  const el = h('nav.pager', { 'aria-label': 'Sahifalar' });
+  if (pages <= 1) return el;
+  const btn = (p, label, attrs = {}) => h('button', {
+    type: 'button',
+    class: `pager-btn${p === page ? ' active' : ''}`,
+    'aria-current': p === page ? 'page' : null,
+    disabled: p < 1 || p > pages || p === page,
+    onclick: () => onChange(p),
+    ...attrs,
+  }, label);
+  const nums = new Set([1, pages, page - 1, page, page + 1]);
+  if (page <= 3) [2, 3, 4].forEach((n) => nums.add(n));
+  if (page >= pages - 2) [pages - 1, pages - 2, pages - 3].forEach((n) => nums.add(n));
+  const list = [...nums].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
+  const items = [];
+  list.forEach((n, i) => {
+    if (i && n - list[i - 1] > 1) items.push(h('span.pager-gap', '…'));
+    items.push(btn(n, String(n)));
+  });
+  const from = (page - 1) * per + 1;
+  el.append(...[
+    btn(page - 1, icon('left', 16), { 'aria-label': 'Oldingi sahifa', title: 'Oldingi sahifa' }),
+    ...items,
+    btn(page + 1, icon('right', 16), { 'aria-label': 'Keyingi sahifa', title: 'Keyingi sahifa' }),
+    total !== undefined ? h('span.pager-info', `${from}–${Math.min(total, page * per)} / ${total}`) : null,
+  ].filter(Boolean));
+  return el;
+}
+
+/** Ro'yxatning bitta sahifasi (mijoz tomonida sahifalash uchun). Sahifa raqami chegaradan chiqsa tuzatiladi. */
+export function slicePage(items, page, per) {
+  const pages = Math.max(1, Math.ceil(items.length / per));
+  const p = Math.min(Math.max(1, page), pages);
+  return { page: p, pages, items: items.slice((p - 1) * per, p * per), total: items.length, per };
 }
 
 export function spinner(text = 'Yuklanmoqda…') {

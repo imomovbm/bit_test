@@ -85,14 +85,30 @@ Menyudagi **Boshqaruv** bo'limi faqat administratorlarga ko'rinadi (server ham b
 - **Test mavzulari**
   - **Yangi mavzu** — nom berib bo'sh mavzu yaratish, keyin savollarni qo'shish;
   - `.txt` fayl yuklash — mavzu fayldagi savollar bilan birga yaratiladi (bir nechta faylni birdaniga);
-  - mavzu sahifasida: savollarni **qo'lda qo'shish, tahrirlash va o'chirish** (ko'p variantli, 2–10 variant,
-    bitta to'g'ri javob), **fayldan savol qo'shish** (mavzu oxiriga), fayl bilan almashtirish, `.txt` sifatida
-    yuklab olish, nomini o'zgartirish, variantlarni aralashtirish;
+  - mavzu sahifasida: savollarni **qo'lda qo'shish, tahrirlash va mavzudan olib tashlash** (ko'p variantli,
+    2–10 variant, bitta to'g'ri javob), **bankdan tanlash**, **fayldan savol qo'shish** (mavzu oxiriga), fayl bilan
+    almashtirish, `.txt` sifatida yuklab olish, nomini o'zgartirish, variantlarni aralashtirish;
   - **Faol / yopiq** — yopiq mavzu foydalanuvchilarga (duel, o'rganish, Balloon Pop) ko'rinmaydi va unda o'ynab
     bo'lmaydi; uni kutayotganlar navbatdan chiqariladi. Savoli yo'q mavzu ham ko'rinmaydi.
+- **Savollar banki** — barcha savollar bir joyda; har bir savol bankda alohida saqlanadi va mavzularga
+  *biriktiriladi* (bir savol bir nechta mavzuda bo'lishi mumkin):
+  - qidiruv (savol va variant matni), mavzu bo'yicha filtr (shu jumladan «hech bir mavzuda yo'q»), sahifalash;
+  - savollarni belgilash — sahifalar va filtrlar almashganda ham saqlanadi; `Shift` bilan oraliqni belgilash,
+    «filtrdagi barchasini tanlash» (5000 tagacha);
+  - tanlanganlarni **mavjud yoki yangi mavzuga qo'shish** — turli mavzulardagi savollardan aralash (takrorlash)
+    mavzu tuzish mumkin; mavzuda bor savollar takrorlanmaydi;
+  - savolni qo'lda qo'shish, `.txt` fayldan bankka yuklash (ixtiyoriy — mavzuga ham biriktirish), tahrirlash
+    (o'zgarish savol biriktirilgan barcha mavzularda ko'rinadi), bankdan butunlay o'chirish (bittalab yoki
+    tanlanganlarni);
+  - bir xil savol (matn, variantlar va to'g'ri javob; bo'shliq va harf katta-kichikligi hisobga olinmaydi) qayta
+    yuklansa bankda takrorlanmaydi — mavjudi ishlatiladi;
+  - mavzu o'chirilsa yoki savol mavzudan olib tashlansa, savol bankda qoladi.
+  - Eski bazalar ishga tushganda avtomatik ko'chiriladi (savol identifikatorlari saqlanadi, davom etayotgan
+    o'yinlar buzilmaydi).
 - **Foydalanuvchilar** — qidirish va saralash (adminlar, onlayn, bloklangan), **yangi akkaunt yaratish**
   (tasodifiy parol bilan), admin huquqini berish/olish, **bloklash** (foydalanuvchi darhol tizimdan chiqariladi va
   kira olmaydi), parolni tiklash, o'chirish.
+- Uzun ro'yxatlar (mavzular, mavzu savollari, foydalanuvchilar — 50 tadan; bank — 30 tadan) sahifalarga bo'linadi.
 - **Ro'yxatdan o'tishni yopish** — yopilganda yangi akkauntlarni faqat administrator yaratadi.
 
 ## Test fayli formati

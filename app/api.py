@@ -50,6 +50,8 @@ async def error_middleware(request: web.Request, handler):
         return web.json_response({"error": e.message}, status=e.status, dumps=_dumps)
     except web.HTTPException:
         raise
+    except OverflowError:  # SQLite 64-bit chegarasidan katta son — noto'g'ri so'rov
+        return web.json_response({"error": "Noto'g'ri raqam"}, status=400, dumps=_dumps)
     except Exception:
         log.exception("Kutilmagan xato: %s %s", request.method, request.path)
         return web.json_response({"error": "Serverda kutilmagan xatolik yuz berdi"}, status=500, dumps=_dumps)
@@ -134,11 +136,21 @@ def require_superadmin(request: web.Request) -> dict:
     return user
 
 
+MAX_ID = 2**62  # SQLite INTEGER chegarasidan ancha past
+
+
+def valid_id(x) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool) and 0 < x < MAX_ID
+
+
 def int_param(request: web.Request, name: str) -> int:
     try:
-        return int(request.match_info[name])
+        value = int(request.match_info[name])
     except (KeyError, ValueError):
         raise ApiError("Noto'g'ri identifikator", 404)
+    if not 0 < value < MAX_ID:
+        raise ApiError("Noto'g'ri identifikator", 404)
+    return value
 
 
 def public_user(user: dict) -> dict:
@@ -583,7 +595,7 @@ async def admin_replace_topic(request: web.Request):
     if not parsed["questions"]:
         raise ApiError("Faylda yaroqli savol topilmadi. Fayl formatini tekshiring")
     source = str(data.get("fileName") or "")[:255] or None
-    db.replace_topic_questions(tid, parsed["questions"], source)
+    db.replace_topic_questions(tid, parsed["questions"], source, user["id"])
     log.info("Mavzu yangilandi: %s (%d savol) — %s", topic["name"], len(parsed["questions"]), user["login"])
     request.app[HUB].broadcast("topics", {})
     return ok({"topic": topic_json(db.get_topic(tid)), "skipped": len(parsed["errors"])})
@@ -649,36 +661,39 @@ def question_json(q: dict) -> dict:
 
 @routes.post("/api/admin/topics/{tid}/questions")
 async def admin_add_question(request: web.Request):
-    """Mavzuga bitta savolni qo'lda qo'shish (ko'p variantli, bitta to'g'ri javob)."""
-    require_admin(request)
+    """Mavzuga bitta savolni qo'lda qo'shish: savol bankka yoziladi va mavzuga biriktiriladi."""
+    user = require_admin(request)
     data = await read_json(request)
     topic = own_topic(request)
     q = checked_question(data)
     db = request.app[DB]
-    (qid,) = db.append_questions(topic["id"], [q])
+    (qid,) = db.append_questions(topic["id"], [q], user_id=user["id"])
     request.app[HUB].broadcast("topics", {})
-    return ok({"question": question_json(db.question_by_id(qid, topic["id"])), "topic": topic_json(db.get_topic(topic["id"]))}, status=201)
+    return ok({"question": question_json(db.question_by_id(qid)), "topic": topic_json(db.get_topic(topic["id"]))}, status=201)
 
 
 @routes.put("/api/admin/topics/{tid}/questions/{qid}")
 async def admin_edit_question(request: web.Request):
+    """Mavzudagi savolni tahrirlash (bankdagi savol o'zgaradi — u biriktirilgan barcha mavzularda)."""
     require_admin(request)
     data = await read_json(request)
     topic = own_topic(request)
     q = checked_question(data)
     db = request.app[DB]
     qid = int_param(request, "qid")
-    if not db.update_question(topic["id"], qid, q):
+    if not db.question_by_id(qid, topic["id"]):
         raise ApiError("Savol topilmadi", 404)
-    return ok({"question": question_json(db.question_by_id(qid, topic["id"]))})
+    db.update_question(qid, q)
+    return ok({"question": question_json(db.question_by_id(qid))})
 
 
 @routes.delete("/api/admin/topics/{tid}/questions/{qid}")
-async def admin_delete_question(request: web.Request):
+async def admin_unlink_question(request: web.Request):
+    """Savolni mavzudan olib tashlash — savol bankda qoladi."""
     require_admin(request)
     topic = own_topic(request)
     db = request.app[DB]
-    if not db.delete_question(topic["id"], int_param(request, "qid")):
+    if not db.unlink_question(topic["id"], int_param(request, "qid")):
         raise ApiError("Savol topilmadi", 404)
     request.app[HUB].broadcast("topics", {})
     return ok({"topic": topic_json(db.get_topic(topic["id"]))})
@@ -686,7 +701,7 @@ async def admin_delete_question(request: web.Request):
 
 @routes.post("/api/admin/topics/{tid}/append")
 async def admin_append_questions(request: web.Request):
-    """Fayldagi savollarni mavjud mavzu oxiriga qo'shish."""
+    """Fayldagi savollarni bankka yozib, mavjud mavzu oxiriga biriktirish."""
     user = require_admin(request)
     data = await read_json(request)
     topic = own_topic(request)
@@ -694,10 +709,156 @@ async def admin_append_questions(request: web.Request):
     if not parsed["questions"]:
         raise ApiError("Faylda yaroqli savol topilmadi. Fayl formatini tekshiring")
     db = request.app[DB]
-    db.append_questions(topic["id"], parsed["questions"])
-    log.info("Mavzuga %d savol qo'shildi: %s — %s", len(parsed["questions"]), topic["name"], user["login"])
+    source = str(data.get("fileName") or "")[:255] or None
+    before = topic["question_count"]
+    res = db.add_questions(parsed["questions"], [topic["id"]], source, user["id"])
+    topic = db.get_topic(topic["id"])
+    log.info("Mavzuga savollar qo'shildi: %s (+%d) — %s", topic["name"], topic["question_count"] - before, user["login"])
     request.app[HUB].broadcast("topics", {})
-    return ok({"topic": topic_json(db.get_topic(topic["id"])), "added": len(parsed["questions"]), "skipped": len(parsed["errors"])})
+    return ok({
+        "topic": topic_json(topic),
+        "added": topic["question_count"] - before,
+        "created": res["created"],
+        "skipped": len(parsed["errors"]),
+    })
+
+
+@routes.post("/api/admin/topics/{tid}/link")
+async def admin_link_questions(request: web.Request):
+    """Bankdagi tanlangan savollarni mavzuga biriktirish."""
+    require_admin(request)
+    data = await read_json(request)
+    topic = own_topic(request)
+    ids = question_ids_param(data.get("questionIds"))
+    db = request.app[DB]
+    linked = db.link_questions(topic["id"], ids)
+    request.app[HUB].broadcast("topics", {})
+    return ok({"linked": linked, "topic": topic_json(db.get_topic(topic["id"]))})
+
+
+# ---------------------------------------------------------- savollar banki
+MAX_SELECT = 5000
+
+
+def question_ids_param(value) -> list[int]:
+    if not isinstance(value, list) or not value:
+        raise ApiError("Savollarni tanlang")
+    if len(value) > MAX_SELECT:
+        raise ApiError(f"Bir martada {MAX_SELECT} tadan ko'p savol tanlab bo'lmaydi")
+    if not all(valid_id(x) for x in value):
+        raise ApiError("Savol identifikatorlari noto'g'ri")
+    return value
+
+
+def topic_ids_param(db, value) -> list[int]:
+    if value in (None, []):
+        return []
+    if not isinstance(value, list) or len(value) > 100 or not all(valid_id(x) for x in value):
+        raise ApiError("Mavzular noto'g'ri tanlangan")
+    for tid in value:
+        if not db.get_topic(tid):
+            raise ApiError("Mavzu topilmadi", 404)
+    return list(dict.fromkeys(value))
+
+
+def bank_filter(request: web.Request) -> dict:
+    q = request.query
+    search = " ".join(q.get("search", "").split())[:200]
+    topic = q.get("topic", "")
+    try:
+        topic_id = int(topic) if topic not in ("", "none") else None
+    except ValueError:
+        raise ApiError("Mavzu noto'g'ri")
+    if topic_id is not None and not valid_id(topic_id):
+        raise ApiError("Mavzu noto'g'ri")
+    return {"search": search, "topic_id": topic_id, "unassigned": topic == "none"}
+
+
+@routes.get("/api/admin/bank")
+async def admin_bank(request: web.Request):
+    """Savollar banki: qidiruv, mavzu bo'yicha filtr ("none" — mavzusiz) va sahifalash."""
+    require_admin(request)
+    try:
+        page = min(1_000_000, max(1, int(request.query.get("page", 1))))
+        per = max(10, min(100, int(request.query.get("per", 30))))
+    except ValueError:
+        raise ApiError("Sahifa raqami noto'g'ri")
+    total, items = request.app[DB].bank_page(**bank_filter(request), offset=(page - 1) * per, limit=per)
+    return ok({"total": total, "page": page, "per": per, "questions": items})
+
+
+@routes.get("/api/admin/bank/ids")
+async def admin_bank_ids(request: web.Request):
+    """Filtrga mos barcha savollar identifikatorlari ("hammasini tanlash" uchun)."""
+    require_admin(request)
+    return ok({"ids": request.app[DB].bank_ids(**bank_filter(request), limit=MAX_SELECT)})
+
+
+@routes.post("/api/admin/bank")
+async def admin_bank_create(request: web.Request):
+    user = require_admin(request)
+    data = await read_json(request)
+    db = request.app[DB]
+    topics = topic_ids_param(db, data.get("topicIds"))
+    q = checked_question(data)
+    res = db.add_questions([q], topics, None, user["id"])
+    if topics:
+        request.app[HUB].broadcast("topics", {})
+    return ok({"question": question_json(db.question_by_id(res["ids"][0])), "created": res["created"]}, status=201)
+
+
+@routes.post("/api/admin/bank/upload")
+async def admin_bank_upload(request: web.Request):
+    """Fayldagi savollarni bankka yuklash (ixtiyoriy: tanlangan mavzularga ham biriktirish)."""
+    user = require_admin(request)
+    data = await read_json(request)
+    db = request.app[DB]
+    topics = topic_ids_param(db, data.get("topicIds"))
+    parsed = parse_questions(_check_content(data))
+    if not parsed["questions"]:
+        raise ApiError("Faylda yaroqli savol topilmadi. Fayl formatini tekshiring")
+    source = str(data.get("fileName") or "")[:255] or None
+    res = db.add_questions(parsed["questions"], topics, source, user["id"])
+    log.info("Bankka %d ta yangi savol yuklandi (%d tasi bor edi) — %s", res["created"], res["reused"], user["login"])
+    if topics:
+        request.app[HUB].broadcast("topics", {})
+    return ok({"created": res["created"], "reused": res["reused"], "skipped": len(parsed["errors"])})
+
+
+@routes.put("/api/admin/bank/{qid}")
+async def admin_bank_edit(request: web.Request):
+    require_admin(request)
+    data = await read_json(request)
+    q = checked_question(data)
+    db = request.app[DB]
+    qid = int_param(request, "qid")
+    if not db.update_question(qid, q):
+        raise ApiError("Savol topilmadi", 404)
+    return ok({"question": question_json(db.question_by_id(qid))})
+
+
+@routes.delete("/api/admin/bank/{qid}")
+async def admin_bank_delete(request: web.Request):
+    """Savolni bankdan butunlay o'chirish (barcha mavzulardan ham)."""
+    require_admin(request)
+    topics = request.app[DB].delete_bank_question(int_param(request, "qid"))
+    if topics is None:
+        raise ApiError("Savol topilmadi", 404)
+    if topics:
+        request.app[HUB].broadcast("topics", {})
+    return ok({"topics": len(topics)})
+
+
+@routes.post("/api/admin/bank/delete")
+async def admin_bank_delete_many(request: web.Request):
+    """Tanlangan savollarni bankdan (va barcha mavzulardan) o'chirish."""
+    user = require_admin(request)
+    data = await read_json(request)
+    deleted, topics = request.app[DB].delete_bank_questions(question_ids_param(data.get("questionIds")))
+    log.info("Bankdan %d ta savol o'chirildi — %s", deleted, user["login"])
+    if topics:
+        request.app[HUB].broadcast("topics", {})
+    return ok({"deleted": deleted, "topics": topics})
 
 
 @routes.delete("/api/admin/topics/{tid}")
