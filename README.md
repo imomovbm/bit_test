@@ -105,6 +105,19 @@ Keyingi savol
 
 Misol: `TD_PORT=9000 TD_ADMINS=bekzod python run.py`
 
+## Railway'ga joylashtirish
+
+Repozitoriyda `railway.json` (ishga tushirish buyrug'i, holat tekshiruvi) va `.python-version` bor.
+
+1. [railway.com](https://railway.com) da GitHub orqali kiring → **New Project → Deploy from GitHub repo** → `bit_test`.
+2. Servis sozlamalarida **Volume** qo'shing, mount path: `/data`.
+3. **Variables** bo'limiga qo'shing: `TD_DATA_DIR=/data` (baza volume'da saqlanadi, qayta deploy qilinganda o'chmaydi).
+   Ixtiyoriy: `TD_ADMINS=admin` — shu login bilan ro'yxatdan o'tgan foydalanuvchi admin bo'ladi.
+4. **Settings → Networking → Generate Domain** — sayt manzili (`https://….up.railway.app`).
+5. Saytni ochib birinchi bo'lib ro'yxatdan o'ting — siz administrator bo'lasiz.
+
+Bitta nusxa (replica) ishlashi kerak — `railway.json` da shunday sozlangan.
+
 ## Serverga joylashtirish
 
 Ilova bitta jarayonda ishlaydi (duel holati xotirada saqlanadi), shuning uchun **bitta** nusxada ishga tushiring.
