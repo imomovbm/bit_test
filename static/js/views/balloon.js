@@ -19,6 +19,18 @@ const DEFAULT_PREFS = {
 
 const defaultName = (color) => `${teamColor(color).name} jamoa`;
 
+// Yordamlar: har bir jamoa har biridan o'yinda bir marta foydalanadi (serverdagi app/balloon.py bilan bir xil).
+const LIFELINES = [
+  { id: 'ai', icon: 'bot', label: 'AIʼdan soʻrash', note: 'savolni telefondagi AI yordamchiga yozing yoki ekranni rasmga olib yuboring.' },
+  { id: 'group', icon: 'users', label: 'Guruhdan soʻrash', note: 'guruhdoshlaringiz fikrini soʻrang — masalan, qoʻl koʻtarib ovoz berish orqali.' },
+  { id: 'fifty', icon: null, label: '50:50', note: 'notoʻgʻri javoblar olib tashlandi.' },
+];
+const LIFELINE_BONUS_SECONDS = 30;
+
+function lifelineIcon(l, size) {
+  return l.icon ? icon(l.icon, size) : h('b.bp-ll-ff', '50:50');
+}
+
 export function balloonView(root, params, ctx) {
   if (params.id) return gameView(root, Number(params.id), ctx);
   return lobbyView(root, ctx);
@@ -205,7 +217,8 @@ function lobbyView(root, ctx) {
       step(2, 'Savol', 'Yutqazgan jamoa tanlangan mavzudan bitta savolga javob beradi.'),
       step(3, 'Zar', 'Yutgan jamoa birinchi boʻlib zar tashlaydi va raqibning tushgan son miqdoricha sharini portlatadi.'),
       step(4, 'Imkoniyat', 'Yutqazgan jamoa toʻgʻri javob bergan boʻlsa, u ham zar tashlaydi.'),
-      step(5, 'Akulalar!', 'Sharlari tugagan jamoa suvga tushadi va akulaga yem boʻladi. Havoda qolgan jamoa gʻolib!')),
+      step(5, 'Akulalar!', 'Sharlari tugagan jamoa suvga tushadi va akulaga yem boʻladi. Havoda qolgan jamoa gʻolib!'),
+      step(6, 'Yordamlar', `Har bir jamoa oʻyinda bir martadan: AIʼdan soʻrash, guruhdan soʻrash (ikkalasi +${LIFELINE_BONUS_SECONDS} soniya) va 50:50 — ikkita notoʻgʻri javob olib tashlanadi.`)),
     h('p.small.muted.bp-tip', icon('maximize', 14), 'Maslahat: oʻyinni proyektor yoki interaktiv doskada toʻliq ekran rejimida oʻtkazing. Sharlarni sichqoncha yoki barmoq bilan bosib portlatish mumkin.'));
 
   root.append(h('section.screen.bp-lobby',
@@ -701,7 +714,12 @@ function gameView(root, gameId, ctx) {
           h('span.bp-sb-name', h('span.bp-dot'), h('b', t.name)),
           h('span.bp-sb-count', icon('balloon', 18), h('b', String(Math.max(0, left))), h('small', `/${game.balloons}`))),
         h('div.bp-sb-bar', h('span', { style: { width: `${pct}%` } })),
-        h('div.bp-sb-meta', `Savollar: ${t.correct}/${t.asked} toʻgʻri · zar: ${t.rolls} marta`));
+        h('div.bp-sb-foot',
+          h('span.bp-sb-meta', `Savollar: ${t.correct}/${t.asked} toʻgʻri · zar: ${t.rolls} marta`),
+          h('span.bp-sb-lls', LIFELINES.map((l) => {
+            const used = !!(t.lifelines || {})[l.id];
+            return h('span', { class: `bp-ll-dot${used ? ' used' : ''}`, title: `${l.label}${used ? ' — ishlatilgan' : ' — bor'}` }, lifelineIcon(l, 13));
+          }))));
     };
     board.replaceChildren(side(0), h('div.bp-sb-mid', h('b', String(game.round)), h('span', 'raund')), side(1));
   }
@@ -725,7 +743,10 @@ function gameView(root, gameId, ctx) {
     }
     if (phase === 'question') {
       const t = T(game.question.team);
-      hudText.replaceChildren(h('div.bp-hud-line', { style: teamStyle(t.color) }, h('span.bp-dot'), `${t.name} javob bermoqda`));
+      const helping = (game.question.used || []).filter((id) => id !== 'fifty').map((id) => LIFELINES.find((l) => l.id === id));
+      hudText.replaceChildren(
+        h('div.bp-hud-line', { style: teamStyle(t.color) }, h('span.bp-dot'), `${t.name} javob bermoqda`),
+        ...helping.map((l) => h('div.bp-hud-line.ll', lifelineIcon(l, 18), l.label)));
       return;
     }
     if (phase === 'roll') {
@@ -790,11 +811,13 @@ function gameView(root, gameId, ctx) {
     const q = revealed ? reveal.question : game.question;
     const ev = revealed ? reveal.ev : null;
     const t = game.teams[q.team];
+    const hidden = new Set(q.hidden || []);
     const options = q.options.map((text, j) => {
       let cls = 'option';
       if (revealed) cls += j === q.correct ? ' correct' : j === ev.choice ? ' wrong' : ' dim';
       else if (pickedChoice === j) cls += ' picked';
-      return h('button', { type: 'button', class: cls, disabled: revealed || busy, onclick: () => answer(j) },
+      if (hidden.has(j) && j !== q.correct) cls += ' eliminated';
+      return h('button', { type: 'button', class: cls, disabled: revealed || busy || hidden.has(j), onclick: () => answer(j), title: hidden.has(j) ? '50:50 bilan olib tashlangan' : null },
         h('span.opt-key', LETTERS[j] || String(j + 1)), h('span.opt-text', text), h('span.opt-mark'));
     });
     const short = q.options.length >= 3 && q.options.every((o) => o.length <= 90);
@@ -811,10 +834,10 @@ function gameView(root, gameId, ctx) {
         h('button.btn.primary.lg', { type: 'button', onclick: continueAfterReveal, style: teamStyle(roller.color), class: 'bp-team-solid' },
           icon('dice', 18), `${roller.name} zar tashlaydi`, icon('right', 16)))];
     } else {
-      foot = h('div.bp-q-actions',
+      foot = [lifelineBar(q, t), h('div.bp-q-actions',
         h('button.btn.ghost.sm', { type: 'button', disabled: busy, onclick: () => simpleAction('back'), title: 'Tosh-qaychi-qogʻoz natijasi xato belgilangan boʻlsa' }, icon('left', 14), 'Orqaga'),
         h('button.btn.ghost.sm', { type: 'button', disabled: busy, onclick: () => simpleAction('skip'), title: 'Savolni boshqasiga almashtirish' }, icon('refresh', 14), 'Boshqa savol'),
-        h('button.btn.ghost.sm', { type: 'button', disabled: busy, onclick: () => answer(null) }, icon('x', 14), 'Javob bera olmadi'));
+        h('button.btn.ghost.sm', { type: 'button', disabled: busy, onclick: () => answer(null) }, icon('x', 14), 'Javob bera olmadi'))];
     }
     const head = h('div.bp-q-head',
       h('span.bp-team-tag', h('span.bp-dot'), `${t.name} javob beradi`),
@@ -823,7 +846,67 @@ function gameView(root, gameId, ctx) {
       head,
       h('div.q-text', q.text),
       h(`div.options.bp-options${short ? '.two' : ''}`, options),
+      lifelineNotes(q),
       foot);
+  }
+
+  /** Javob berayotgan jamoaning yordam tugmalari. */
+  function lifelineBar(q, t) {
+    const used = t.lifelines || {};
+    const visible = q.options.length - (q.hidden || []).length;
+    return h('div.bp-lifelines', { role: 'group', 'aria-label': 'Yordamlar' },
+      h('span.bp-ll-label', 'Yordam:'),
+      LIFELINES.map((l) => {
+        const spent = !!used[l.id];
+        const impossible = l.id === 'fifty' && visible <= 2;
+        const title = spent
+          ? `${t.name} bu yordamdan foydalanib boʻlgan`
+          : impossible ? 'Bu savolda olib tashlanadigan variant yoʻq' : `${l.label} — oʻyinda bir marta`;
+        return h('button', {
+          type: 'button',
+          class: `bp-ll${spent ? ' used' : ''}`,
+          disabled: spent || impossible || busy,
+          title,
+          'aria-label': title,
+          onclick: () => useLifeline(l.id),
+        }, lifelineIcon(l, 17), l.id === 'fifty' ? null : h('span', l.label));
+      }));
+  }
+
+  function lifelineNotes(q) {
+    const used = q.used || [];
+    if (!used.length) return null;
+    return h('div.bp-ll-notes', used.map((id) => {
+      const l = LIFELINES.find((x) => x.id === id);
+      if (!l) return null;
+      const removed = (q.hidden || []).length;
+      const text = id === 'fifty' ? `${removed === 1 ? 'bitta' : 'ikkita'} notoʻgʻri javob olib tashlandi.` : l.note;
+      const bonus = id !== 'fifty' && game.answerTime ? h('b.bp-ll-bonus', ` +${LIFELINE_BONUS_SECONDS} soniya`) : null;
+      return h('div.bp-ll-note', lifelineIcon(l, 16), h('div', h('b', `${l.label}: `), text, bonus));
+    }));
+  }
+
+  async function useLifeline(kind) {
+    if (busy || ending || reveal || game.phase !== 'question') return;
+    const l = LIFELINES.find((x) => x.id === kind);
+    const team = game.teams[game.question.team];
+    const ok = await confirmDialog({
+      title: l.label,
+      message: `${team.name} «${l.label}» yordamidan foydalanadimi? Har bir yordamdan oʻyinda faqat bir marta foydalanish mumkin.`
+        + (kind !== 'fifty' && game.answerTime ? ` Savol vaqtiga ${LIFELINE_BONUS_SECONDS} soniya qoʻshiladi.` : ''),
+      okText: 'Ha, foydalanamiz',
+      cancelText: 'Bekor qilish',
+    });
+    if (!ok || !alive || busy || reveal || game.phase !== 'question') return;
+    busy = true;
+    renderPanel();
+    const res = await send({ type: 'lifeline', kind });
+    busy = false;
+    if (res) {
+      beep('match');
+      stopTimer(); // qo'shilgan vaqt bilan taymer qaytadan boshlanadi
+    }
+    render();
   }
 
   function answerNote() {
@@ -883,7 +966,8 @@ function gameView(root, gameId, ctx) {
       h('div.stat-big', String(T[i].left), h('small', ` / ${game.balloons}`)),
       h('div.stat-label', 'qolgan shar'),
       h('div.bp-stat-line', icon('check', 14), `${T[i].correct} / ${T[i].asked} toʻgʻri javob`),
-      h('div.bp-stat-line', icon('dice', 14), `${T[i].rolls} marta zar · jami ${T[i].rolled}`));
+      h('div.bp-stat-line', icon('dice', 14), `${T[i].rolls} marta zar · jami ${T[i].rolled}`),
+      h('div.bp-stat-line', icon('help', 14), `yordamlar: ${LIFELINES.filter((l) => (T[i].lifelines || {})[l.id]).length} / ${LIFELINES.length}`));
     return h('div.result.bp-result.anim-in',
       h('div.result-hero',
         h('div.result-icon', { style: w === null ? {} : teamStyle(T[w].color), class: w === null ? 'draw' : 'win' }, icon(w === null ? 'users' : 'trophy', 36)),
@@ -904,6 +988,10 @@ function gameView(root, gameId, ctx) {
       case 'answer':
         if (e.ok) return [`${T(e.team)} savolga toʻgʻri javob berdi`, 'good'];
         return [`${T(e.team)} ${e.timeout ? 'vaqtida javob bermadi' : e.skipped ? 'javob bera olmadi' : 'notoʻgʻri javob berdi'}`, 'bad'];
+      case 'lifeline': {
+        const l = LIFELINES.find((x) => x.id === e.lifeline);
+        return [`${T(e.team)} «${l ? l.label : e.lifeline}» yordamidan foydalandi`, 'll'];
+      }
       case 'roll': return [`${T(e.team)} zar tashladi: ${e.value} → ${T(1 - e.team)}ning ${e.popped} ta shari portladi${e.bonus ? ' (toʻgʻri javob uchun)' : ''}`, 'roll'];
       case 'end':
         if (e.reason === 'popped') return [`${T(1 - e.team)}ning sharlari tugadi — akula yeb qoʻydi! ${T(e.team)} gʻolib`, 'end'];
@@ -972,7 +1060,8 @@ function gameView(root, gameId, ctx) {
   function tick() {
     if (!ring || !game || game.phase !== 'question' || !game.answerTime) return;
     const secs = Math.max(0, (deadline - performance.now()) / 1000);
-    ring.set(secs / game.answerTime, secs);
+    const total = (game.question && game.question.timeLimitMs ? game.question.timeLimitMs / 1000 : game.answerTime);
+    ring.set(secs / total, secs);
     const whole = Math.ceil(secs);
     if (timerHandle && whole <= 5 && whole > 0 && whole !== lastTick) {
       lastTick = whole;

@@ -4,6 +4,7 @@ import asyncio
 from aiohttp import WSMsgType
 from aiohttp.test_utils import TestClient, TestServer
 
+from app import config
 from app.parser import parse_questions
 from app.server import create_app
 
@@ -30,12 +31,14 @@ async def _flow(tmp_path):
             data = await r.json() if r.content_type == "application/json" else await r.text()
             return r.status, data
 
-        # --- birinchi foydalanuvchi — administrator
+        # --- birinchi foydalanuvchi "admin" — bosh administrator (tizim egasi)
         assert (await call(guest, "GET", "/api/auth/me"))[1]["registrationOpen"] is True
-        status, data = await call(admin, "POST", "/api/auth/register", {"login": "ustoz", "password": "1234"})
-        assert status == 200 and data["user"]["isAdmin"] is True
+        status, data = await call(admin, "POST", "/api/auth/register", {"login": "admin", "password": "1234"})
+        assert status == 200 and data["user"]["isAdmin"] is True and data["user"]["isSuperadmin"] is True
         status, data = await call(student, "POST", "/api/auth/register", {"login": "talaba", "password": "1234"})
-        assert status == 200 and data["user"]["isAdmin"] is False
+        assert status == 200 and data["user"]["isAdmin"] is False and data["user"]["isSuperadmin"] is False
+        # "admin" logini band: katta-kichik harf farqsiz qayta ro'yxatdan o'tib bo'lmaydi
+        assert (await call(guest, "POST", "/api/auth/register", {"login": "ADMIN", "password": "1234"}))[0] == 409
         status, topic = await call(admin, "POST", "/api/admin/topics", {"name": "Sinov", "content": SAMPLE})
         assert status == 201
         tid = topic["topic"]["id"]
@@ -67,7 +70,8 @@ async def _flow(tmp_path):
         assert status == 200
         assert ov["stats"]["users"]["total"] == 2 and ov["stats"]["users"]["admins"] == 1
         assert ov["stats"]["topics"] == {"total": 1, "questions": 6}
-        assert [u["login"] for u in ov["recentUsers"]] == ["talaba", "ustoz"]
+        assert [u["login"] for u in ov["recentUsers"]] == ["talaba", "admin"]
+        assert [u["isSuperadmin"] for u in ov["recentUsers"]] == [False, True]
         assert ov["settings"] == {"registrationOpen": True}
 
         # --- administrator foydalanuvchi yaratadi
@@ -121,6 +125,22 @@ async def _flow(tmp_path):
         assert msg["d"] == {"isAdmin": True}
         await ws.close()
         assert (await call(student, "GET", "/api/admin/overview"))[0] == 200
+        # oddiy administrator: mavzularni boshqaradi, foydalanuvchilarni faqat ko'radi
+        status, data = await call(student, "GET", "/api/admin/users")
+        assert status == 200 and [u["isSuperadmin"] for u in data["users"] if u["login"] == "admin"] == [True]
+        assert (await call(student, "POST", "/api/admin/topics", {"name": "Talaba mavzusi", "content": SAMPLE}))[0] == 201
+        for method, path, body in [
+            ("POST", "/api/admin/users", {"login": "boshqa", "password": "1234"}),
+            ("PATCH", f"/api/admin/users/{sardor}", {"blocked": True}),
+            ("PATCH", f"/api/admin/users/{sardor}", {"password": "1111"}),
+            ("PATCH", f"/api/admin/users/{sardor}", {"isAdmin": True}),
+            ("PATCH", "/api/admin/users/1", {"blocked": True}),
+            ("DELETE", f"/api/admin/users/{sardor}", None),
+            ("PATCH", "/api/admin/settings", {"registrationOpen": False}),
+        ]:
+            status, data = await call(student, method, path, body)
+            assert status == 403 and "bosh administrator" in data["error"], (method, path)
+        assert (await call(student, "GET", "/api/admin/settings"))[0] == 200
         await call(admin, "PATCH", "/api/admin/users/2", {"isAdmin": False})
         assert (await call(student, "GET", "/api/admin/overview"))[0] == 403
 
@@ -129,8 +149,8 @@ async def _flow(tmp_path):
         assert (await call(student, "GET", "/api/auth/me"))[1]["user"] is None
         assert (await call(student, "POST", "/api/auth/login", {"login": "talaba", "password": "yangi1"}))[0] == 200
         assert (await call(admin, "PATCH", "/api/admin/users/1", {"password": "boshqa1"}))[0] == 200
-        assert (await call(admin, "GET", "/api/auth/me"))[1]["user"]["login"] == "ustoz"
-        assert (await call(extra, "POST", "/api/auth/login", {"login": "ustoz", "password": "boshqa1"}))[0] == 200
+        assert (await call(admin, "GET", "/api/auth/me"))[1]["user"]["login"] == "admin"
+        assert (await call(extra, "POST", "/api/auth/login", {"login": "admin", "password": "boshqa1"}))[0] == 200
 
         # --- ro'yxatdan o'tishni yopish
         status, data = await call(admin, "PATCH", "/api/admin/settings", {"registrationOpen": False})
@@ -158,11 +178,81 @@ async def _flow(tmp_path):
 
         # --- foydalanuvchini o'chirish
         status, users = await call(admin, "GET", "/api/admin/users")
-        assert {u["login"] for u in users["users"]} == {"ustoz", "talaba", "sardor", "yangi", "mehmon"}
+        assert {u["login"] for u in users["users"]} == {"admin", "talaba", "sardor", "yangi", "mehmon"}
         assert all("lastSeenAt" in u and "balloonGames" in u for u in users["users"])
         assert (await call(admin, "DELETE", f"/api/admin/users/{sardor}"))[0] == 200
         assert (await call(created, "GET", "/api/auth/me"))[1]["user"] is None
     finally:
         for c in clients:
             await c.close()
+        await server.close()
+
+
+def test_superadmin_login_reserved_and_bootstrap(tmp_path, monkeypatch):
+    asyncio.run(_superadmin_flow(tmp_path, monkeypatch))
+
+
+async def _start(path):
+    server = TestServer(create_app(db_path=path))
+    await server.start_server()
+    client = TestClient(server)
+    await client.start_server()
+    return server, client
+
+
+async def _superadmin_flow(tmp_path, monkeypatch):
+    db_path = tmp_path / "owner.db"
+    # 1) birinchi foydalanuvchi boshqa login bilan — u admin, lekin bosh administrator emas; "admin" band
+    server, c = await _start(db_path)
+    try:
+        r = await c.post("/api/auth/register", json={"login": "ustoz", "password": "1234"})
+        user = (await r.json())["user"]
+        assert user["isAdmin"] is True and user["isSuperadmin"] is False
+        assert (await c.post("/api/admin/users", json={"login": "x1", "password": "1234"})).status == 403
+        guest = TestClient(server)
+        await guest.start_server()
+        r = await guest.post("/api/auth/register", json={"login": "Admin", "password": "1234"})
+        assert r.status == 409  # band login — hech kim egallay olmaydi
+        await guest.close()
+    finally:
+        await c.close()
+        await server.close()
+
+    # 2) TD_SUPERADMIN_PASSWORD: ishga tushishda bosh administrator yaratiladi
+    monkeypatch.setattr(config, "SUPERADMIN_PASSWORD", "sirli-parol")
+    server, c = await _start(db_path)
+    try:
+        r = await c.post("/api/auth/login", json={"login": "admin", "password": "sirli-parol"})
+        assert r.status == 200 and (await r.json())["user"]["isSuperadmin"] is True
+        assert (await c.post("/api/admin/users", json={"login": "oquvchi", "password": "1234"})).status == 201
+        users = (await (await c.get("/api/admin/users")).json())["users"]
+        assert {u["login"]: u["isSuperadmin"] for u in users} == {"ustoz": False, "admin": True, "oquvchi": False}
+    finally:
+        await c.close()
+        await server.close()
+
+    # 3) parol unutilsa: boshqa TD_SUPERADMIN_PASSWORD bilan qayta ishga tushirish parolni tiklaydi
+    monkeypatch.setattr(config, "SUPERADMIN_PASSWORD", "yangi-parol")
+    server, c = await _start(db_path)
+    try:
+        assert (await c.post("/api/auth/login", json={"login": "admin", "password": "sirli-parol"})).status == 401
+        assert (await c.post("/api/auth/login", json={"login": "admin", "password": "yangi-parol"})).status == 200
+    finally:
+        await c.close()
+        await server.close()
+
+    # 4) parolsiz ishga tushganda ham bosh administrator doim admin va bloklanmagan bo'ladi
+    monkeypatch.setattr(config, "SUPERADMIN_PASSWORD", None)
+    from app.db import Database
+    db = Database(db_path)
+    owner = db.user_by_login("admin")
+    db.set_admin(owner["id"], False)
+    db.set_blocked(owner["id"], True)
+    db.close()
+    server, c = await _start(db_path)
+    try:
+        r = await c.post("/api/auth/login", json={"login": "admin", "password": "yangi-parol"})
+        assert r.status == 200 and (await r.json())["user"]["isAdmin"] is True
+    finally:
+        await c.close()
         await server.close()

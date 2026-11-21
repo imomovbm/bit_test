@@ -83,10 +83,22 @@ def require_user(request: web.Request) -> dict:
     return user
 
 
+def is_superadmin(user: dict | None) -> bool:
+    """Bosh administrator (tizim egasi) — login config.SUPERADMIN_LOGIN bo'lgan foydalanuvchi."""
+    return bool(user) and user["login"].casefold() == config.SUPERADMIN_LOGIN.casefold()
+
+
 def require_admin(request: web.Request) -> dict:
     user = require_user(request)
-    if not user["is_admin"]:
+    if not (user["is_admin"] or is_superadmin(user)):
         raise ApiError("Bu amal faqat administrator uchun", 403)
+    return user
+
+
+def require_superadmin(request: web.Request) -> dict:
+    user = require_admin(request)
+    if not is_superadmin(user):
+        raise ApiError("Foydalanuvchilarni faqat bosh administrator boshqaradi", 403)
     return user
 
 
@@ -98,7 +110,37 @@ def int_param(request: web.Request, name: str) -> int:
 
 
 def public_user(user: dict) -> dict:
-    return {"id": user["id"], "login": user["login"], "isAdmin": bool(user["is_admin"])}
+    owner = is_superadmin(user)
+    return {"id": user["id"], "login": user["login"], "isAdmin": bool(user["is_admin"]) or owner, "isSuperadmin": owner}
+
+
+def reserved_login(db, login: str) -> bool:
+    """Bosh administrator logini band: bazada boshqa foydalanuvchilar bo'lsa, uni hech kim egallay olmaydi."""
+    return login.casefold() == config.SUPERADMIN_LOGIN.casefold() and db.count_users() > 0
+
+
+def ensure_superadmin(db) -> None:
+    """Ishga tushishda: bosh administrator doim administrator va bloklanmagan bo'lsin.
+
+    TD_SUPERADMIN_PASSWORD berilgan bo'lsa — akkaunt bo'lmasa yaratiladi, bor bo'lsa paroli shu qiymatga tiklanadi.
+    """
+    login = config.SUPERADMIN_LOGIN
+    password = config.SUPERADMIN_PASSWORD
+    if password and len(password) < 4:
+        log.warning("TD_SUPERADMIN_PASSWORD juda qisqa (kamida 4 belgi) — e'tiborga olinmadi")
+        password = None
+    user = db.user_by_login(login)
+    if not user:
+        if password:
+            db.create_user(login, hash_password(password), True)
+            log.info("Bosh administrator akkaunti yaratildi: %s", login)
+        return
+    if not user["is_admin"] or user["blocked"]:
+        db.set_admin(user["id"], True)
+        db.set_blocked(user["id"], False)
+    if password and not verify_password(password, user["pass_hash"]):
+        db.set_password(user["id"], hash_password(password))
+        log.info("Bosh administrator (%s) paroli TD_SUPERADMIN_PASSWORD bo'yicha yangilandi", user["login"])
 
 
 def registration_open(db) -> bool:
@@ -168,7 +210,7 @@ async def register(request: web.Request):
     # Birinchi foydalanuvchi (administrator) har doim ro'yxatdan o'ta oladi.
     if db.count_users() and not registration_open(db):
         raise ApiError("Ro'yxatdan o'tish yopilgan. Akkaunt olish uchun administratorga murojaat qiling", 403)
-    if db.user_by_login(login):
+    if db.user_by_login(login) or reserved_login(db, login):
         raise ApiError("Bu login band. Boshqa login tanlang", 409)
     pass_hash = await in_thread(hash_password, password)
     is_admin = db.count_users() == 0 or login.casefold() in config.ADMIN_LOGINS
@@ -532,10 +574,12 @@ async def admin_delete_topic(request: web.Request):
 
 
 def admin_user_json(u: dict, hub) -> dict:
+    owner = is_superadmin(u)
     return {
         "id": u["id"],
         "login": u["login"],
-        "isAdmin": bool(u["is_admin"]),
+        "isAdmin": bool(u["is_admin"]) or owner,
+        "isSuperadmin": owner,
         "blocked": bool(u["blocked"]),
         "createdAt": u["created_at"],
         "lastSeenAt": u.get("last_seen_at"),
@@ -572,7 +616,10 @@ async def admin_overview(request: web.Request):
     ]
     games = [{"id": g["id"], "owner": g["owner"], **balloon.summary(g["state"])} for g in db.recent_balloon_games()]
     users = [
-        {"id": u["id"], "login": u["login"], "isAdmin": bool(u["is_admin"]), "blocked": bool(u["blocked"]), "createdAt": u["created_at"], "online": hub.is_online(u["id"])}
+        {
+            "id": u["id"], "login": u["login"], "isAdmin": bool(u["is_admin"]) or is_superadmin(u), "isSuperadmin": is_superadmin(u),
+            "blocked": bool(u["blocked"]), "createdAt": u["created_at"], "online": hub.is_online(u["id"]),
+        }
         for u in db.recent_users()
     ]
     return ok({"stats": stats, "recentUsers": users, "recentDuels": duels, "recentGames": games, "settings": settings_json(db)})
@@ -586,7 +633,7 @@ async def admin_settings(request: web.Request):
 
 @routes.patch("/api/admin/settings")
 async def admin_update_settings(request: web.Request):
-    user = require_admin(request)
+    user = require_superadmin(request)
     data = await read_json(request)
     db = request.app[DB]
     if "registrationOpen" in data:
@@ -604,15 +651,15 @@ async def admin_users(request: web.Request):
 
 @routes.post("/api/admin/users")
 async def admin_create_user(request: web.Request):
-    """Administrator yangi akkaunt yaratadi (masalan, o'quvchilar uchun)."""
-    me_user = require_admin(request)
+    """Bosh administrator yangi akkaunt yaratadi (masalan, o'quvchilar uchun)."""
+    me_user = require_superadmin(request)
     data = await read_json(request)
     login = str(data.get("login", "")).strip()
     password = str(data.get("password", ""))
     validate_login(login)
     validate_password(password)
     db = request.app[DB]
-    if db.user_by_login(login):
+    if db.user_by_login(login) or reserved_login(db, login):
         raise ApiError("Bu login band. Boshqa login tanlang", 409)
     pass_hash = await in_thread(hash_password, password)
     try:
@@ -625,7 +672,7 @@ async def admin_create_user(request: web.Request):
 
 @routes.patch("/api/admin/users/{uid}")
 async def admin_update_user(request: web.Request):
-    me_user = require_admin(request)
+    me_user = require_superadmin(request)
     db = request.app[DB]
     uid = int_param(request, "uid")
     target = db.user_by_id(uid)
@@ -662,7 +709,7 @@ async def admin_update_user(request: web.Request):
 
 @routes.delete("/api/admin/users/{uid}")
 async def admin_delete_user(request: web.Request):
-    me_user = require_admin(request)
+    me_user = require_superadmin(request)
     db = request.app[DB]
     uid = int_param(request, "uid")
     if uid == me_user["id"]:

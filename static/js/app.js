@@ -193,7 +193,8 @@ function buildNav(s) {
   const connPill = h('span.pill.conn-pill', { hidden: true }, icon('wifiOff', 14), h('span.hide-sm', 'Ulanmoqda…'));
   const soundBtn = h('button.icon-btn', { type: 'button', title: 'Ovozni yoqish/oʻchirish', 'aria-label': 'Ovoz', onclick: toggleSound });
   const themeBtn = h('button.icon-btn', { type: 'button', title: 'Yorugʻ/qorongʻi rejim', 'aria-label': 'Mavzu rangi', onclick: toggleTheme });
-  const userBox = h('div.user-box', { title: user.login }, avatar(user.login, 'sm'), h('span.user-name.hide-sm', user.login), user.isAdmin ? h('span.badge.admin.hide-sm', 'admin') : null);
+  const role = user.isSuperadmin ? h('span.badge.owner.hide-sm', 'bosh admin') : user.isAdmin ? h('span.badge.admin.hide-sm', 'admin') : null;
+  const userBox = h('div.user-box', { title: user.login }, avatar(user.login, 'sm'), h('span.user-name.hide-sm', user.login), role);
   const logoutBtn = h('button.icon-btn', { type: 'button', title: 'Chiqish', 'aria-label': 'Chiqish', onclick: logout }, icon('logout', 18));
   const header = h('header.app-header',
     h('div.header-inner',

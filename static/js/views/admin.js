@@ -94,8 +94,8 @@ function overviewSection(body, ctx, state) {
       h('div.card.adm-quick',
         h('div.adm-quick-actions',
           h('a.btn.primary', { href: '#/admin/topics' }, icon('upload', 16), 'Test yuklash'),
-          h('a.btn.ghost', { href: '#/admin/users?new=1' }, icon('userPlus', 16), 'Foydalanuvchi qoʻshish')),
-        registrationSwitch(data.settings.registrationOpen)),
+          ctx.user.isSuperadmin ? h('a.btn.ghost', { href: '#/admin/users?new=1' }, icon('userPlus', 16), 'Foydalanuvchi qoʻshish') : null),
+        registrationSwitch(data.settings.registrationOpen, !!ctx.user.isSuperadmin)),
       h('div.adm-grid2',
         h('div.card',
           h('div.card-title', icon('userPlus', 18), 'Yangi foydalanuvchilar', h('a.adm-more', { href: '#/admin/users' }, 'Barchasi', icon('right', 14))),
@@ -148,10 +148,19 @@ function gameRow(g) {
 
 function roleBadge(u) {
   if (u.blocked) return h('span.badge.bad', icon('lock', 11), 'bloklangan');
+  if (u.isSuperadmin) return h('span.badge.owner', icon('crown', 11), 'bosh admin');
   return u.isAdmin ? h('span.badge.admin', 'admin') : null;
 }
 
-function registrationSwitch(open) {
+/** Ro'yxatdan o'tish holati: bosh administrator uchun almashtirgich, boshqalar uchun faqat ma'lumot. */
+function registrationSwitch(open, editable = true) {
+  if (!editable) {
+    return h('div.adm-reg.readonly',
+      h('span.adm-reg-state', { class: open ? 'on' : 'off' }, icon(open ? 'unlock' : 'lock', 16)),
+      h('span.adm-reg-text',
+        h('b', open ? 'Roʻyxatdan oʻtish ochiq' : 'Roʻyxatdan oʻtish yopiq'),
+        h('span.small.muted', 'Buni faqat bosh administrator oʻzgartira oladi.')));
+  }
   const input = h('input', { type: 'checkbox', checked: open, 'aria-label': 'Roʻyxatdan oʻtish ochiq' });
   const hint = h('span.small.muted');
   const paint = () => {
@@ -460,19 +469,25 @@ const FILTERS = [
 function usersSection(body, ctx, state, query) {
   let users = null;
   let filter = 'all';
+  const manage = !!ctx.user.isSuperadmin; // foydalanuvchilarni faqat bosh administrator boshqaradi
   const search = searchBox('Login boʻyicha qidirish', () => paint());
   const filters = h('div.adm-filters', { role: 'tablist' });
   const list = h('div', spinner());
   const regBox = h('div.adm-reg-slot');
   body.append(
-    h('div.card.adm-quick',
-      h('div.adm-quick-actions', h('button.btn.primary', { type: 'button', onclick: () => createUser() }, icon('userPlus', 16), 'Foydalanuvchi qoʻshish')),
-      regBox),
+    manage
+      ? h('div.card.adm-quick',
+        h('div.adm-quick-actions', h('button.btn.primary', { type: 'button', onclick: () => createUser() }, icon('userPlus', 16), 'Foydalanuvchi qoʻshish')),
+        regBox)
+      : h('div.card.adm-quick',
+        h('div.alert.info.adm-readonly-note', icon('shield', 18), h('span',
+          'Foydalanuvchilarni (bloklash, parolni tiklash, admin qilish) faqat bosh administrator boshqaradi. Siz roʻyxatni koʻrishingiz mumkin.')),
+        regBox),
     h('div.adm-toolbar', search.el, filters),
     list);
 
   state.overview.then((data) => {
-    if (state.alive) regBox.replaceChildren(registrationSwitch(data.settings.registrationOpen));
+    if (state.alive) regBox.replaceChildren(registrationSwitch(data.settings.registrationOpen, manage));
   }).catch(() => {});
 
   const isOnline = (u) => (live.presence.users || []).some((p) => p.id === u.id) || (live.status !== 'online' && u.online);
@@ -511,7 +526,7 @@ function usersSection(body, ctx, state, query) {
     list.replaceChildren(shown.length
       ? h('div.card.table-card', h('div.table-wrap', h('table.table.adm-table.adm-users',
         h('thead', h('tr',
-          h('th', 'Foydalanuvchi'), h('th', 'Rol'), h('th.hide-sm', 'Faollik'), h('th.hide-sm', 'Oxirgi kirish'), h('th.right', 'Amallar'))),
+          h('th', 'Foydalanuvchi'), h('th', 'Rol'), h('th.hide-sm', 'Faollik'), h('th.hide-sm', 'Oxirgi kirish'), manage ? h('th.right', 'Amallar') : null)),
         h('tbody', shown.map(row)))))
       : h('div.card.muted.center', 'Hech kim topilmadi.'));
   }
@@ -527,16 +542,18 @@ function usersSection(body, ctx, state, query) {
           h('div.adm-row-title', h('span.ellipsis', u.login), online ? h('span.live-dot', { title: 'hozir onlayn' }) : null, self ? h('span.tag', 'siz') : null),
           h('div.adm-row-sub', `roʻyxatdan oʻtgan: ${fmtDate(u.createdAt).split(' ')[0]}`)))),
       h('td.adm-td-role', h('div.adm-badges',
-        u.isAdmin ? h('span.badge.admin', icon('shield', 11), 'admin') : h('span.badge.neutral', 'foydalanuvchi'),
+        u.isSuperadmin
+          ? h('span.badge.owner', icon('crown', 11), 'bosh admin')
+          : u.isAdmin ? h('span.badge.admin', icon('shield', 11), 'admin') : h('span.badge.neutral', 'foydalanuvchi'),
         u.blocked ? h('span.badge.bad', icon('lock', 11), 'bloklangan') : null)),
       h('td.hide-sm.small', h('span.adm-activity', { title: 'duel · mashgʻulot · Balloon Pop' },
         h('span', icon('swords', 13), String(u.duels)), h('span', icon('book', 13), String(u.practices)), h('span', icon('balloon', 13), String(u.balloonGames)))),
       h('td.hide-sm.small.nowrap', online ? h('span.adm-online', 'hozir onlayn') : fmtAgo(u.lastSeenAt)),
-      h('td.right.nowrap',
+      manage ? h('td.right.nowrap',
         self ? null : btn('shield', u.isAdmin ? 'Admin huquqini olish' : 'Admin qilish', () => toggleAdmin(u), u.isAdmin ? '.on' : ''),
         btn('key', 'Parolni yangilash', () => resetPassword(u)),
         self ? null : btn(u.blocked ? 'unlock' : 'lock', u.blocked ? 'Blokdan chiqarish' : 'Bloklash', () => toggleBlock(u), u.blocked ? '.on' : ''),
-        self ? null : btn('trash', 'Oʻchirish', () => remove(u), '.danger')));
+        self ? null : btn('trash', 'Oʻchirish', () => remove(u), '.danger')) : null);
   }
 
   async function patch(u, body, done) {
@@ -673,7 +690,7 @@ function usersSection(body, ctx, state, query) {
   }
 
   load();
-  if (query.get('new')) createUser();
+  if (manage && query.get('new')) createUser();
   state.cleanups.push(live.on('change', (kind) => {
     if (kind === 'presence' && users) paint();
   }));

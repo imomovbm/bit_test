@@ -35,6 +35,13 @@ PORT = _int("TD_PORT", _int("PORT", 8080))
 # (Birinchi ro'yxatdan o'tgan foydalanuvchi har doim admin bo'ladi.)
 ADMIN_LOGINS = {s.strip().casefold() for s in os.environ.get("TD_ADMINS", "").split(",") if s.strip()}
 
+# Bosh administrator (tizim egasi): faqat u foydalanuvchilarni boshqaradi (bloklash, parol, admin qilish, o'chirish).
+# Bu login band qilingan: uni faqat birinchi foydalanuvchi sifatida ro'yxatdan o'tkazish mumkin.
+SUPERADMIN_LOGIN = os.environ.get("TD_SUPERADMIN", "admin").strip() or "admin"
+# Berilsa, ishga tushishda: bosh administrator akkaunti bo'lmasa — shu parol bilan yaratiladi,
+# bor bo'lsa — paroli shu qiymatga tiklanadi (parol unutilganda tiklash uchun).
+SUPERADMIN_PASSWORD = os.environ.get("TD_SUPERADMIN_PASSWORD") or None
+
 SESSION_COOKIE = "td_sid"
 SESSION_DAYS = 30
 

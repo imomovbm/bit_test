@@ -9,6 +9,10 @@ boshqaradi. Har bir jamoaning odamchasi o'z rangidagi sharlarda akulalar ustida 
   4. Yutqazgan jamoa savolga to'g'ri javob bergan bo'lsa, u ham zar tashlaydi.
   5. Sharlari tugagan jamoa suvga tushadi — akula uni yeb qo'yadi, raqib jamoa g'olib bo'ladi.
 
+Yordamlar: savolga javob berayotgan jamoa har biridan o'yinda bir marta foydalana oladi —
+AI'dan so'rash va guruhdan so'rash (sinfda o'tkaziladi, savol vaqtiga qo'shimcha vaqt beriladi)
+hamda 50:50 (server ikkita noto'g'ri variantni olib tashlaydi).
+
 O'yin holati oddiy JSON-lug'at bo'lib, bazada saqlanadi (sahifa yangilansa ham o'yin davom etadi).
 Bu modul faqat qoidalarni bajaradi: baza va HTTP bilan ishlamaydi, shuning uchun uni oson testlash mumkin.
 """
@@ -26,6 +30,8 @@ DECK_LIMIT = 300               # holatda saqlanadigan savollar navbatining eng k
 MAX_LOG = 400
 
 PHASES = ("rps", "question", "roll", "pop", "finished")
+LIFELINES = ("ai", "group", "fifty")   # AI'dan so'rash, guruhdan so'rash, 50:50
+LIFELINE_BONUS_MS = 30_000             # AI/guruhdan so'raganda savol vaqtiga qo'shiladi
 
 
 class GameError(Exception):
@@ -95,7 +101,10 @@ def new_game(*, topic_id: int, topic_name: str, teams: list[dict], balloons: int
         "balloons": balloons,
         "answerTime": answer_time,
         "teams": [
-            {"name": t["name"], "color": t["color"], "popped": [], "asked": 0, "correct": 0, "rolls": 0, "rolled": 0}
+            {
+                "name": t["name"], "color": t["color"], "popped": [], "asked": 0, "correct": 0, "rolls": 0, "rolled": 0,
+                "lifelines": {k: False for k in LIFELINES},
+            }
             for t in teams
         ],
         "round": 1,
@@ -122,14 +131,34 @@ def left(state: dict, team: int) -> int:
     return state["balloons"] - len(state["teams"][team]["popped"])
 
 
+def lifelines(team: dict) -> dict:
+    """Jamoa yordamlaridan foydalanganmi (eski o'yinlarda bu maydon bo'lmasligi mumkin)."""
+    used = team.setdefault("lifelines", {})
+    for k in LIFELINES:
+        used.setdefault(k, False)
+    return used
+
+
+def time_limit_ms(state: dict) -> int:
+    """Joriy savol uchun jami vaqt (yordamlar qo'shgan vaqt bilan); 0 — cheklanmagan."""
+    limit = state["answerTime"] * 1000
+    q = state["question"]
+    return limit + q.get("extraMs", 0) if limit and q else limit
+
+
 def public(state: dict, now_ms: int) -> dict:
     """Mijozga yuboriladigan holat: savollar navbati va javob berilmagan savolning to'g'ri javobi yashiriladi."""
     q = state["question"]
     question = None
     if q:
-        question = {"id": q["id"], "team": q["team"], "text": q["text"], "options": q["options"]}
+        question = {
+            "id": q["id"], "team": q["team"], "text": q["text"], "options": q["options"],
+            "hidden": list(q.get("hidden", [])),   # 50:50 bilan olib tashlangan variantlar
+            "used": list(q.get("used", [])),       # shu savolda ishlatilgan yordamlar
+            "timeLimitMs": time_limit_ms(state) or None,
+        }
         if state["phase"] == "question":
-            limit = state["answerTime"] * 1000
+            limit = time_limit_ms(state)
             question["remainingMs"] = max(0, limit - (now_ms - q["startedAt"])) if limit else None
         else:
             question["correct"] = q["correct"]
@@ -149,6 +178,7 @@ def public(state: dict, now_ms: int) -> dict:
                 "correct": t["correct"],
                 "rolls": t["rolls"],
                 "rolled": t["rolled"],
+                "lifelines": dict(lifelines(t)),
             }
             for i, t in enumerate(state["teams"])
         ],
@@ -257,7 +287,19 @@ def _ask(state: dict, team: int, source: QuestionSource, rng, now_ms: int) -> No
         "correct": int(q["correct"]),
         "team": team,
         "startedAt": now_ms,
+        "extraMs": 0,
+        "hidden": [],
+        "used": [],
     }
+
+
+def _refund(state: dict) -> None:
+    """Savol bekor qilinsa (almashtirilsa yoki tosh-qaychi-qog'oz qayta o'ynalsa), unda ishlatilgan yordamlar qaytariladi."""
+    q = state["question"]
+    if q:
+        used = lifelines(state["teams"][q["team"]])
+        for kind in q.get("used", []):
+            used[kind] = False
 
 
 def _rps(state, action, source, rng, now_ms) -> dict:
@@ -275,6 +317,7 @@ def _rps(state, action, source, rng, now_ms) -> dict:
 def _back(state, action, source, rng, now_ms) -> dict:
     """Tosh-qaychi-qog'oz natijasi xato belgilangan bo'lsa — savolni qaytarib, avvalgi bosqichga o'tish."""
     _expect(state, "question")
+    _refund(state)
     if state["deckPos"] > 0:
         state["deckPos"] -= 1  # shu savol keyingi safar yana beriladi
     state["question"] = None
@@ -289,9 +332,42 @@ def _skip(state, action, source, rng, now_ms) -> dict:
     """Savolni boshqasiga almashtirish (masalan, savol tushunarsiz bo'lsa)."""
     _expect(state, "question")
     team = state["question"]["team"]
+    _refund(state)
     _ask(state, team, source, rng, now_ms)
     _log(state, "skip", team=team)
     return {"type": "skip"}
+
+
+def _lifeline(state, action, source, rng, now_ms) -> dict:
+    """Javob berayotgan jamoa yordamdan foydalanadi (har biridan o'yinda bir marta)."""
+    _expect(state, "question")
+    kind = action.get("kind")
+    if kind not in LIFELINES:
+        raise GameError("Noma'lum yordam turi")
+    q = state["question"]
+    used = lifelines(state["teams"][q["team"]])
+    if used[kind]:
+        raise GameError("Bu jamoa bu yordamdan allaqachon foydalangan", 409)
+    limit = time_limit_ms(state)
+    if limit and now_ms - q["startedAt"] > limit + ANSWER_GRACE_MS:
+        raise GameError("Savol vaqti tugagan", 409)
+    event = {"type": "lifeline", "team": q["team"], "kind": kind}
+    if kind == "fifty":
+        hidden = q.setdefault("hidden", [])
+        wrong = [i for i in range(len(q["options"])) if i != q["correct"] and i not in hidden]
+        count = min(2, len(q["options"]) - len(hidden) - 2)  # kamida 2 ta variant qolishi kerak
+        if count <= 0:
+            raise GameError("Bu savolda olib tashlanadigan variant yo'q", 409)
+        hidden.extend(rng.sample(wrong, count))
+        hidden.sort()
+        event["hidden"] = list(hidden)
+    elif state["answerTime"]:
+        q["extraMs"] = q.get("extraMs", 0) + LIFELINE_BONUS_MS
+        event["bonusMs"] = LIFELINE_BONUS_MS
+    used[kind] = True
+    q.setdefault("used", []).append(kind)
+    _log(state, "lifeline", team=q["team"], lifeline=kind)
+    return event
 
 
 def _answer(state, action, source, rng, now_ms) -> dict:
@@ -302,7 +378,9 @@ def _answer(state, action, source, rng, now_ms) -> dict:
         choice = _int(choice)
         if choice is None or not 0 <= choice < len(q["options"]):
             raise GameError("Javob varianti noto'g'ri")
-    limit = state["answerTime"] * 1000
+        if choice in q.get("hidden", []):
+            raise GameError("Bu variant 50:50 bilan olib tashlangan")
+    limit = time_limit_ms(state)
     elapsed = max(0, now_ms - q["startedAt"])
     timed_out = choice is None and bool(action.get("timeout")) and limit > 0
     if limit and elapsed > limit + ANSWER_GRACE_MS:
@@ -403,6 +481,7 @@ _ACTIONS = {
     "rps": _rps,
     "back": _back,
     "skip": _skip,
+    "lifeline": _lifeline,
     "answer": _answer,
     "roll": _roll,
     "pop": _pop,

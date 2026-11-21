@@ -42,6 +42,15 @@ O'yinni o'qituvchi bitta ekranda boshqaradi (proyektor, interaktiv doska yoki ko
 4. **Imkoniyat** — yutqazgan jamoa savolga to'g'ri javob bergan bo'lsa, u ham zar tashlaydi.
 5. **Akulalar** — sharlari tugagan jamoa suvga tushadi va akulaga yem bo'ladi. Havoda qolgan jamoa g'olib.
 
+**Yordamlar** — savolga javob berayotgan jamoa har biridan o'yinda **bir marta** foydalana oladi:
+
+- **AI'dan so'rash** — jamoa savolni telefonidagi AI yordamchiga beradi (savol vaqtiga +30 soniya);
+- **Guruhdan so'rash** — guruhdoshlar fikri so'raladi, masalan qo'l ko'tarib (+30 soniya);
+- **50:50** — ikkita noto'g'ri javob olib tashlanadi.
+
+Savol almashtirilsa («Boshqa savol») yoki tosh-qaychi-qog'oz qayta o'ynalsa («Orqaga»), shu savolda ishlatilgan
+yordamlar jamoaga qaytariladi. Har bir jamoaning qolgan yordamlari tabloda ko'rinadi.
+
 O'yin boshida tanlanadi: mavzu, ikki jamoaning nomi va rangi (8 ta rang), har bir jamoaga sharlar soni
 (5 dan 50 gacha istalgan son — yozib kiritiladi yoki tayyor variantlardan tanlanadi) va savolga javob vaqti
 (cheklovsiz, 20, 30 yoki 60 soniya).
@@ -56,8 +65,20 @@ O'yin boshida tanlanadi: mavzu, ikki jamoaning nomi va rangi (8 ta rang), har bi
 ## Boshqaruv paneli
 
 Menyudagi **Boshqaruv** bo'limi faqat administratorlarga ko'rinadi (server ham barcha amallarni tekshiradi).
-**Birinchi ro'yxatdan o'tgan foydalanuvchi avtomatik ravishda administrator bo'ladi**; keyin boshqalarga ham
-admin huquqini berish mumkin.
+
+**Rollar:**
+
+| Rol | Kim | Huquqlar |
+|---|---|---|
+| **Bosh administrator** (tizim egasi) | login `admin` (`TD_SUPERADMIN` bilan o'zgartirish mumkin) | hammasi: test mavzulari va **foydalanuvchilarni boshqarish** — yaratish, bloklash, parolni tiklash, admin qilish, o'chirish, ro'yxatdan o'tishni yopish |
+| **Administrator** | bosh administrator tayinlagan foydalanuvchilar (birinchi ro'yxatdan o'tgan foydalanuvchi ham) | test mavzularini yuklash va boshqarish; foydalanuvchilar ro'yxatini **faqat ko'rish** |
+| Foydalanuvchi | qolganlar | duel, o'rganish, Balloon Pop, reyting |
+
+- `admin` logini band qilingan: uni faqat **birinchi** foydalanuvchi sifatida ro'yxatdan o'tkazish mumkin. Yangi
+  serverda birinchi bo'lib `admin` loginini ro'yxatdan o'tkazing.
+- Server har safar ishga tushganda `admin` akkaunti administrator va bloklanmagan holatga keltiriladi.
+- `TD_SUPERADMIN_PASSWORD` berilsa: `admin` akkaunti bo'lmasa — shu parol bilan yaratiladi, bor bo'lsa — paroli
+  shu qiymatga tiklanadi (parol unutilganda yoki boshqa foydalanuvchi birinchi ro'yxatdan o'tib qo'ygan bo'lsa).
 
 - **Umumiy ko'rinish** — foydalanuvchilar, onlayn, mavzular, duellar, mashg'ulotlar va Balloon Pop o'yinlari
   statistikasi; yangi foydalanuvchilar va so'nggi faollik.
@@ -98,6 +119,8 @@ Keyingi savol
 | `TD_DATA_DIR` | `./data` | Ma'lumotlar papkasi |
 | `TD_DB_PATH` | `$TD_DATA_DIR/testduel.db` | SQLite fayli |
 | `TD_ADMINS` | — | Vergul bilan ajratilgan loginlar; ro'yxatdan o'tganda admin bo'ladi |
+| `TD_SUPERADMIN` | `admin` | Bosh administrator (tizim egasi) logini |
+| `TD_SUPERADMIN_PASSWORD` | — | Berilsa: bosh administrator akkauntini yaratadi yoki parolini shu qiymatga tiklaydi |
 | `TD_DUEL_QUESTIONS` | `15` | Dueldagi savollar soni |
 | `TD_QUESTION_TIME` | `15` | Bitta savol uchun vaqt (soniya) |
 | `TD_AFK_LIMIT` | `30` | Javobsiz qolish chegarasi (soniya) |
@@ -114,7 +137,8 @@ Repozitoriyda `railway.json` (ishga tushirish buyrug'i, holat tekshiruvi) va `.p
 3. **Variables** bo'limiga qo'shing: `TD_DATA_DIR=/data` (baza volume'da saqlanadi, qayta deploy qilinganda o'chmaydi).
    Ixtiyoriy: `TD_ADMINS=admin` — shu login bilan ro'yxatdan o'tgan foydalanuvchi admin bo'ladi.
 4. **Settings → Networking → Generate Domain** — sayt manzili (`https://….up.railway.app`).
-5. Saytni ochib birinchi bo'lib ro'yxatdan o'ting — siz administrator bo'lasiz.
+5. Saytni ochib birinchi bo'lib **`admin`** loginini ro'yxatdan o'tkazing — bu bosh administrator (tizim egasi).
+   Yoki `TD_SUPERADMIN_PASSWORD` o'zgaruvchisini qo'shing — `admin` akkaunti avtomatik yaratiladi.
 
 Bitta nusxa (replica) ishlashi kerak — `railway.json` da shunday sozlangan.
 

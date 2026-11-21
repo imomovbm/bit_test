@@ -195,6 +195,101 @@ def test_question_deck_cycles_without_immediate_repeat():
         act2(type="rps", winner=0)
 
 
+class FourOptions(FakeSource):
+    """4 variantli savollar: to'g'ri javob — indeks 2."""
+
+    def __init__(self, n=5):
+        super().__init__(n)
+        for q in self.questions.values():
+            q.update(options=["A", "B", "To'g'ri", "D"], correct=2)
+
+
+def test_lifelines_once_per_team():
+    state, env, act = make(balloons=10, answer_time=30, dice=[1, 1, 1, 1])
+    env["source"] = FourOptions()
+    assert balloon.public(state, 0)["teams"][0]["lifelines"] == {"ai": False, "group": False, "fifty": False}
+    with pytest.raises(GameError):
+        act(type="lifeline", kind="ai")                       # savol bosqichi emas
+    act(type="rps", winner=0)                                 # ko'klar javob beradi
+    with pytest.raises(GameError):
+        act(type="lifeline", kind="joker")
+
+    # 50:50 — ikkita noto'g'ri variant olib tashlanadi, to'g'risi qoladi
+    ev = act(type="lifeline", kind="fifty")
+    hidden = ev["hidden"]
+    assert len(hidden) == 2 and 2 not in hidden
+    pub = balloon.public(state, 2000)
+    assert pub["question"]["hidden"] == hidden and pub["question"]["used"] == ["fifty"]
+    assert pub["teams"][1]["lifelines"]["fifty"] is True and pub["teams"][0]["lifelines"]["fifty"] is False
+    with pytest.raises(GameError):
+        act(type="lifeline", kind="fifty")                    # bir o'yinda bir marta
+    with pytest.raises(GameError):
+        act(type="answer", choice=hidden[0])                  # olib tashlangan variantni tanlab bo'lmaydi
+
+    # AI'dan so'rash — savol vaqtiga 30 soniya qo'shiladi
+    before = balloon.public(state, 11_000)["question"]["remainingMs"]
+    ev = act(type="lifeline", kind="ai")
+    assert ev["bonusMs"] == balloon.LIFELINE_BONUS_MS
+    q = balloon.public(state, 11_000)["question"]
+    assert q["remainingMs"] == before + 30_000 and q["timeLimitMs"] == 60_000
+    # qo'shimcha vaqt ichida berilgan javob hisoblanadi
+    env["now"] = 1000 + 50_000
+    ev = act(type="answer", choice=2)
+    assert ev["correct"] is True and ev["timedOut"] is False
+    assert [e["t"] for e in state["log"]] == ["rps", "lifeline", "lifeline", "answer"]
+
+    # keyingi raundlarda ko'klar uchun faqat "guruhdan so'rash" qolgan
+    act(type="roll"); act(type="pop", auto=True); act(type="roll"); act(type="pop", auto=True)
+    act(type="rps", winner=0)
+    for kind in ("ai", "fifty"):
+        with pytest.raises(GameError):
+            act(type="lifeline", kind=kind)
+    act(type="lifeline", kind="group")
+    # qizillarning yordamlari alohida
+    act(type="answer", choice=0)
+    act(type="roll"); act(type="pop", auto=True)
+    act(type="rps", winner=1)
+    assert state["question"]["team"] == 0
+    act(type="lifeline", kind="fifty")
+
+
+def test_lifelines_refunded_when_question_cancelled_and_without_timer():
+    state, env, act = make(balloons=10, answer_time=0, n=4)
+    env["source"] = FourOptions(4)
+    act(type="rps", winner=1)                                 # qizillar javob beradi
+    ev = act(type="lifeline", kind="group")
+    assert "bonusMs" not in ev                                # vaqt cheklanmagan — vaqt qo'shilmaydi
+    assert balloon.public(state, 5000)["question"]["remainingMs"] is None
+    act(type="lifeline", kind="fifty")
+    act(type="skip")                                          # savol almashtirildi — yordamlar qaytariladi
+    q = balloon.public(state, 5000)["question"]
+    assert q["hidden"] == [] and q["used"] == []
+    assert state["teams"][0]["lifelines"] == {"ai": False, "group": False, "fifty": False}
+    act(type="lifeline", kind="ai")
+    act(type="back")                                          # tosh-qaychi-qog'oz qayta o'ynaladi
+    assert state["teams"][0]["lifelines"]["ai"] is False
+
+
+def test_fifty_keeps_two_options_and_old_games_work():
+    state, env, act = make(balloons=10, answer_time=0)        # FakeSource: 3 variant
+    act(type="rps", winner=0)
+    ev = act(type="lifeline", kind="fifty")
+    assert len(ev["hidden"]) == 1                             # 3 variantdan bittasi olib tashlanadi
+    two = make(balloons=10)[0]
+    src = FakeSource()
+    for q in src.questions.values():
+        q.update(options=["To'g'ri", "Xato"], correct=0)
+    balloon.apply(two, {"type": "rps", "winner": 0}, source=src, rng=random.Random(1), now_ms=0)
+    with pytest.raises(GameError):                            # 2 variant — olib tashlab bo'lmaydi
+        balloon.apply(two, {"type": "lifeline", "kind": "fifty"}, source=src, rng=random.Random(1), now_ms=0)
+    assert two["teams"][1]["lifelines"]["fifty"] is False
+    # yordamlar paydo bo'lishidan oldin boshlangan o'yin (holatda "lifelines" yo'q)
+    old = make()[0]
+    for t in old["teams"]:
+        del t["lifelines"]
+    assert balloon.public(old, 0)["teams"][0]["lifelines"]["ai"] is False
+
+
 def test_failed_action_on_copy_keeps_state():
     state, env, act = make(n=0)
     before = copy.deepcopy(state)

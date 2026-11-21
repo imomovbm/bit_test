@@ -13,7 +13,7 @@ from pathlib import Path
 from aiohttp import WSCloseCode, web
 
 from . import config
-from .api import error_middleware, routes, session_middleware
+from .api import ensure_superadmin, error_middleware, routes, session_middleware
 from .db import Database
 from .hub import DuelHub, LoopClock
 from .keys import DB, HUB, SOCKETS
@@ -99,6 +99,7 @@ async def _cache_headers(request: web.Request, response: web.StreamResponse) -> 
 
 async def _on_startup(app: web.Application) -> None:
     app[DB].purge_sessions()
+    ensure_superadmin(app[DB])
 
 
 async def _on_shutdown(app: web.Application) -> None:
