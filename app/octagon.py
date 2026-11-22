@@ -61,10 +61,10 @@ MAX_GAMES_PER_OWNER = 5
 MAX_GAMES = 500
 MAX_SOCKETS_PER_IP = 500        # bitta IP ortida butun maktab bo'lishi mumkin
 MAX_SOCKETS = config.OCTAGON_MAX_SOCKETS     # barcha IP lardan jami ochiq ulanishlar (xotira himoyasi)
-FAIL_LIMIT, FAIL_WINDOW = 20, 300            # noto'g'ri PIN/token urinishlari: IP bo'yicha, 5 daqiqada
+FAIL_LIMIT, FAIL_WINDOW = 60, 300            # noto'g'ri PIN/token urinishlari: IP bo'yicha, 5 daqiqada (maktab NAT: sinfdagi xatolar)
 GLOBAL_FAIL_LIMIT, GLOBAL_FAIL_WINDOW = 300, 60   # barcha IP lardan: shundan oshsa — PIN taxmin qilish hujumi
 SURGE_FAIL_LIMIT = 5                          # hujum paytida bitta IP ga ruxsat etilgan noto'g'ri urinishlar
-JOIN_LIMIT, JOIN_WINDOW = 200, 600           # yangi o'yinchilar: IP bo'yicha, 10 daqiqada
+JOIN_LIMIT, JOIN_WINDOW = 1000, 600          # yangi o'yinchilar: IP bo'yicha, 10 daqiqada (≥ bir necha to'liq sinf bitta NAT ortida)
 MAX_FINISHED_PER_OWNER = 5                    # tugagan (podium) o'yinlar: o'qituvchi uchun xotirada saqlanadigan eng ko'p soni
 HOST_FLUSH = 0.25               # o'qituvchi ekranini yangilash oralig'i (o'quvchilar qo'shilganda, javob berganda)
 SWEEP_EVERY = 60.0
@@ -72,6 +72,10 @@ PIN_RE = re.compile(r"^[1-9][0-9]{5}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 LONG_OPTIONS = ("trim", "skip")  # 4 tadan ko'p variantli savollar: qisqartirish yoki o'tkazib yuborish
 HOST_ACTIONS = ("start", "next", "skip", "end", "kick", "settings", "lock", "close")  # faqat o'yin egasi (WebSocket)
+HANDSHAKES = ("check", "join", "resume", "host")  # protokol versiyasi tekshiriladigan xabarlar
+RELOAD_TEXT = "Sayt yangilandi — davom etish uchun sahifani yangilang"
+# v1 sahifalar "reload" xabarini bilmaydi: ular ham ko'rsatadigan xato kodlari (PIN maydoni ostida / bildirishnoma)
+LEGACY_RELOAD_CODE = {"check": "pin", "join": "pin", "resume": "gone", "host": "reload"}
 
 # Avatarlar: oddiy, eski telefonlarda ham bir xil ko'rinadigan emojilar (bitta kod nuqtasi, Unicode ≤ 6.0; teri rangi,
 # bayroq va ZWJ ketma-ketliklari yo'q). Simda faqat indeks yuboriladi; static/js/octagon/common.js dagi AVATARS bilan
@@ -382,7 +386,8 @@ class OctagonHub:
         game.qr = qr_path(game.join_url)
         self.games[pin] = game
         self._ensure_sweep()
-        log.info("Octagon %s: %s (%d savol, %d s) — %s", pin, topic["name"], len(questions), settings["timeLimit"], owner["login"])
+        log.info("Octagon %s yaratildi: mavzu #%s, %d savol, %d s, o'qituvchi #%s", pin, topic["id"], len(questions),
+                 settings["timeLimit"], owner["id"])  # jurnalda ism va loginlar yo'q — faqat identifikatorlar
         return game
 
     def _new_pin(self) -> str:
@@ -580,8 +585,8 @@ class OctagonHub:
     def _finish(self, game: Game) -> None:
         self._set_phase(game, flow.PODIUM)
         self._broadcast(game)
-        top = self.standings(game)[:3]
-        log.info("Octagon %s yakunlandi: %s", game.pin, ", ".join(f"{p.nick} {p.score}" for p in top) or "o'yinchilarsiz")
+        log.info("Octagon %s yakunlandi: %d o'yinchi, %d savol o'ynaldi%s", game.pin, len(game.players), len(game.stats),
+                 " (muddatidan oldin)" if game.ended_early else "")
         self._finished += 1
         game.finished_seq = self._finished
         # tugagan o'yinlar xotirada cheksiz to'planmasin: o'qituvchining eng avval tugagan natijalari yopiladi
@@ -601,7 +606,8 @@ class OctagonHub:
             p.conn.send("k", {"r": "kicked"})
             p.conn.close("kicked", 4002)
         self._touch(game)
-        self._broadcast(game)  # o'rinlar o'zgaradi
+        if not self._close_if_all_answered(game):  # qolganlarning hammasi javob bergan bo'lishi mumkin
+            self._broadcast(game)  # o'rinlar o'zgaradi
 
     def _update_settings(self, game: Game, data: dict) -> None:
         if game.phase != flow.LOBBY:
@@ -617,9 +623,11 @@ class OctagonHub:
     # ============================================================ o'quvchilar
     def handle(self, conn, msg_type, data: dict, user: dict | None = None) -> None:
         try:
-            if msg_type in ("check", "join", "resume", "host") and data.get("v") != PROTOCOL_VERSION:
+            if msg_type in HANDSHAKES and data.get("v") != PROTOCOL_VERSION:
                 # eski (yangilanmagan) sahifa: jim buzilmasin — "sahifani yangilang" xabari
                 conn.send("reload", {"v": PROTOCOL_VERSION})
+                if "v" not in data:  # v1 sahifa: o'zi tushunadigan xato ko'rinishida
+                    conn.send("e", {"c": LEGACY_RELOAD_CODE[msg_type], "m": RELOAD_TEXT, "status": 426})
                 return
             if msg_type == "ping":
                 conn.send("pong", {})
@@ -784,11 +792,18 @@ class OctagonHub:
         p.answers[q] = (choice, max(0, elapsed))
         self._touch(game)
         conn.send("s", self.student_state(game, p))
-        connected = [x for x in game.players.values() if x.conn is not None]
-        if connected and all(q in x.answers for x in connected):
-            self._end_question(game)  # hamma javob berdi — vaqt tugashini kutmaymiz
-        else:
+        if not self._close_if_all_answered(game):
             self._host_changed(game)
+
+    def _close_if_all_answered(self, game: Game) -> bool:
+        """Ulangan o'yinchilarning hammasi javob bergan bo'lsa — vaqt tugashini kutmasdan savol yopiladi."""
+        if game.phase != flow.ACTIVE:
+            return False
+        connected = [x for x in game.players.values() if x.conn is not None]
+        if connected and all(game.index in x.answers for x in connected):
+            self._end_question(game)
+            return True
+        return False
 
     def _attach_host(self, conn, user: dict | None, pin) -> None:
         game = self.owned_game(user, pin)

@@ -591,7 +591,7 @@ def test_role_revoked_mid_game_blocks_control(env):
 def test_unknown_pin_and_rate_limit(env):
     game = make_game(env)
     c = FakeConn(ip="10.9.9.9")
-    for _ in range(20):
+    for _ in range(octagon.FAIL_LIMIT):
         env.hub.handle(c, "check", {"v": PV, "pin": "123456" if game.pin != "123456" else "654321"})
     assert all(e["c"] == "pin" for e in c.errors())
     env.hub.handle(c, "check", {"v": PV, "pin": game.pin})

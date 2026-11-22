@@ -94,6 +94,7 @@ const st = {
   game: null,           // {tn — mavzu nomi, n — savollar soni}
   s: null,              // serverdan kelgan oxirgi holat (phase — nomi)
   av: null,             // qo'shilishda tanlangan avatar
+  nickDraft: null,      // yozilayotgan ism: xato yoki qayta chizishda yo'qolmasin
   picking: false,       // lobbida avatar tanlash ochiq
   picked: null,         // {q, o} — tanlangan, server hali tasdiqlamagan javob
   queued: null,         // aloqa yo'qligida tanlangan javob
@@ -323,6 +324,7 @@ function onMessage(t, d) {
       break;
     case 'w':
       pending = null;
+      st.nickDraft = null;
       st.me = { id: d.id, tok: d.tok || (st.me && st.me.tok), nick: d.nick, av: d.av };
       st.game = { tn: d.tn, n: d.n };
       st.pin = d.pin;
@@ -471,6 +473,7 @@ function submitNick(value) {
     return;
   }
   st.error = '';
+  st.nickDraft = String(value || '');
   pending = { t: 'join', d: { v: PROTOCOL_VERSION, pin: st.pin, nick, av: st.av } };
   if (!send(pending.t, pending.d)) reconnectNow();
   render();
@@ -639,8 +642,9 @@ function viewNick() {
   if (st.av == null) st.av = last.av != null ? last.av : Math.floor(Math.random() * AVATARS.length); // tasodifiy tanlangan
   const input = el('input.pl-input', {
     type: 'text', maxlength: 20, autocomplete: 'nickname', autocapitalize: 'words', spellcheck: 'false',
-    placeholder: T.nickPlaceholder, 'aria-label': T.nickLabel, value: last.nick,
+    placeholder: T.nickPlaceholder, 'aria-label': T.nickLabel, value: st.nickDraft != null ? st.nickDraft : last.nick,
   });
+  input.addEventListener('input', () => { st.nickDraft = input.value; });
   const waiting = pending && pending.t === 'join';
   const preview = el('span.pl-av-preview', { 'aria-hidden': 'true' }, avatarEmoji(st.av));
   const grid = avatarGrid(st.av, (i) => {
@@ -664,8 +668,21 @@ function viewNick() {
     e.preventDefault();
     submitNick(input.value);
   });
-  setTimeout(() => (last.nick ? null : input.focus()), 50);
+  setTimeout(() => {
+    if (waiting) return;
+    if (st.error) {  // rad etilgan ismni tuzatish oson bo'lsin
+      input.focus();
+      input.select();
+    } else if (!input.value) {
+      input.focus();
+    }
+  }, 50);
   return form;
+}
+
+/** Uzun mavzu nomi kichikroq shriftda — sanoq va tugmalar ekrandan chiqib ketmasin (maks. 120 belgi). */
+function topicSize(name) {
+  return name.length > 80 ? '.xlong' : name.length > 40 ? '.long' : '';
 }
 
 /** Tanlangan/to'g'ri javob belgisi: rang + shakl, sakkizburchak ramkada. */
@@ -713,7 +730,7 @@ function viewGame() {
     case 'topic_intro':
       return el('div.pl-intro',
         el('p.pl-intro-label', T.topic),
-        el('h1.pl-intro-topic', st.game ? st.game.tn : ''),
+        el(`h1.pl-intro-topic${topicSize(st.game ? st.game.tn : '')}`, st.game ? st.game.tn : ''),
         countdown(),
         el('p.pl-muted', T.starting));
     case 'question_read':

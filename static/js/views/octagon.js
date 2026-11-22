@@ -707,7 +707,7 @@ function hostView(root, pinParam) {
   function introScreen(g) {
     return h('div.oct-intro',
       h('p.oct-intro-label', T.topic),
-      h('h1.oct-intro-topic', g.topicName),
+      h('h1.oct-intro-topic', { class: g.topicName.length > 80 ? 'xlong' : g.topicName.length > 40 ? 'long' : null }, g.topicName),
       octRing('.big'),
       h('p.oct-dim', `${T.starting} · ${T.settingsLine(g.total, g.timeLimit)}`),
       h('div.oct-actions', h('button.btn.ghost', { type: 'button', onclick: () => act('skip') }, icon('skip', 16), T.skipIntro)));
@@ -867,7 +867,9 @@ function hostView(root, pinParam) {
   }
 
   function onKey(e) {
-    if (e.ctrlKey || e.metaKey || e.altKey || !game || document.querySelector('.modal-overlay.show')) return;
+    // e.repeat: tugma bosib turilganda OS takrorlaydi — bitta bosish bitta amal (aks holda boshlash → kirish va
+    // o'qish vaqti ketma-ket o'tkazib yuboriladi; audit V2-F9)
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || !game || document.querySelector('.modal-overlay.show')) return;
     const tag = e.target && e.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'A') {
       if (e.key !== 'f' && e.key !== 'F') return;

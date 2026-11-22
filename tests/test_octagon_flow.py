@@ -201,7 +201,11 @@ def test_old_or_unknown_protocol_version_gets_reload_not_silent_breakage(env, ms
     if version is not None:
         data["v"] = version
     env.hub.handle(c, msg, data, env.owner)
-    assert c.msgs == [("reload", {"v": PV})] and not game.players and not game.hosts
+    assert c.msgs[0] == ("reload", {"v": PV}) and not game.players and not game.hosts
+    if version is None:  # v1 sahifa "reload" ni bilmaydi — unga o'zi ko'rsatadigan xato ham (audit V2-F5)
+        assert c.msgs[1][0] == "e" and c.msgs[1][1]["status"] == 426 and len(c.msgs) == 2
+    else:
+        assert len(c.msgs) == 1
 
 
 def test_unknown_message_types_are_ignored_safely(env):
