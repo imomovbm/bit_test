@@ -70,8 +70,13 @@ async def _finish(request: web.Request, ws, conn: Conn, writer: asyncio.Task) ->
         writer.cancel()
 
 
+FLOOD_WINDOW = 10.0     # soniya
+FLOOD_LIMIT = 60        # /ws/octagon: shu oraliqda ko'pi bilan shuncha xabar (javoblar, ping, qo'shilish urinishlari)
+DUEL_FLOOD_LIMIT = 120  # /ws: shu oraliqda ko'pi bilan shuncha xabar (javoblar, lobbi, ping)
+
+
 async def ws_handler(request: web.Request) -> web.StreamResponse:
-    ws = web.WebSocketResponse(heartbeat=25.0, max_msg_size=64 * 1024)
+    ws = web.WebSocketResponse(heartbeat=25.0, max_msg_size=16 * 1024)
     await ws.prepare(request)
     user = request.get(USER)
     if not user:
@@ -80,12 +85,22 @@ async def ws_handler(request: web.Request) -> web.StreamResponse:
 
     hub = request.app[HUB]
     conn = Conn(ws)
+    conn.ip = client_ip(request)
     request.app[SOCKETS].add(ws)
     writer = asyncio.create_task(conn.writer())
     hub.connect(user, conn)
+    loop = asyncio.get_running_loop()
+    recent: deque = deque()
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
+                now = loop.time()
+                recent.append(now)
+                while recent and now - recent[0] > FLOOD_WINDOW:
+                    recent.popleft()
+                if len(recent) > DUEL_FLOOD_LIMIT:
+                    conn.close("flood", 4008)
+                    break
                 try:
                     data = json.loads(msg.data)
                 except (ValueError, RecursionError):  # buzilgan yoki juda chuqur JSON — e'tiborsiz
@@ -106,8 +121,6 @@ async def ws_handler(request: web.Request) -> web.StreamResponse:
     return ws
 
 
-FLOOD_WINDOW = 10.0   # soniya
-FLOOD_LIMIT = 60      # shu oraliqda ko'pi bilan shuncha xabar (javoblar, ping, qo'shilish urinishlari)
 
 
 async def octagon_ws_handler(request: web.Request) -> web.StreamResponse:

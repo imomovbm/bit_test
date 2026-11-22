@@ -284,11 +284,15 @@ def test_socket_caps_per_ip_and_global(tmp_path, monkeypatch):
 def test_deeply_nested_json_is_ignored(tmp_path):
     async def body():
         async with world(tmp_path) as w:
-            ws = await w.student.ws_connect("/ws")  # duel kanali (64 KB gacha xabar)
+            ws = await w.student.ws_connect("/ws")  # duel kanali (16 KB gacha xabar)
             await recv(ws, "hello")
-            await ws.send_str("[" * 30000 + "]" * 30000)
+            await ws.send_str("[" * 8000 + "]" * 8000)  # chegaraga yaqin chuqur JSON — e'tiborsiz, ulanish yashaydi
             await ws.send_json({"t": "ping", "d": {}})
             assert await recv(ws, "pong") == {}
+            await ws.send_str("[" * 30000 + "]" * 30000)  # RecursionError chuqurligi — hajm chegarasida to'xtaydi
+            assert await drain(ws, 3) == 1009
+            ws = await w.student.ws_connect("/ws")  # server ishlashda davom etadi
+            assert (await recv(ws, "hello"))["rules"]
             ows = await w.guest.ws_connect("/ws/octagon")
             await ows.send_str("[" * 2040 + "]" * 2040)
             await ows.send_json({"t": "ping", "d": {}})

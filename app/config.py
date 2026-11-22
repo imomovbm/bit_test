@@ -60,8 +60,23 @@ DISCONNECT_GRACE = _float("TD_DISCONNECT_GRACE", 10.0)  # aloqa uzilsa, qaytish 
 ANSWER_GRACE = 0.8      # tarmoq kechikishi uchun qo'shimcha vaqt (soniya)
 FEEDBACK_DELAY = 1.2    # javobdan keyin keyingi savolgacha pauza (vaqtga qo'shilmaydi)
 COUNTDOWN = 3.0         # duel boshlanishidan oldingi sanoq
-WAITING_TTL = 120.0     # kutayotgan foydalanuvchi aloqasi uzilsa, navbatda saqlanish vaqti
 RESULT_TTL = 600.0      # aloqasiz qolgan ishtirokchi uchun natijani saqlab turish vaqti
+
+# ---- Mavzular faolligi, reyting va lobbi (docs/scaling.md) ----
+TZ_OFFSET_HOURS = _float("TD_TZ_OFFSET_HOURS", 5.0)   # "bugun" va kunlik hisoblar qaysi vaqt mintaqasida (Toshkent: UTC+5)
+# "Qizg'in" (hot) reyting: hot = Σ duellar(bugundan d kun oldin) · 0.5^(d / HOT_HALF_LIFE_DAYS)  (oxirgi HOT_WINDOW_DAYS kun)
+#                                + HOT_LIVE_WEIGHT · (hozir kutayotganlar + hozir o'ynayotgan duellar)
+HOT_WINDOW_DAYS = _int("TD_HOT_WINDOW_DAYS", 14)
+HOT_HALF_LIFE_DAYS = _float("TD_HOT_HALF_LIFE_DAYS", 2.0)
+HOT_LIVE_WEIGHT = _float("TD_HOT_LIVE_WEIGHT", 3.0)
+RANKING_TTL = _float("TD_RANKING_TTL", 30.0)          # reyting ro'yxatlari keshi: eng ko'pi bilan shuncha soniya eskiradi
+RANKING_REFRESH = _float("TD_RANKING_REFRESH", 5.0)   # yangi duel boshlangach, ro'yxat eng tez shuncha soniyada yangilanadi
+TOPICS_PAGE = 24                                      # bosh sahifada bir martada yuklanadigan mavzular
+SEEK_TTL = _float("TD_SEEK_TTL", 120.0)               # raqib kutish (seek) muddati, soniya
+LOBBY_LIMIT = 50                                      # lobbida ko'rsatiladigan eng yangi kutayotganlar soni
+LOBBY_FLUSH = 1.0                                     # lobbi yangilanishlari: har bir mijozga ko'pi bilan sekundiga bir marta
+LIVE_TOPICS_LIMIT = 12                                # "hozir faol mavzular" bo'limi
+SUGGEST_IDLE_DAYS = _int("TD_SUGGEST_IDLE_DAYS", 90)  # shuncha kun o'ynalmagan mavzular o'chirishga tavsiya qilinadi
 
 # ---- Octagon (jonli viktorina) ----
 OCTAGON_READY = _float("TD_OCTAGON_READY", 3.0)    # har bir savol oldidan "tayyorlaning" sanog'i (soniya)

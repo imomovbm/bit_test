@@ -1,9 +1,7 @@
-// Duel bo'limi: mavzu tanlash -> raqib kutish (taklif havolasi) -> sanoq -> savollar -> natija.
-import { h, icon, avatar, toast, copyText, fmtMs, fmtClock, confirmDialog, spinner, emptyState, LETTERS } from '../lib.js';
+// Duel bo'limi: lobbi (kutayotganlar + mavzular katalogi) -> raqib kutish (taklif havolasi) -> sanoq -> savollar -> natija.
+import { h, icon, avatar, toast, copyText, fmtMs, fmtClock, fmtAgo, confirmDialog, spinner, emptyState, LETTERS } from '../lib.js';
 import { api } from '../api.js';
 import { live } from '../live.js';
-
-const STATUS_TEXT = { idle: 'boʻsh', waiting: 'kutmoqda', duel: 'duelda' };
 
 export function duelView(root, params, ctx) {
   let screen = null;
@@ -14,7 +12,7 @@ export function duelView(root, params, ctx) {
     if (d) return d.status === 'countdown' ? [`countdown:${d.duelId}`, countdownScreen] : [`play:${d.duelId}`, playScreen];
     if (live.result) return [`result:${live.result.duelId}`, resultScreen];
     const q = live.queue;
-    if (q) return [`waiting:${q.topicId}:${q.inviteFor ? q.inviteFor.id : ''}`, waitingScreen];
+    if (q) return [`waiting:${q.topicId ?? 'any'}`, waitingScreen];
     return ['lobby', lobbyScreen];
   }
 
@@ -56,86 +54,507 @@ function rulesStrip() {
 }
 
 // ================================================================== lobby
-function lobbyScreen(ctx) {
-  const grid = h('div.topic-grid', spinner('Mavzular yuklanmoqda…'));
-  const online = h('div.card.online-card');
-  const el = h('section.screen.lobby',
-    h('div.page-head',
-      h('div',
-        h('h1', 'Duel'),
-        h('p.muted', 'Mavzuni tanlang — shu mavzuni tanlagan boshqa ishtirokchi bilan duel avtomatik boshlanadi.'))),
-    rulesStrip(),
-    online,
-    h('div.section-head',
-      h('h2', 'Mavzular'),
-      h('button.btn.ghost.sm', { type: 'button', onclick: () => load() }, icon('refresh', 16), 'Yangilash')),
-    grid);
+// Bosh sahifa: raqib kutayotganlar (lobbi), hozir faol mavzular va mavzular katalogi (davrlar, qidiruv, cheksiz aylantirish).
+const PERIOD_TABS = [
+  ['hot', 'Qizgʻin'],
+  ['today', 'Bugun'],
+  ['week', 'Hafta'],
+  ['month', 'Oy'],
+  ['all', 'Hammasi'],
+];
+const PERIOD_LABEL = { today: 'Bugun', week: 'Shu hafta', month: 'Shu oy', all: 'Jami' };
+const TOPICS_PAGE = 24;
+const TAB_KEY = 'td-topic-tab';
+const ANY_TOPIC = 'Istalgan mavzu';
 
-  let topics = null;
-  let error = null;
+function savedTab() {
+  try {
+    const v = localStorage.getItem(TAB_KEY);
+    return PERIOD_TABS.some(([k]) => k === v) ? v : 'hot';
+  } catch {
+    return 'hot';
+  }
+}
 
-  async function load() {
-    try {
-      topics = (await api('/api/topics')).topics;
-      error = null;
-    } catch (e) {
-      error = e.message;
-    }
-    paintGrid();
-    paintOnline();
+function saveTab(v) {
+  try {
+    localStorage.setItem(TAB_KEY, v);
+  } catch {
+    /* e'tiborsiz: maxfiy oyna */
+  }
+}
+
+function debounce(fn, ms) {
+  let t = 0;
+  const wrapped = (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+  wrapped.cancel = () => clearTimeout(t);
+  return wrapped;
+}
+
+const waitClock = (since) => fmtClock(Math.max(0, (Date.now() - since) / 1000));
+
+/** replaceChildren — null/false bolalarsiz (aks holda brauzer ularni "null" matni sifatida qo'yadi). */
+const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false));
+
+/** Kartochkadagi izoh: tanlangan davrdagi duellar soni va oxirgi o'yin vaqti. */
+function topicHint(t, period) {
+  let main = null;
+  if (period === 'hot') {
+    if (t.today) main = `Bugun ${t.today} ta duel`;
+    else if (t.week) main = `Shu hafta ${t.week} ta duel`;
+  } else if (t.periodCount) {
+    main = `${PERIOD_LABEL[period]} ${t.periodCount} ta duel`;
+  }
+  const last = t.lastPlayedAt ? `oxirgi oʻyin: ${fmtAgo(t.lastPlayedAt)}` : 'hali oʻynalmagan';
+  return { main, last };
+}
+
+/** Jonli belgi: "N kutmoqda · M oʻynamoqda" (ikkalasi 0 bo'lsa — yashirin). */
+function liveBadge(el, waiting, playing) {
+  fill(el,
+    waiting ? h('span.lb-wait', h('span.pulse-dot'), `${waiting} kutmoqda`) : null,
+    playing ? h('span.lb-play', icon('swords', 13), `${playing} oʻynamoqda`) : null);
+  el.hidden = !waiting && !playing;
+}
+
+/** Raqib kutayotganlar ro'yxati (eng yangi LOBBY_LIMIT tasi, mavzu bo'yicha saralash). */
+function seeksPanel({ title, filterable = true, hideWhenEmpty = false, excludeMine = false, onFilter }) {
+  const count = h('span.seek-count');
+  const filter = h('select.seek-filter', { 'aria-label': 'Mavzu boʻyicha saralash', onchange: () => onFilter(filter.value ? Number(filter.value) : null) });
+  const list = h('ul.seek-list', { 'aria-label': 'Raqib kutayotgan oʻyinchilar' });
+  const foot = h('p.seek-foot.small.muted');
+  const el = h('div.card.seek-card',
+    h('div.seek-head',
+      h('h2.seek-title', icon('users', 18), h('span', title), count),
+      filterable ? filter : null),
+    list,
+    foot);
+  let filterTopic = null;
+  let filterName = '';
+  let pending = null;
+  let pendingTimer = 0;
+  const times = new Map();
+
+  function join(s) {
+    if (pending) return;
+    if (!live.joinSeek(s.id)) return;
+    pending = s.id;
+    clearTimeout(pendingTimer);
+    pendingTimer = setTimeout(() => {
+      pending = null;
+      paint();
+    }, 4000);
+    paint();
   }
 
-  function paintGrid() {
-    if (error) {
-      grid.replaceChildren(emptyState('wifiOff', 'Mavzularni yuklab boʻlmadi', error));
+  function row(s) {
+    const time = h('span.seek-time.mono', waitClock(s.since));
+    times.set(s.id, [time, s.since]);
+    const busy = pending === s.id;
+    return h(`li.seek-row${s.mine ? '.mine' : ''}`, { dataset: { seek: s.id } },
+      avatar(s.login, 'sm'),
+      h('div.seek-main',
+        h('div.seek-login', h('span.ellipsis', s.login), s.mine ? h('span.tag', 'siz') : null),
+        h('div.seek-topic', s.topicId ? s.topicName || '—' : h('i', ANY_TOPIC))),
+      time,
+      s.mine
+        ? h('button.btn.ghost.seek-btn', { type: 'button', onclick: () => live.leaveQueue() }, 'Bekor qilish')
+        : h('button.btn.primary.seek-btn', { type: 'button', disabled: !!pending, onclick: () => join(s), 'aria-label': `${s.login} bilan duel` },
+          busy ? h('span.spinner.sm') : icon('swords', 16), 'Qoʻshilish'));
+  }
+
+  function paintFilter() {
+    const lobby = live.lobby;
+    const opts = lobby.live.filter((r) => r[2] > 0);
+    if (filterTopic && !opts.some((r) => r[0] === filterTopic)) opts.unshift([filterTopic, filterName, 0, 0]);
+    filter.replaceChildren(
+      h('option', { value: '' }, 'Barcha mavzular'),
+      ...opts.map(([tid, name, w]) => h('option', { value: String(tid) }, w ? `${name} (${w})` : name)));
+    filter.value = filterTopic ? String(filterTopic) : '';
+  }
+
+  function paint() {
+    const lobby = live.lobby;
+    times.clear();
+    if (filterable) paintFilter();
+    if (!lobby.ready) {
+      count.textContent = '';
+      list.replaceChildren(...[0, 1, 2].map(() => h('li.seek-row.skeleton', { 'aria-hidden': 'true' }, h('span.sk.sk-av'), h('span.sk.sk-line'), h('span.sk.sk-btn'))));
+      foot.textContent = '';
+      el.hidden = hideWhenEmpty;
       return;
     }
-    if (!topics) return;
-    if (!topics.length) {
+    const seeks = excludeMine ? lobby.seeks.filter((s) => !s.mine) : lobby.seeks;
+    const waiting = excludeMine ? Math.max(seeks.length, lobby.waiting - 1) : lobby.waiting;
+    count.textContent = waiting ? String(waiting) : '';
+    if (!seeks.length) {
+      el.hidden = hideWhenEmpty;
+      list.replaceChildren(h('li.seek-empty',
+        h('b', filterTopic ? 'Bu mavzuda hozir hech kim kutmayapti' : 'Hozir hech kim kutmayapti'),
+        h('span.muted', 'Mavzuni tanlang — raqib kutish roʻyxatiga tushasiz va boshqalar sizga bir bosishda qoʻshila oladi.')));
+      foot.textContent = '';
+      return;
+    }
+    el.hidden = false;
+    list.replaceChildren(...seeks.map(row));
+    foot.textContent = waiting > seeks.length && !filterTopic
+      ? `Eng yangi ${seeks.length} tasi koʻrsatilmoqda (jami ${waiting} kishi kutmoqda).`
+      : '';
+  }
+
+  const ticker = setInterval(() => {
+    for (const [elTime, since] of times.values()) elTime.textContent = waitClock(since);
+  }, 1000);
+
+  return {
+    el,
+    paint,
+    setFilter(tid, name) {
+      filterTopic = tid;
+      filterName = name || '';
+    },
+    clearPending() {
+      if (!pending) return;
+      pending = null;
+      clearTimeout(pendingTimer);
+      paint();
+    },
+    destroy() {
+      clearInterval(ticker);
+      clearTimeout(pendingTimer);
+    },
+  };
+}
+
+/** Hozir faol mavzular: kutayotgan yoki o'ynayotganlar bor (bosilsa — shu mavzuda tezkor juftlash). */
+function liveTopicsPanel() {
+  const body = h('div.live-topics');
+  const el = h('div.card.live-card',
+    h('h2.seek-title', h('span.live-dot'), h('span', 'Hozir faol mavzular')),
+    body);
+  function paint() {
+    const lobby = live.lobby;
+    if (!lobby.ready) {
+      body.replaceChildren(...[0, 1, 2].map(() => h('span.sk.sk-chip')));
+      return;
+    }
+    if (!lobby.live.length) {
+      body.replaceChildren(h('p.small.muted', 'Hozir hech qaysi mavzuda oʻyin ketmayapti. Birinchi boʻlib boshlang!'));
+      return;
+    }
+    body.replaceChildren(...lobby.live.map(([tid, name, w, p]) => h('button.live-topic', {
+      type: 'button',
+      title: `«${name}» mavzusida raqib topish`,
+      onclick: () => live.seek(tid),
+    },
+    h('span.lt-name', name),
+    h('span.lt-meta',
+      w ? h('span.lb-wait', h('span.pulse-dot'), `${w} kutmoqda`) : null,
+      p ? h('span.lb-play', icon('swords', 13), `${p} oʻynamoqda`) : null))));
+  }
+  return { el, paint };
+}
+
+function skeletonCards(n) {
+  return Array.from({ length: n }, () => h('div.topic-card.skeleton', { 'aria-hidden': 'true' },
+    h('span.sk.sk-icon'), h('span.sk.sk-title'), h('span.sk.sk-line'), h('span.sk.sk-line.short')));
+}
+
+/** Mavzular katalogi: davr yorliqlari, qidiruv (kechiktirilgan), server tomonida sahifalash va cheksiz aylantirish. */
+function topicBrowser(ctx, { onWatch }) {
+  let period = savedTab();
+  let query = '';
+  let items = [];
+  let total = 0;
+  let nextOffset = 0;
+  let loading = false;
+  let error = null;
+  let req = 0;
+  const cards = new Map();
+  const visible = new Set();
+
+  const tabs = h('div.period-tabs', { role: 'tablist', 'aria-label': 'Davr' });
+  const search = h('input', {
+    type: 'search', placeholder: 'Mavzu qidirish…', maxlength: '100', 'aria-label': 'Mavzu qidirish', autocomplete: 'off',
+    oninput: () => onSearch(),
+  });
+  const summary = h('p.small.muted.browse-summary', { 'aria-live': 'polite' });
+  const grid = h('div.topic-grid');
+  const more = h('div.browse-more');
+  const sentinel = h('div.browse-sentinel', { 'aria-hidden': 'true' });
+  const el = h('section.browse',
+    h('div.browse-head',
+      h('h2', 'Mavzular'),
+      h('div.browse-search', icon('search', 17), search)),
+    tabs,
+    summary,
+    grid,
+    more,
+    sentinel);
+
+  const onSearch = debounce(() => {
+    const v = search.value.trim();
+    if (v === query) return;
+    query = v;
+    load(true);
+  }, 300);
+
+  function paintTabs() {
+    tabs.replaceChildren(...PERIOD_TABS.map(([key, label]) => h('button.period-tab', {
+      type: 'button',
+      role: 'tab',
+      'aria-selected': key === period ? 'true' : 'false',
+      class: key === period ? 'active' : '',
+      onclick: () => {
+        if (key === period) return;
+        period = key;
+        saveTab(key);
+        paintTabs();
+        load(true);
+      },
+    }, label)));
+  }
+
+  const watchChanged = debounce(() => onWatch([...visible].slice(0, 60)), 400);
+  const cardObserver = 'IntersectionObserver' in window
+    ? new IntersectionObserver((entries) => {
+      let changed = false;
+      for (const e of entries) {
+        const id = Number(e.target.dataset.tid);
+        if (e.isIntersecting && !visible.has(id)) {
+          visible.add(id);
+          changed = true;
+        } else if (!e.isIntersecting && visible.has(id)) {
+          visible.delete(id);
+          changed = true;
+        }
+      }
+      if (changed) watchChanged();
+    }, { rootMargin: '120px 0px' })
+    : null;
+  const moreObserver = 'IntersectionObserver' in window
+    ? new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMore();
+    }, { rootMargin: '400px 0px' })
+    : null;
+  if (moreObserver) moreObserver.observe(sentinel);
+
+  function counts(t) {
+    const c = live.lobby.counts[String(t.id)];
+    return c ? c : [t.waiting || 0, t.playing || 0];
+  }
+
+  function makeCard(t) {
+    const n = Math.min(t.questionCount, live.rules.duelQuestions);
+    const hint = topicHint(t, period);
+    const badge = h('span.topic-live');
+    const cta = h('span.topic-cta');
+    const card = h('button.topic-card', {
+      type: 'button',
+      dataset: { tid: String(t.id) },
+      onclick: () => live.seek(t.id),
+    },
+    h('div.topic-top', h('span.topic-icon', icon('swords', 22)), badge),
+    h('div.topic-name', t.name),
+    h('div.topic-hint', hint.main ? h('b', hint.main) : null, h('span', hint.last)),
+    h('div.topic-meta', `${t.questionCount} ta savol · duelda ${n} ta`),
+    cta);
+    const api = {
+      card,
+      paint() {
+        const [w, p] = counts(t);
+        liveBadge(badge, w, p);
+        card.classList.toggle('hot', w > 0);
+        cta.replaceChildren(w > 0 ? 'Hoziroq bellashish' : 'Raqib topish', icon('right', 16));
+      },
+    };
+    api.paint();
+    cards.set(t.id, api);
+    if (cardObserver) cardObserver.observe(card);
+    return card;
+  }
+
+  function paintSummary() {
+    if (!items.length) {
+      summary.textContent = '';
+      return;
+    }
+    summary.textContent = query
+      ? `«${query}» boʻyicha ${total} ta mavzu topildi`
+      : `${total} ta mavzu · ${items.length} tasi koʻrsatilmoqda`;
+  }
+
+  function paintMore() {
+    if (error && items.length) {
+      more.replaceChildren(h('div.alert.error', icon('wifiOff', 18), h('span', error),
+        h('button.btn.ghost.sm', { type: 'button', onclick: () => loadMore(true) }, 'Qayta urinish')));
+    } else if (loading && items.length) {
+      more.replaceChildren(spinner('Yana yuklanmoqda…'));
+    } else if (nextOffset != null && items.length) {
+      more.replaceChildren(h('button.btn.ghost.block.browse-more-btn', { type: 'button', onclick: () => loadMore(true) },
+        `Yana yuklash (${total - items.length})`));
+    } else {
+      more.replaceChildren();
+    }
+  }
+
+  function paintEmpty() {
+    if (error) {
+      grid.replaceChildren(emptyState('wifiOff', 'Mavzularni yuklab boʻlmadi', error,
+        h('button.btn.primary', { type: 'button', onclick: () => load(true) }, icon('refresh', 16), 'Qayta urinish')));
+    } else if (query) {
+      grid.replaceChildren(emptyState('search', 'Hech narsa topilmadi', `«${query}» boʻyicha mavzu yoʻq. Boshqa soʻz bilan qidirib koʻring.`,
+        h('button.btn.ghost', { type: 'button', onclick: () => { search.value = ''; query = ''; load(true); } }, 'Qidiruvni tozalash')));
+    } else {
       grid.replaceChildren(emptyState('file', 'Hozircha test mavzulari yoʻq',
         ctx.user.isAdmin ? 'Test faylini yuklang — u shu yerda paydo boʻladi.' : 'Administrator test faylini yuklaganidan keyin mavzular shu yerda paydo boʻladi.',
         ctx.user.isAdmin ? h('a.btn.primary', { href: '#/admin' }, icon('upload', 16), 'Test yuklash') : null));
-      return;
     }
-    const waiting = live.presence.waiting || {};
-    grid.replaceChildren(...topics.map((t) => topicCard(t, waiting[String(t.id)] || 0)));
   }
 
-  function topicCard(t, waitingCount) {
-    const n = Math.min(t.questionCount, live.rules.duelQuestions);
-    return h('button', { type: 'button', class: `topic-card${waitingCount ? ' hot' : ''}`, onclick: () => live.joinQueue(t.id) },
-      h('div.topic-top',
-        h('span.topic-icon', icon('swords', 22)),
-        waitingCount ? h('span.topic-wait', h('span.pulse-dot'), `${waitingCount} kishi kutmoqda`) : null),
-      h('div.topic-name', t.name),
-      h('div.topic-meta', `${t.questionCount} ta savol bazada · duelda ${n} ta`),
-      h('div.topic-cta', waitingCount ? 'Hoziroq bellashish' : 'Duelga kirish', icon('right', 16)));
+  async function load(reset) {
+    if (reset) {
+      req += 1;
+      items = [];
+      total = 0;
+      nextOffset = 0;
+      error = null;
+      cards.clear();
+      visible.clear();
+      if (cardObserver) cardObserver.disconnect();
+      grid.replaceChildren(...skeletonCards(6));
+      grid.setAttribute('aria-busy', 'true');
+      summary.textContent = '';
+    }
+    if (nextOffset == null) return;
+    const my = req;
+    loading = true;
+    paintMore();
+    const qs = new URLSearchParams({ period, offset: String(nextOffset), limit: String(TOPICS_PAGE) });
+    if (query) qs.set('q', query);
+    try {
+      const page = await api(`/api/topics/browse?${qs}`);
+      if (my !== req) return;
+      error = null;
+      if (!items.length) grid.replaceChildren();
+      total = page.total;
+      nextOffset = page.nextOffset;
+      const fresh = page.items.filter((t) => !cards.has(t.id));
+      items = items.concat(fresh);
+      grid.append(...fresh.map(makeCard));
+      if (!items.length) paintEmpty();
+    } catch (e) {
+      if (my !== req) return;
+      error = e.message || 'Tarmoq xatosi';
+      if (!items.length) paintEmpty();
+    } finally {
+      if (my === req) {
+        loading = false;
+        grid.removeAttribute('aria-busy');
+        paintSummary();
+        paintMore();
+      }
+    }
   }
 
-  function paintOnline() {
-    const p = live.presence;
-    const others = (p.users || []).filter((u) => u.id !== ctx.user.id);
-    const topicName = (id) => (topics || []).find((t) => t.id === id)?.name;
-    online.replaceChildren(
-      h('div.online-head',
-        h('span.live-dot'),
-        h('b', `${Math.max(p.online || 0, live.status === 'online' ? 1 : 0)} kishi onlayn`),
-        live.status !== 'online' ? h('span.badge.warn', 'serverga ulanmoqda…') : null),
-      others.length
-        ? h('div.chips', others.map((u) => h('span.chip', { title: u.status === 'waiting' && topicName(u.topicId) ? `Kutmoqda: ${topicName(u.topicId)}` : u.login },
-          avatar(u.login, 'xs'), h('span.chip-name', u.login), h(`span.chip-status.${u.status}`, STATUS_TEXT[u.status] || ''))))
-        : h('p.muted.small', 'Hozircha sizdan boshqa hech kim onlayn emas. Mavzuni tanlang — kutish oynasida doʻstingizni chaqirish uchun havola paydo boʻladi.'));
+  function loadMore(force = false) {
+    if (loading || nextOffset == null || !items.length) return;
+    if (error && !force) return;
+    error = null;
+    load(false);
   }
 
-  load();
-  paintOnline();
+  paintTabs();
+  load(true);
   return {
     el,
-    update() {
-      paintGrid();
-      paintOnline();
+    paintCounts() {
+      for (const c of cards.values()) c.paint();
     },
-    reload: load,
+    reload() {
+      if (items.length <= TOPICS_PAGE) load(true); // foydalanuvchi pastga aylantirgan bo'lsa — joyini buzmaymiz
+    },
+    destroy() {
+      onSearch.cancel();
+      watchChanged.cancel();
+      if (cardObserver) cardObserver.disconnect();
+      if (moreObserver) moreObserver.disconnect();
+      req += 1;
+    },
+  };
+}
+
+function lobbyScreen(ctx) {
+  const status = h('div.lobby-status');
+  let watch = [];
+  let seekTopic = null;
+  const resubscribe = () => live.subscribeLobby({ topicId: seekTopic, watch });
+  const seeks = seeksPanel({
+    title: 'Raqib kutayotganlar',
+    onFilter: (tid) => {
+      seekTopic = tid;
+      const row = live.lobby.live.find((r) => r[0] === tid);
+      seeks.setFilter(tid, row ? row[1] : '');
+      live.lobby.ready = false;
+      seeks.paint();
+      resubscribe();
+    },
+  });
+  const liveTopics = liveTopicsPanel();
+  const browser = topicBrowser(ctx, {
+    onWatch: (ids) => {
+      watch = ids;
+      resubscribe();
+    },
+  });
+  const el = h('section.screen.lobby',
+    h('div.page-head.lobby-head',
+      h('div',
+        h('h1', 'Duel'),
+        h('p.muted', 'Kutayotgan oʻyinchiga bir bosishda qoʻshiling yoki mavzuni tanlang — shu mavzuni tanlagan raqib bilan duel avtomatik boshlanadi.')),
+      h('button.btn.accent.lg.quick-any', { type: 'button', onclick: () => live.seek(null) }, icon('zap', 18), 'Istalgan mavzuda raqib topish')),
+    status,
+    h('div.lobby-grid', seeks.el, liveTopics.el),
+    rulesStrip(),
+    browser.el);
+
+  function paintStatus() {
+    const online = Math.max(live.lobby.online || live.presence.online || 0, live.status === 'online' ? 1 : 0);
+    fill(status,
+      h('span.live-dot'),
+      h('b', `${online} kishi onlayn`),
+      live.lobby.ready ? h('span.muted', ` · ${live.lobby.waiting} kishi raqib kutmoqda`) : null,
+      live.status !== 'online' ? h('span.badge.warn', 'serverga ulanmoqda…') : null);
+  }
+
+  function paintLobby() {
+    paintStatus();
+    seeks.paint();
+    liveTopics.paint();
+    browser.paintCounts();
+  }
+
+  live.lobby.ready = false;
+  resubscribe();
+  paintLobby();
+  const offLobby = live.on('lobby', paintLobby);
+  const offError = live.on('change', (kind) => {
+    if (kind === 'error' || kind === 'queue' || kind === 'duel:start') seeks.clearPending();
+  });
+  return {
+    el,
+    update: paintStatus,
+    reload: () => browser.reload(),
+    destroy() {
+      offLobby();
+      offError();
+      seeks.destroy();
+      browser.destroy();
+      live.unsubscribeLobby();
+    },
   };
 }
 
@@ -176,40 +595,85 @@ function inviteCard(q) {
 }
 
 function waitingScreen() {
-  const q = live.queue;
   const elapsed = h('span.mono', '0:00');
+  const expires = h('span.mono');
+  const extendBtn = h('button.btn.ghost.sm.wait-extend', {
+    type: 'button',
+    hidden: true,
+    onclick: () => live.queue && live.seek(live.queue.topicId),
+  }, icon('refresh', 15), 'Kutishni uzaytirish');
+  const pill = h('span.topic-pill');
+  const meta = h('span');
   const notice = h('div.wait-notice');
+  const inviteSlot = h('div.wait-invite');
+  const others = seeksPanel({ title: 'Yoki kutayotgan oʻyinchiga qoʻshiling', filterable: false, hideWhenEmpty: true, excludeMine: true });
   const el = h('section.screen.waiting',
     h('div.radar', h('span.radar-ring'), h('span.radar-ring.r2'), h('span.radar-ring.r3'), h('span.radar-core', icon('swords', 36))),
-    h('h1.center', q.inviteFor ? `${q.inviteFor.login} bilan duel` : 'Raqib qidirilmoqda…'),
-    h('div.center', h('span.topic-pill', icon('file', 15), q.topicName)),
-    h('p.center.muted', `${q.questionCount} ta savol · har biriga ${live.rules.questionTime} soniya · kutish: `, elapsed),
+    h('h1.center', 'Raqib qidirilmoqda…'),
+    h('div.center', pill),
+    h('p.center.muted', meta, ' · kutish: ', elapsed),
+    h('p.center.small.muted.wait-expiry', 'Raqib topilmasa, kutish ', expires, ' dan soʻng bekor qilinadi. ', extendBtn),
     notice,
-    q.inviteFor ? null : inviteCard(q),
+    inviteSlot,
+    others.el,
     h('div.center', h('button.btn.ghost', { type: 'button', onclick: () => live.leaveQueue() }, icon('x', 16), 'Bekor qilish')));
 
+  let shownCode;
   const tick = () => {
-    elapsed.textContent = fmtClock((Date.now() - (live.queue?.localSince || Date.now())) / 1000);
+    const q = live.queue;
+    if (!q) return;
+    elapsed.textContent = waitClock(q.localSince || Date.now());
+    const left = Math.max(0, ((q.expiresAt || Date.now()) - Date.now()) / 1000);
+    expires.textContent = fmtClock(left);
+    extendBtn.hidden = left > 30;
   };
-  tick();
-  const timer = setInterval(tick, 1000);
 
-  function paintNotice() {
-    const cur = live.queue;
-    if (!cur) return;
-    if (cur.inviteFor) {
-      notice.replaceChildren(cur.inviteFor.online
-        ? h('div.alert.info', h('span.spinner.sm'), h('span', `${cur.inviteFor.login} bilan ulanmoqda…`))
-        : h('div.alert.warning', icon('wifiOff', 18), h('span', `${cur.inviteFor.login} hozir aloqada emas. U saytga qaytishi bilan duel boshlanadi.`)));
-      return;
+  function paint() {
+    const q = live.queue;
+    if (!q) return;
+    pill.replaceChildren(icon(q.topicId ? 'file' : 'zap', 15), q.topicId ? q.topicName || '—' : ANY_TOPIC);
+    meta.textContent = `${q.questionCount} ta savol · har biriga ${live.rules.questionTime} soniya`;
+    if (q.code !== shownCode) {
+      shownCode = q.code;
+      inviteSlot.replaceChildren(q.code
+        ? inviteCard(q)
+        : h('div.alert.info', icon('zap', 18), h('span',
+          h('b', 'Istalgan mavzu. '),
+          'Avval siz oxirgi oʻynagan mavzularda kutayotgan raqib, boʻlmasa eng uzoq kutayotgan raqib tanlanadi. ',
+          'Hozir hech kim boʻlmasa — keyingi kelgan raqib bilan duel boshlanadi.')));
     }
-    const others = Math.max(0, (live.presence.online || 1) - 1);
-    notice.replaceChildren(others === 0
-      ? h('div.alert.warning', icon('users', 18), h('div', h('b', 'Hozir sizdan boshqa hech kim onlayn emas.'), h('br'), 'Quyidagi havolani doʻstingizga yuboring — u havolani ochishi bilan duel boshlanadi.'))
-      : h('div.alert.info', icon('users', 18), h('span', `Hozir yana ${others} kishi onlayn. Ulardan biri shu mavzuni tanlashi bilan duel boshlanadi. Doʻstingizni havola orqali ham chaqirishingiz mumkin.`)));
+    const others0 = Math.max(0, (live.lobby.ready ? live.lobby.online : live.presence.online || 1) - 1);
+    notice.replaceChildren(others0 === 0
+      ? h('div.alert.warning', icon('users', 18), h('div', h('b', 'Hozir sizdan boshqa hech kim onlayn emas.'),
+        q.code ? ' Quyidagi havolani doʻstingizga yuboring — u havolani ochishi bilan duel boshlanadi.' : ' Kimdir saytga kirib duel boshlashi bilan siz juftlanasiz.'))
+      : h('div.alert.info', icon('users', 18), h('span', `Hozir yana ${others0} kishi onlayn. `,
+        q.topicId ? 'Ulardan biri shu mavzuni yoki «istalgan mavzu»ni tanlashi bilan duel boshlanadi.' : 'Ulardan biri duel boshlashi bilan siz juftlanasiz.')));
+    tick();
   }
-  paintNotice();
-  return { el, update: paintNotice, destroy: () => clearInterval(timer) };
+
+  live.lobby.ready = false;
+  live.subscribeLobby({ topicId: null, watch: [] });
+  paint();
+  others.paint();
+  const timer = setInterval(tick, 1000);
+  const offLobby = live.on('lobby', () => {
+    others.paint();
+    paint();
+  });
+  const offError = live.on('change', (kind) => {
+    if (kind === 'error' || kind === 'duel:start') others.clearPending();
+  });
+  return {
+    el,
+    update: paint,
+    destroy() {
+      clearInterval(timer);
+      offLobby();
+      offError();
+      others.destroy();
+      live.unsubscribeLobby();
+    },
+  };
 }
 
 // ============================================================== countdown
@@ -554,7 +1018,7 @@ function resultScreen(ctx) {
       h('div.vs-badge', 'VS'),
       statCol(r.opp.login, r.opp.login, r.opp, r.total, r.result === 'lose')),
     h('div.result-actions',
-      h('button.btn.primary.lg', { type: 'button', onclick: () => live.joinQueue(r.topicId) }, icon('refresh', 18), 'Yana oʻynash'),
+      h('button.btn.primary.lg', { type: 'button', onclick: () => live.seek(r.topicId) }, icon('refresh', 18), 'Yana oʻynash'),
       h('button.btn.ghost.lg', { type: 'button', onclick: () => live.clearResult() }, icon('swords', 18), 'Boshqa mavzu')),
     reviewBlock(r));
   return { el };

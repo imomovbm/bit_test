@@ -127,10 +127,18 @@ async def _flow(tmp_path):
         board = await (await vali.get("/api/stats/leaderboard")).json()
         assert [row["login"] for row in board["rows"]] == ["ali", "vali"]
 
-        # --- tark etish: vali chiqib ketsa, ali g'olib
+        # --- boshlanish sanog'i paytida chiqib ketish: duel bekor qilinadi (natija yozilmaydi)
         await wa.send_json({"t": "queue:join", "d": {"topicId": topic["id"]}})
         await wv.send_json({"t": "queue:join", "d": {"topicId": topic["id"]}})
         await _next(wv, "duel:start")
+        await wv.send_json({"t": "duel:leave", "d": {}})
+        cancelled = await _next(wa, "duel:cancel")
+        assert "bekor" in cancelled["message"]
+
+        # --- duel boshlangandan keyin tark etish: vali chiqib ketsa, ali g'olib
+        await wa.send_json({"t": "queue:join", "d": {"topicId": topic["id"]}})
+        await wv.send_json({"t": "queue:join", "d": {"topicId": topic["id"]}})
+        await _next(wv, "duel:question")
         await wv.send_json({"t": "duel:leave", "d": {}})
         end = await _next(wa, "duel:end")
         assert end["result"] == "win" and end["reason"] == "left"

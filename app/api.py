@@ -12,7 +12,7 @@ from urllib.parse import quote, urlsplit
 
 from aiohttp import web
 
-from . import balloon, config, octagon
+from . import balloon, catalog, config, octagon
 from .db import now_ms
 from .hub import prepare_question
 from .keys import DB, HUB, OCTAGON, USER
@@ -347,6 +347,25 @@ async def topics_list(request: web.Request):
     require_user(request)
     topics = [topic_json(t) for t in request.app[DB].list_topics() if t["question_count"] > 0 and t["active"]]
     return ok({"topics": topics})
+
+
+@routes.get("/api/topics/browse")
+async def topics_browse(request: web.Request):
+    """Bosh sahifa: mavzular davr bo'yicha reytingda (hot | today | week | month | all), qidiruv va sahifalash bilan.
+    Javob keshdan olinadi (app/catalog.py); kutayotgan/o'ynayotganlar soni — jonli."""
+    require_user(request)
+    q = request.query
+    period = q.get("period", "hot")
+    if period not in catalog.PERIODS:
+        raise ApiError("Noto'g'ri davr")
+    try:
+        offset = int(q.get("offset", "0"))
+        limit = int(q.get("limit", str(config.TOPICS_PAGE)))
+    except ValueError:
+        raise ApiError("Noto'g'ri sahifa")
+    if not 0 <= offset <= 1_000_000 or not 1 <= limit <= 60:
+        raise ApiError("Noto'g'ri sahifa")
+    return ok(request.app[HUB].catalog.browse(period, q.get("q", "")[:catalog.MAX_SEARCH], offset, limit))
 
 
 @routes.get("/api/topics/{tid}/practice")
@@ -684,7 +703,7 @@ async def admin_create_topic(request: web.Request):
     except sqlite3.IntegrityError:
         raise ApiError("Bunday nomli mavzu allaqachon bor. Boshqa nom kiriting", 409)
     log.info("Yangi mavzu: %s (%d savol) — %s", name, len(parsed["questions"]), user["login"])
-    request.app[HUB].broadcast("topics", {})
+    request.app[HUB].topics_changed()
     return ok({"topic": topic_json(db.get_topic(topic_id)), "skipped": len(parsed["errors"])}, status=201)
 
 
@@ -720,7 +739,7 @@ async def admin_replace_topic(request: web.Request):
     source = str(data.get("fileName") or "")[:255] or None
     db.replace_topic_questions(tid, parsed["questions"], source, user["id"])
     log.info("Mavzu yangilandi: %s (%d savol) — %s", topic["name"], len(parsed["questions"]), user["login"])
-    request.app[HUB].broadcast("topics", {})
+    request.app[HUB].topics_changed()
     return ok({"topic": topic_json(db.get_topic(tid)), "skipped": len(parsed["errors"])})
 
 
@@ -756,11 +775,157 @@ async def admin_update_topic(request: web.Request):
     name = _check_topic_name(db, data["name"], tid) if "name" in data else None
     shuffle = bool(data["shuffle"]) if "shuffle" in data else None
     active = bool(data["active"]) if "active" in data else None
-    db.update_topic(tid, name=name, shuffle=shuffle, active=active)
-    if active is False:  # yopilgan mavzuni kutayotganlar navbatdan chiqariladi
+    db.update_topic(tid, name=name, shuffle=shuffle)
+    if active is not None:  # holat o'zgarishi jurnalga yoziladi
+        db.set_topics_active([tid], active, request[USER], "manual")
+    if active is False:  # yopilgan mavzuni kutayotganlarning seeklari bekor qilinadi
         request.app[HUB].topic_removed(tid, "Siz kutayotgan mavzu yopildi")
-    request.app[HUB].broadcast("topics", {})
+    request.app[HUB].topics_changed()
     return ok({"topic": topic_json(db.get_topic(tid))})
+
+
+# ------------------------------------------- mavzular faolligi (boshqaruv)
+ADMIN_TOPIC_SORTS = ("name", "lastPlayed", "total", "recent", "status", "created")
+MAX_BULK = 2000
+
+
+def _int_query(request: web.Request, name: str, default: int, low: int, high: int) -> int:
+    try:
+        value = int(request.query.get(name, str(default)))
+    except ValueError:
+        raise ApiError("Noto'g'ri so'rov")
+    if not low <= value <= high:
+        raise ApiError("Noto'g'ri so'rov")
+    return value
+
+
+def topic_activity_settings(db) -> dict:
+    return {
+        "autoDeactivateDays": int(db.setting("auto_deactivate_days", "0") or 0),
+        "suggestDays": int(db.setting("suggest_idle_days", str(config.SUGGEST_IDLE_DAYS)) or config.SUGGEST_IDLE_DAYS),
+    }
+
+
+def admin_topic_json(t: dict, hub) -> dict:
+    waiting, playing = hub.topic_live(t["id"])
+    return {
+        "id": t["id"],
+        "name": t["name"],
+        "active": bool(t["active"]),
+        "questionCount": t["question_count"],
+        "lastPlayedAt": t["last_played_at"],
+        "totalDuels": t["total_duels"],
+        "duels30": t.get("duels30", hub.catalog.month_all.get(t["id"], 0)),
+        "createdAt": t["created_at"],
+        "createdBy": t.get("author"),
+        "sourceFile": t.get("source_file"),
+        "shuffle": bool(t["shuffle_options"]),
+        "waiting": waiting,
+        "playing": playing,
+    }
+
+
+@routes.get("/api/admin/topic-activity")
+async def admin_topic_activity(request: web.Request):
+    """Mavzular: oxirgi o'yin, jami duellar, oxirgi 30 kun, holat — saralash, filtr va sahifalash serverda."""
+    require_admin(request)
+    q = request.query
+    status = q.get("status", "all")
+    sort = q.get("sort", "name")
+    if status not in ("all", "active", "inactive") or sort not in ADMIN_TOPIC_SORTS or q.get("dir", "asc") not in ("asc", "desc"):
+        raise ApiError("Noto'g'ri so'rov")
+    idle = _int_query(request, "idle", 0, 0, 3650)
+    page = _int_query(request, "page", 1, 1, 100_000)
+    per = _int_query(request, "per", 25, 5, 100)
+    hub, db = request.app[HUB], request.app[DB]
+    hub.catalog.ensure()
+    data = db.admin_topic_page(status, q.get("q", "").strip()[:100], idle, sort, q.get("dir") == "desc",
+                               (page - 1) * per, per, hub.catalog.month_all)
+    return ok({
+        "items": [admin_topic_json(t, hub) for t in data["items"]],
+        "total": data["total"],
+        "page": page,
+        "per": per,
+        "pages": max(1, -(-data["total"] // per)),
+        "counts": data["counts"],
+        "settings": topic_activity_settings(db),
+    })
+
+
+@routes.get("/api/admin/topic-activity/suggested")
+async def admin_topic_suggested(request: web.Request):
+    """O'chirishga tavsiya: faol, lekin N kundan beri o'ynalmagan mavzular (standart — sozlamadagi 90 kun)."""
+    require_admin(request)
+    db, hub = request.app[DB], request.app[HUB]
+    days = _int_query(request, "days", topic_activity_settings(db)["suggestDays"], 1, 3650)
+    page = _int_query(request, "page", 1, 1, 100_000)
+    per = _int_query(request, "per", 25, 5, 100)
+    hub.catalog.ensure()
+    data = db.suggested_topics(days, (page - 1) * per, per)
+    return ok({"days": days, "items": [admin_topic_json(t, hub) for t in data["items"]], "total": data["total"],
+               "page": page, "per": per, "pages": max(1, -(-data["total"] // per))})
+
+
+@routes.get("/api/admin/topic-activity/suggested/ids")
+async def admin_topic_suggested_ids(request: web.Request):
+    require_admin(request)
+    db = request.app[DB]
+    days = _int_query(request, "days", topic_activity_settings(db)["suggestDays"], 1, 3650)
+    ids = db.suggested_ids(days, MAX_BULK)
+    return ok({"days": days, "ids": ids})
+
+
+@routes.post("/api/admin/topic-activity/status")
+async def admin_topic_status(request: web.Request):
+    """Bir nechta mavzuni yopish yoki qayta ochish (yumshoq: savollar va duellar tarixi saqlanadi), jurnalga yoziladi."""
+    user = require_admin(request)
+    data = await read_json(request)
+    ids, active = data.get("ids"), data.get("active")
+    if not isinstance(ids, list) or not ids or len(ids) > MAX_BULK or not all(valid_id(x) for x in ids):
+        raise ApiError(f"Mavzularni tanlang (bir martada ko'pi bilan {MAX_BULK} ta)")
+    if not isinstance(active, bool):
+        raise ApiError("Holatni ko'rsating")
+    reason = "bulk" if len(ids) > 1 else "manual"
+    if data.get("source") == "suggested":
+        reason = "suggested"
+    db, hub = request.app[DB], request.app[HUB]
+    changed = db.set_topics_active(ids, active, user, reason)
+    if not active:
+        for t in changed:
+            hub.topic_removed(t["id"], "Siz kutayotgan mavzu yopildi")
+    if changed:
+        hub.topics_changed()
+    log.info("%s: %d ta mavzu %s", user["login"], len(changed), "ochildi" if active else "yopildi")
+    return ok({"changed": len(changed), "topics": changed})
+
+
+@routes.get("/api/admin/topic-activity/log")
+async def admin_topic_log(request: web.Request):
+    require_admin(request)
+    page = _int_query(request, "page", 1, 1, 100_000)
+    per = _int_query(request, "per", 25, 5, 100)
+    data = request.app[DB].status_log((page - 1) * per, per)
+    items = [{
+        "id": r["id"], "topicId": r["topic_id"], "topicName": r["topic_name"], "active": bool(r["active"]),
+        "by": r["changed_by_login"], "reason": r["reason"], "at": r["changed_at"],
+    } for r in data["items"]]
+    return ok({"items": items, "total": data["total"], "page": page, "per": per, "pages": max(1, -(-data["total"] // per))})
+
+
+@routes.patch("/api/admin/topic-activity/settings")
+async def admin_topic_settings(request: web.Request):
+    """Tavsiya chegarasi (kun) va avtomatik yopish (0 — o'chiq, standart)."""
+    user = require_admin(request)
+    data = await read_json(request)
+    db = request.app[DB]
+    for key, setting, low in (("autoDeactivateDays", "auto_deactivate_days", 0), ("suggestDays", "suggest_idle_days", 1)):
+        if key in data:
+            value = data[key]
+            if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= 3650 or (key == "autoDeactivateDays" and 0 < value < 7):
+                raise ApiError("Kunlar soni noto'g'ri (avtomatik yopish: 0 — o'chiq yoki 7–3650)")
+            db.set_setting(setting, str(value))
+            log.info("%s: %s = %d", user["login"], setting, value)
+    return ok({"settings": topic_activity_settings(db)})
 
 
 # --------------------------------------------- savollarni qo'lda boshqarish
@@ -791,7 +956,7 @@ async def admin_add_question(request: web.Request):
     q = checked_question(data)
     db = request.app[DB]
     (qid,) = db.append_questions(topic["id"], [q], user_id=user["id"])
-    request.app[HUB].broadcast("topics", {})
+    request.app[HUB].topics_changed()
     return ok({"question": question_json(db.question_by_id(qid)), "topic": topic_json(db.get_topic(topic["id"]))}, status=201)
 
 
@@ -818,7 +983,7 @@ async def admin_unlink_question(request: web.Request):
     db = request.app[DB]
     if not db.unlink_question(topic["id"], int_param(request, "qid")):
         raise ApiError("Savol topilmadi", 404)
-    request.app[HUB].broadcast("topics", {})
+    request.app[HUB].topics_changed()
     return ok({"topic": topic_json(db.get_topic(topic["id"]))})
 
 
@@ -837,7 +1002,7 @@ async def admin_append_questions(request: web.Request):
     res = db.add_questions(parsed["questions"], [topic["id"]], source, user["id"])
     topic = db.get_topic(topic["id"])
     log.info("Mavzuga savollar qo'shildi: %s (+%d) — %s", topic["name"], topic["question_count"] - before, user["login"])
-    request.app[HUB].broadcast("topics", {})
+    request.app[HUB].topics_changed()
     return ok({
         "topic": topic_json(topic),
         "added": topic["question_count"] - before,
@@ -855,7 +1020,7 @@ async def admin_link_questions(request: web.Request):
     ids = question_ids_param(data.get("questionIds"))
     db = request.app[DB]
     linked = db.link_questions(topic["id"], ids)
-    request.app[HUB].broadcast("topics", {})
+    request.app[HUB].topics_changed()
     return ok({"linked": linked, "topic": topic_json(db.get_topic(topic["id"]))})
 
 
@@ -926,7 +1091,7 @@ async def admin_bank_create(request: web.Request):
     q = checked_question(data)
     res = db.add_questions([q], topics, None, user["id"])
     if topics:
-        request.app[HUB].broadcast("topics", {})
+        request.app[HUB].topics_changed()
     return ok({"question": question_json(db.question_by_id(res["ids"][0])), "created": res["created"]}, status=201)
 
 
@@ -944,7 +1109,7 @@ async def admin_bank_upload(request: web.Request):
     res = db.add_questions(parsed["questions"], topics, source, user["id"])
     log.info("Bankka %d ta yangi savol yuklandi (%d tasi bor edi) — %s", res["created"], res["reused"], user["login"])
     if topics:
-        request.app[HUB].broadcast("topics", {})
+        request.app[HUB].topics_changed()
     return ok({"created": res["created"], "reused": res["reused"], "skipped": len(parsed["errors"])})
 
 
@@ -968,7 +1133,7 @@ async def admin_bank_delete(request: web.Request):
     if topics is None:
         raise ApiError("Savol topilmadi", 404)
     if topics:
-        request.app[HUB].broadcast("topics", {})
+        request.app[HUB].topics_changed()
     return ok({"topics": len(topics)})
 
 
@@ -980,7 +1145,7 @@ async def admin_bank_delete_many(request: web.Request):
     deleted, topics = request.app[DB].delete_bank_questions(question_ids_param(data.get("questionIds")))
     log.info("Bankdan %d ta savol o'chirildi — %s", deleted, user["login"])
     if topics:
-        request.app[HUB].broadcast("topics", {})
+        request.app[HUB].topics_changed()
     return ok({"deleted": deleted, "topics": topics})
 
 
@@ -993,7 +1158,7 @@ async def admin_delete_topic(request: web.Request):
         raise ApiError("Mavzu topilmadi", 404)
     request.app[HUB].topic_removed(tid)
     db.delete_topic(tid)
-    request.app[HUB].broadcast("topics", {})
+    request.app[HUB].topics_changed()
     return ok()
 
 

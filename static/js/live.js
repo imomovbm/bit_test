@@ -1,4 +1,5 @@
-// Real vaqtdagi aloqa (WebSocket) va umumiy holat: onlayn foydalanuvchilar, navbat, duel.
+// Real vaqtdagi aloqa (WebSocket) va umumiy holat: onlayn foydalanuvchilar soni, lobbi (raqib kutayotganlar),
+// o'z seekimiz (navbat), duel. Lobbi ma'lumotlari faqat lobbi ochiq bo'lganda (obuna) va farqlar ko'rinishida keladi.
 import { toast } from './lib.js';
 
 const listeners = new Map();
@@ -8,12 +9,15 @@ let retry = 0;
 let retryTimer = null;
 let lastMessageAt = 0;
 
-const emptyPresence = () => ({ online: 0, users: [], waiting: {} });
+const emptyPresence = () => ({ online: 0 });
+const emptyLobby = () => ({ seeks: [], counts: {}, live: [], online: 0, waiting: 0, limit: 50, ready: false });
+let lobbySub = null; // joriy obuna {topicId, watch} — qayta ulanganda tiklanadi
 
 export const live = {
   status: 'offline', // offline | connecting | online
-  rules: { duelQuestions: 15, questionTime: 15, afkSeconds: 30, afkTimeouts: 2, disconnectGrace: 10, lanUrl: null },
+  rules: { duelQuestions: 15, questionTime: 15, afkSeconds: 30, afkTimeouts: 2, disconnectGrace: 10, seekSeconds: 120, lanUrl: null },
   presence: emptyPresence(),
+  lobby: emptyLobby(),
   queue: null,
   duel: null,
   result: null,
@@ -48,11 +52,32 @@ export const live = {
   },
 
   joinQueue(topicId) {
-    return this.send('queue:join', { topicId });
+    return this.send('seek:create', { topicId });
+  },
+
+  /** Tezkor juftlash: mavzu bo'yicha (topicId) yoki istalgan mavzu (null). */
+  seek(topicId = null) {
+    return this.send('seek:create', { topicId });
+  },
+
+  joinSeek(seekId) {
+    return this.send('seek:join', { seekId });
   },
 
   leaveQueue() {
-    return this.send('queue:leave');
+    return this.send('seek:cancel');
+  },
+
+  /** Lobbi ko'rinishiga obuna: topicId — faqat shu mavzu kutuvchilari, watch — ekrandagi mavzular (sonlar uchun). */
+  subscribeLobby({ topicId = null, watch = [] } = {}) {
+    lobbySub = { topicId, watch: watch.slice(0, 60) };
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'lobby:sub', d: lobbySub }));
+  },
+
+  unsubscribeLobby() {
+    lobbySub = null;
+    this.lobby = emptyLobby();
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'lobby:unsub', d: {} }));
   },
 
   acceptInvite(code) {
@@ -95,6 +120,8 @@ export const live = {
     this.duel = null;
     this.result = null;
     this.presence = emptyPresence();
+    this.lobby = emptyLobby();
+    lobbySub = null;
     setStatus('offline');
   },
 };
@@ -177,8 +204,34 @@ function withDeadline(q) {
 
 function setQueue(q) {
   const prev = live.queue;
-  if (q) q.localSince = prev && prev.topicId === q.topicId ? prev.localSince : Date.now();
+  if (q) {
+    // expiresAt — server aytgan qolgan vaqtdan (sahifa qayta yuklansa ham to'g'ri); uzaytirilganda kutish vaqti davom etadi
+    const ttl = (live.rules.seekSeconds || 120) * 1000;
+    q.expiresAt = Date.now() + (q.expiresIn ?? ttl / 1000) * 1000;
+    q.localSince = prev && (prev.seekId === q.seekId || prev.topicId === q.topicId) ? prev.localSince : q.expiresAt - ttl;
+  }
   live.queue = q || null;
+}
+
+function applyLobbyDiff(d) {
+  const lobby = live.lobby;
+  if (d.del && d.del.length) {
+    const gone = new Set(d.del);
+    lobby.seeks = lobby.seeks.filter((x) => !gone.has(x.id));
+  }
+  if (d.add && d.add.length) {
+    const known = new Set(lobby.seeks.map((x) => x.id));
+    lobby.seeks = [...d.add.filter((x) => !known.has(x.id)), ...lobby.seeks]
+      .sort((a, b) => b.since - a.since)
+      .slice(0, lobby.limit || 50);
+  }
+  if (d.counts) Object.assign(lobby.counts, d.counts);
+  if (d.live) lobby.live = d.live;
+  if (typeof d.online === 'number') {
+    lobby.online = d.online;
+    live.presence.online = d.online;
+  }
+  if (typeof d.waiting === 'number') lobby.waiting = d.waiting;
 }
 
 function setDuel(s) {
@@ -204,12 +257,22 @@ function handle(t, d) {
   switch (t) {
     case 'hello':
       Object.assign(live.rules, d.rules || {});
-      live.presence = d.presence || emptyPresence();
+      live.presence = { online: d.online || 0 };
       setQueue(d.queue);
       setDuel(d.duel);
+      if (lobbySub) live.send('lobby:sub', lobbySub); // qayta ulanish: lobbi holati qayta so'raladi
       break;
-    case 'presence':
-      live.presence = d || emptyPresence();
+    case 'stats':
+      live.presence.online = d.online || 0;
+      break;
+    case 'lobby':
+      live.lobby = { ...emptyLobby(), ...d, ready: true };
+      live.presence.online = d.online || live.presence.online;
+      live.emit('lobby');
+      break;
+    case 'lobby:diff':
+      applyLobbyDiff(d);
+      live.emit('lobby');
       break;
     case 'queue':
       setQueue(d);
@@ -219,7 +282,14 @@ function handle(t, d) {
       toast(d.message, d.kind || 'info', 5500);
       break;
     case 'error':
-      toast(d.message, 'error', 5000);
+      if (d.code === 'taken') { // boshqa o'yinchi oldinroq qo'shildi — ro'yxatdan olib tashlab, lobbini yangilaymiz
+        if (d.seekId) applyLobbyDiff({ del: [d.seekId] });
+        live.emit('lobby');
+        if (lobbySub) live.send('lobby:sub', lobbySub);
+        toast(d.message, 'warning', 5000);
+      } else {
+        toast(d.message, 'error', 5000);
+      }
       break;
     case 'topics':
       live.emit('topics');
@@ -266,6 +336,11 @@ function handle(t, d) {
       live.duel = null;
       live.result = d;
       live.emit('duel:end', d);
+      break;
+    case 'duel:cancel': // boshlanish sanog'ida raqib chiqib ketdi — duel bekor (natija yozilmaydi)
+      if (mine(d)) live.duel = null;
+      toast(d.message, 'warning', 6000);
+      live.emit('duel:cancel', d);
       break;
     default:
       break;

@@ -295,7 +295,7 @@ function updateBanner() {
   bannerTimer = setInterval(tick, 1000);
   shell.banner.replaceChildren(
     h('span.spinner.sm'),
-    h('div.qb-text', h('b', q.inviteFor ? `${q.inviteFor.login} kutilmoqda` : 'Raqib kutilmoqda'), h('span.muted', ` · ${q.topicName} · `), time),
+    h('div.qb-text', h('b', 'Raqib kutilmoqda'), h('span.muted', ` · ${q.topicName || 'istalgan mavzu'} · `), time),
     h('a.btn.primary.sm', { href: '#/duel' }, 'Ochish'),
     h('button.icon-btn', { type: 'button', title: 'Bekor qilish', 'aria-label': 'Kutishni bekor qilish', onclick: () => live.leaveQueue() }, icon('x', 16)));
   shell.banner.hidden = false;
@@ -379,7 +379,7 @@ async function logout() {
 // ------------------------------------------------------ global hodisalar
 live.on('change', (kind) => {
   paintHeader();
-  if (['queue', 'hello', 'duel:start', 'duel:end', 'status'].includes(kind)) updateBanner();
+  if (['queue', 'hello', 'duel:start', 'duel:end', 'duel:cancel', 'status'].includes(kind)) updateBanner();
 });
 
 live.on('duel:start', () => {

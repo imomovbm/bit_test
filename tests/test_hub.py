@@ -236,29 +236,26 @@ def test_invite_errors(env):
     a = bot(env, "ali")
     v = bot(env, "vali")
     env.hub.handle(env.users["vali"]["id"], v, "invite:accept", {"code": "NOPE1234"})
-    assert "noto'g'ri" in v.last("error")["message"]
+    assert "notoʻgʻri" in v.last("error")["message"]
     join(env, "ali", a)
     code = a.last("queue")["code"]
     env.hub.handle(env.users["ali"]["id"], a, "invite:accept", {"code": code})
-    assert "o'zingizning" in a.last("error")["message"]
+    assert "oʻzingizning" in a.last("error")["message"]
     env.hub.handle(env.users["ali"]["id"], a, "queue:leave", {})
     env.hub.handle(env.users["vali"]["id"], v, "invite:accept", {"code": code})
     assert "kutmayapti" in v.last("error")["message"]
 
 
-def test_invitee_waits_for_offline_host(env):
+def test_invite_fails_after_host_closed_the_page(env):
+    """Seek egasi oxirgi oynani yopsa, seek o'chadi (lobbida arvoh qolmaydi) — taklif havolasi ham ishlamaydi."""
     a = bot(env, "ali")
     v = bot(env, "vali")
     join(env, "ali", a)
     code = a.last("queue")["code"]
-    env.hub.disconnect(env.users["ali"]["id"], a)  # masalan, Telegram'ga havola yuborish uchun chiqdi
+    env.hub.disconnect(env.users["ali"]["id"], a)
+    assert env.hub.invite_info(code)["reason"] == "idle"
     env.hub.handle(env.users["vali"]["id"], v, "invite:accept", {"code": code})
-    assert v.last("queue")["inviteFor"]["online"] is False
-    assert v.last("duel:start") is None
-    a2 = bot(env, "ali")
-    assert a2.last("hello")["queue"]["code"] == code
-    assert v.last("duel:start")["opp"]["login"] == "ali"
-    assert a2.last("duel:start")["opp"]["login"] == "vali"
+    assert "kutmayapti" in v.last("error")["message"] and not env.hub.duels
 
 
 def test_same_user_is_not_matched_with_self(env):
@@ -268,22 +265,27 @@ def test_same_user_is_not_matched_with_self(env):
     assert not env.hub.duels
 
 
-def test_waiting_survives_short_disconnect_but_expires(env):
+def test_seek_removed_on_disconnect_and_expires(env):
     a = bot(env, "ali")
+    uid = env.users["ali"]["id"]
     join(env, "ali", a)
-    env.hub.disconnect(env.users["ali"]["id"], a)
-    env.clock.advance(config.WAITING_TTL - 5)
-    assert env.users["ali"]["id"] in env.hub.waiting
-    env.clock.advance(10)
-    assert env.users["ali"]["id"] not in env.hub.waiting
+    env.hub.disconnect(uid, a)
+    assert uid not in env.hub.seek_of and not env.hub.seeks
+    a2 = bot(env, "ali")
+    join(env, "ali", a2)
+    env.clock.advance(config.SEEK_TTL - 1)
+    assert uid in env.hub.seek_of
+    env.clock.advance(2)
+    assert uid not in env.hub.seek_of and a2.last("queue") is None and "vaqti tugadi" in a2.last("notice")["message"]
 
 
-def test_presence_reports_online_users_and_waiting(env):
+def test_lobby_snapshot_has_counts_but_no_user_list(env):
     a = bot(env, "ali")
-    bot(env, "vali")
+    v = bot(env, "vali")
     join(env, "ali", a)
-    env.clock.advance(1)
-    p = a.last("presence")
-    assert p["online"] == 2
-    assert p["waiting"] == {str(env.topic): 1}
-    assert {u["login"]: u["status"] for u in p["users"]} == {"ali": "waiting", "vali": "idle"}
+    env.hub.handle(env.users["vali"]["id"], v, "lobby:sub", {"watch": [env.topic]})
+    snap = v.last("lobby")
+    assert snap["online"] == 2 and snap["counts"] == {str(env.topic): [1, 0]} and snap["waiting"] == 1
+    assert [s["login"] for s in snap["seeks"]] == ["ali"]
+    assert set(snap["seeks"][0]) == {"id", "login", "topicId", "topicName", "since", "mine"}  # faqat nik — id yo'q
+    assert "users" not in snap

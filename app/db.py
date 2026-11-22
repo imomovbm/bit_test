@@ -6,7 +6,10 @@ import json
 import sqlite3
 import time
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+from . import config
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -38,8 +41,42 @@ CREATE TABLE IF NOT EXISTS topics (
     question_count  INTEGER NOT NULL DEFAULT 0,
     source_file     TEXT,
     created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at      INTEGER NOT NULL
+    created_at      INTEGER NOT NULL,
+    last_played_at  INTEGER,                    -- oxirgi duel boshlangan payt (ms); NULL — hali o'ynalmagan
+    total_duels     INTEGER NOT NULL DEFAULT 0  -- shu mavzuda boshlangan duellar soni (hamma vaqt)
 );
+
+-- Mavzular faolligi: kunlik yig'indi (reytinglar faqat shu kichik jadvaldan hisoblanadi, duels jadvali sanalmaydi).
+-- day — mahalliy kun (config.TZ_OFFSET_HOURS), 'YYYY-MM-DD'.
+CREATE TABLE IF NOT EXISTS topic_activity_daily (
+    topic_id       INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    day            TEXT NOT NULL,
+    duels_started  INTEGER NOT NULL DEFAULT 0,
+    unique_players INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (topic_id, day)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_activity_day ON topic_activity_daily(day, topic_id, duels_started);
+
+-- Kunlik noyob o'yinchilarni sanash uchun yordamchi jadval (faqat oxirgi 2 kun saqlanadi).
+CREATE TABLE IF NOT EXISTS topic_day_players (
+    topic_id INTEGER NOT NULL,
+    day      TEXT NOT NULL,
+    user_id  INTEGER NOT NULL,
+    PRIMARY KEY (topic_id, day, user_id)
+) WITHOUT ROWID;
+
+-- Mavzu holati (faol/yopilgan) o'zgarishlari jurnali: kim, qachon, qaysi mavzu.
+CREATE TABLE IF NOT EXISTS topic_status_log (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id         INTEGER,
+    topic_name       TEXT NOT NULL,
+    active           INTEGER NOT NULL,
+    changed_by       INTEGER,
+    changed_by_login TEXT,
+    reason           TEXT NOT NULL DEFAULT '',
+    changed_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_status_log_time ON topic_status_log(changed_at);
 
 -- Savollar banki: har bir savol alohida saqlanadi va bir nechta mavzuga biriktirilishi mumkin.
 CREATE TABLE IF NOT EXISTS questions (
@@ -118,11 +155,36 @@ MIGRATIONS = (
     ("users", "last_seen_at", "INTEGER"),
     ("topics", "active", "INTEGER NOT NULL DEFAULT 1"),
     ("users", "is_teacher", "INTEGER NOT NULL DEFAULT 0"),
+    ("topics", "last_played_at", "INTEGER"),
+    ("topics", "total_duels", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+# Yangi ustunlarga tayanadigan indekslar (eski bazada ustunlar qo'shilgandan keyin yaratiladi).
+INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_topics_active_name ON topics(active, name_key)",
+    "CREATE INDEX IF NOT EXISTS idx_topics_active_played ON topics(active, last_played_at)",
+    "CREATE INDEX IF NOT EXISTS idx_topics_played ON topics(last_played_at)",
+    "CREATE INDEX IF NOT EXISTS idx_topics_active_total ON topics(active, total_duels)",
+    "CREATE INDEX IF NOT EXISTS idx_topics_total ON topics(total_duels)",
+    # "N kundan beri o'ynalmagan": oxirgi o'yin, hech o'ynalmagan bo'lsa — yaratilgan payt
+    "CREATE INDEX IF NOT EXISTS idx_topics_idle ON topics(active, COALESCE(last_played_at, created_at))",
+    "CREATE INDEX IF NOT EXISTS idx_topics_idle_all ON topics(COALESCE(last_played_at, created_at))",
 )
 
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def day_key(ms: int) -> str:
+    """Mahalliy kun (config.TZ_OFFSET_HOURS, standart — Toshkent UTC+5): 'YYYY-MM-DD'."""
+    tz = timezone(timedelta(hours=config.TZ_OFFSET_HOURS))
+    return datetime.fromtimestamp(ms / 1000, tz).strftime("%Y-%m-%d")
+
+
+def day_back(day: str, days: int) -> str:
+    """'YYYY-MM-DD' dan `days` kun oldingi kun."""
+    return (date.fromisoformat(day) - timedelta(days=days)).isoformat()
 
 
 def name_key(name: str) -> str:
@@ -152,11 +214,18 @@ class Database:
         self._migrate()
 
     def _migrate(self) -> None:
+        added = set()
         for table, column, ddl in MIGRATIONS:
             columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
             if column not in columns:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+                added.add((table, column))
+        for sql in INDEXES:
+            self.conn.execute(sql)
         self._migrate_question_bank()
+        if ("topics", "total_duels") in added:
+            # faollik ustunlari endi qo'shildi: mavjud duellar tarixidan bir marta to'ldiriladi
+            self.backfill_activity()
 
     def _migrate_question_bank(self) -> None:
         """Eski sxema: har bir savol bitta mavzuga tegishli edi (questions.topic_id).
@@ -560,6 +629,231 @@ class Database:
             ),
         )
         return cur.lastrowid
+
+    # ---------------------------------------------------- mavzular faolligi
+    def record_duel_start(self, topic_id: int, user_ids, at_ms: int | None = None) -> None:
+        """Duel boshlandi: mavzu hisoblagichlari va kunlik yig'indi bitta qisqa tranzaksiyada (atomik +1, yo'qolmaydi)."""
+        at_ms = at_ms or now_ms()
+        day = day_key(at_ms)
+        with self.tx():
+            cur = self.conn.execute(
+                "UPDATE topics SET total_duels = total_duels + 1, last_played_at = MAX(COALESCE(last_played_at, 0), ?) WHERE id = ?",
+                (at_ms, topic_id),
+            )
+            if not cur.rowcount:
+                return  # mavzu o'chirilgan
+            self.conn.execute(
+                """INSERT INTO topic_activity_daily (topic_id, day, duels_started, unique_players) VALUES (?, ?, 1, 0)
+                   ON CONFLICT(topic_id, day) DO UPDATE SET duels_started = duels_started + 1""",
+                (topic_id, day),
+            )
+            new_players = 0
+            for uid in dict.fromkeys(u for u in user_ids if u is not None):
+                new_players += self.conn.execute(
+                    "INSERT OR IGNORE INTO topic_day_players (topic_id, day, user_id) VALUES (?, ?, ?)", (topic_id, day, uid)
+                ).rowcount
+            if new_players:
+                self.conn.execute(
+                    "UPDATE topic_activity_daily SET unique_players = unique_players + ? WHERE topic_id = ? AND day = ?",
+                    (new_players, topic_id, day),
+                )
+
+    def backfill_activity(self) -> dict:
+        """Mavzu hisoblagichlari va kunlik yig'indini duellar tarixidan qaytadan hisoblaydi (bitta tranzaksiya).
+
+        Idempotent: necha marta ishga tushirilsa ham natija bir xil. Tarixda faqat tugagan duellar bor: ular
+        boshlangan payt (duels.started_at) bo'yicha hisoblanadi. O'chirilgan mavzular (topic_id NULL) o'tkazib yuboriladi.
+        """
+        offset = int(config.TZ_OFFSET_HOURS * 3600)
+        today = day_key(now_ms())
+        with self.tx():
+            self.conn.execute("""
+                UPDATE topics SET
+                    total_duels = (SELECT COUNT(*) FROM duels d WHERE d.topic_id = topics.id),
+                    last_played_at = (SELECT MAX(started_at) FROM duels d WHERE d.topic_id = topics.id)
+            """)
+            self.conn.execute("DELETE FROM topic_activity_daily")
+            self.conn.execute("DELETE FROM topic_day_players")
+            self.conn.execute("CREATE TEMP TABLE IF NOT EXISTS backfill_players (topic_id INTEGER, day TEXT, user_id INTEGER)")
+            self.conn.execute("DELETE FROM backfill_players")
+            self.conn.execute(
+                """INSERT INTO backfill_players (topic_id, day, user_id)
+                   SELECT topic_id, date(started_at / 1000 + :o, 'unixepoch'), p1_id FROM duels
+                   WHERE topic_id IS NOT NULL AND p1_id IS NOT NULL
+                   UNION
+                   SELECT topic_id, date(started_at / 1000 + :o, 'unixepoch'), p2_id FROM duels
+                   WHERE topic_id IS NOT NULL AND p2_id IS NOT NULL""",
+                {"o": offset},
+            )
+            self.conn.execute(
+                """INSERT INTO topic_activity_daily (topic_id, day, duels_started, unique_players)
+                   SELECT c.topic_id, c.day, c.n, COALESCE(u.n, 0)
+                   FROM (SELECT topic_id, date(started_at / 1000 + ?, 'unixepoch') AS day, COUNT(*) AS n
+                         FROM duels WHERE topic_id IS NOT NULL GROUP BY 1, 2) c
+                   LEFT JOIN (SELECT topic_id, day, COUNT(*) AS n FROM backfill_players GROUP BY 1, 2) u
+                     ON u.topic_id = c.topic_id AND u.day = c.day""",
+                (offset,),
+            )
+            # bugun va kecha o'ynaganlar: yangi duellarda noyob o'yinchilar qayta sanalmasligi uchun
+            self.conn.execute(
+                "INSERT OR IGNORE INTO topic_day_players SELECT topic_id, day, user_id FROM backfill_players WHERE day >= ?",
+                (day_back(today, 1),),
+            )
+            self.conn.execute("DROP TABLE backfill_players")
+            summary = {
+                "duels": self._scalar("SELECT COUNT(*) FROM duels WHERE topic_id IS NOT NULL"),
+                "topicsPlayed": self._scalar("SELECT COUNT(*) FROM topics WHERE total_duels > 0"),
+                "days": self._scalar("SELECT COUNT(DISTINCT day) FROM topic_activity_daily"),
+                "dailyRows": self._scalar("SELECT COUNT(*) FROM topic_activity_daily"),
+            }
+        return summary
+
+    def prune_day_players(self, keep_days: int = 2) -> int:
+        """Noyob o'yinchilar jadvalidan eski kunlarni o'chiradi (faqat bugun va kecha kerak)."""
+        cutoff = day_back(day_key(now_ms()), keep_days - 1)
+        return self.conn.execute("DELETE FROM topic_day_players WHERE day < ?", (cutoff,)).rowcount
+
+    def activity_since(self, since_day: str) -> list[tuple[int, str, int]]:
+        """Kunlik yig'indi qatorlari (mavzu, kun, boshlangan duellar) — since_day dan boshlab (indeks: idx_activity_day)."""
+        return [tuple(r) for r in self.conn.execute(
+            "SELECT topic_id, day, duels_started FROM topic_activity_daily WHERE day >= ?", (since_day,)
+        ).fetchall()]
+
+    def playable_topics(self) -> list[dict]:
+        """Bosh sahifa va lobbi uchun: faol va savoli bor mavzular (reyting keshi shundan quriladi)."""
+        return self._all(
+            """SELECT id, name, name_key, question_count, last_played_at, total_duels, created_at
+               FROM topics WHERE active = 1 AND question_count > 0"""
+        )
+
+    # ------------------------------------------- boshqaruv: mavzular faolligi
+    ADMIN_SORTS = {  # ustun -> ORDER BY (indekslar: idx_topics_active_name, idx_topics_played, idx_topics_total ...)
+        "name": "t.name_key",
+        "lastPlayed": "t.last_played_at",
+        "total": "t.total_duels",
+        "status": "t.active",
+        "created": "t.id",
+    }
+
+    @staticmethod
+    def _idle_cutoff(days: int) -> int:
+        return now_ms() - days * 86_400_000
+
+    def _admin_where(self, status: str, search: str, idle_days: int) -> tuple[str, list]:
+        where, args = [], []
+        if status in ("active", "inactive"):
+            where.append("t.active = ?")
+            args.append(1 if status == "active" else 0)
+        if search:
+            like = "%" + name_key(search).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            where.append("t.name_key LIKE ? ESCAPE '\\'")
+            args.append(like)
+        if idle_days > 0:  # "N kundan beri o'ynalmagan": oxirgi o'yin (hech o'ynalmagan bo'lsa — yaratilgan payt)
+            where.append("COALESCE(t.last_played_at, t.created_at) < ?")
+            args.append(self._idle_cutoff(idle_days))
+        return (" WHERE " + " AND ".join(where)) if where else "", args
+
+    def admin_topic_page(self, status: str = "all", search: str = "", idle_days: int = 0, sort: str = "name",
+                         desc: bool = False, offset: int = 0, limit: int = 25, recent: dict | None = None) -> dict:
+        """Boshqaruv paneli: sahifalangan mavzular ro'yxati (saralash va filtrlar serverda, indekslar bilan).
+
+        recent — oxirgi 30 kundagi duellar (katalog keshidan, mavzu -> son); "recent" bo'yicha saralashda faqat
+        identifikatorlar o'qiladi, so'ng tanlangan sahifa qatorlari olinadi."""
+        recent = recent or {}
+        where, args = self._admin_where(status, search, idle_days)
+        total = self._scalar(f"SELECT COUNT(*) FROM topics t{where}", args)
+        direction = "DESC" if desc else "ASC"
+        if sort == "recent":
+            rows = self.conn.execute(f"SELECT t.id, t.name_key FROM topics t{where}", args).fetchall()
+            rows.sort(key=lambda r: (recent.get(r[0], 0), r[1]), reverse=desc)
+            ids = [r[0] for r in rows[offset:offset + limit]]
+            items = self._admin_rows(ids)
+        else:
+            order = self.ADMIN_SORTS.get(sort, "t.name_key")
+            tie = "" if order == "t.name_key" else ", t.name_key"
+            ids = [r[0] for r in self.conn.execute(
+                f"SELECT t.id FROM topics t{where} ORDER BY {order} {direction}{tie} LIMIT ? OFFSET ?", [*args, limit, offset])]
+            items = self._admin_rows(ids)
+        for item in items:
+            item["duels30"] = recent.get(item["id"], 0)
+        counts = dict(self.conn.execute("SELECT active, COUNT(*) FROM topics GROUP BY active").fetchall())
+        return {"total": total, "items": items, "counts": {"active": counts.get(1, 0), "inactive": counts.get(0, 0)}}
+
+    def _admin_rows(self, ids: list[int]) -> list[dict]:
+        """Tanlangan mavzular (bitta so'rov, N+1 yo'q), berilgan tartibda."""
+        if not ids:
+            return []
+        marks = ",".join("?" * len(ids))
+        rows = {r["id"]: r for r in self._all(
+            f"""SELECT t.id, t.name, t.active, t.question_count, t.last_played_at, t.total_duels, t.created_at,
+                       t.source_file, t.shuffle_options, u.login AS author
+                FROM topics t LEFT JOIN users u ON u.id = t.created_by WHERE t.id IN ({marks})""", ids)}
+        return [rows[i] for i in ids if i in rows]
+
+    def suggested_topics(self, days: int, offset: int = 0, limit: int = 25) -> dict:
+        """O'chirishga tavsiya: faol, lekin `days` kundan beri o'ynalmagan mavzular (eng uzoq o'ynalmagani oldin)."""
+        cutoff = self._idle_cutoff(days)
+        cond = "WHERE t.active = 1 AND COALESCE(t.last_played_at, t.created_at) < ?"
+        total = self._scalar(f"SELECT COUNT(*) FROM topics t {cond}", (cutoff,))
+        ids = [r[0] for r in self.conn.execute(
+            f"SELECT t.id FROM topics t {cond} ORDER BY COALESCE(t.last_played_at, t.created_at), t.id LIMIT ? OFFSET ?",
+            (cutoff, limit, offset))]
+        return {"total": total, "items": self._admin_rows(ids)}
+
+    def suggested_ids(self, days: int, limit: int = 5000) -> list[int]:
+        cutoff = self._idle_cutoff(days)
+        return [r[0] for r in self.conn.execute(
+            """SELECT id FROM topics WHERE active = 1 AND COALESCE(last_played_at, created_at) < ?
+               ORDER BY COALESCE(last_played_at, created_at) LIMIT ?""", (cutoff, limit))]
+
+    def set_topics_active(self, topic_ids, active: bool, user: dict | None, reason: str) -> list[dict]:
+        """Mavzular holatini o'zgartiradi (yumshoq: savollar va duellar tarixi saqlanadi) va jurnalga yozadi.
+        Faqat haqiqatan o'zgarganlar qaytariladi."""
+        ids = list(dict.fromkeys(topic_ids))
+        if not ids:
+            return []
+        changed = []
+        at = now_ms()
+        with self.tx():
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                marks = ",".join("?" * len(chunk))
+                rows = self.conn.execute(
+                    f"SELECT id, name FROM topics WHERE id IN ({marks}) AND active != ?", [*chunk, int(active)]).fetchall()
+                for r in rows:
+                    changed.append({"id": r["id"], "name": r["name"]})
+                if rows:
+                    self.conn.execute(f"UPDATE topics SET active = ? WHERE id IN ({','.join('?' * len(rows))})",
+                                      [int(active), *[r["id"] for r in rows]])
+            self.conn.executemany(
+                """INSERT INTO topic_status_log (topic_id, topic_name, active, changed_by, changed_by_login, reason, changed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                [(t["id"], t["name"], int(active), user["id"] if user else None, user["login"] if user else None, reason, at)
+                 for t in changed],
+            )
+        return changed
+
+    def status_log(self, offset: int = 0, limit: int = 25) -> dict:
+        total = self._scalar("SELECT COUNT(*) FROM topic_status_log")
+        items = self._all(
+            "SELECT * FROM topic_status_log ORDER BY changed_at DESC, id DESC LIMIT ? OFFSET ?", (limit, offset))
+        return {"total": total, "items": items}
+
+    def auto_deactivate(self, days: int) -> list[dict]:
+        """Avtomatik yopish (sozlamada yoqilgan bo'lsa, standart — o'chiq): `days` kundan beri o'ynalmagan mavzular."""
+        return self.set_topics_active(self.suggested_ids(days), False, None, f"auto:{days}")
+
+    def recent_topics(self, user_id: int, limit: int = 5) -> list[int]:
+        """Foydalanuvchi oxirgi o'ynagan (tugatgan) duellar mavzulari, eng yangisi oldin."""
+        rows = self.conn.execute(
+            """SELECT topic_id, MAX(finished_at) AS t FROM (
+                   SELECT topic_id, finished_at FROM duels WHERE p1_id = :u AND topic_id IS NOT NULL
+                   UNION ALL
+                   SELECT topic_id, finished_at FROM duels WHERE p2_id = :u AND topic_id IS NOT NULL)
+               GROUP BY topic_id ORDER BY t DESC LIMIT :n""",
+            {"u": user_id, "n": limit},
+        ).fetchall()
+        return [r[0] for r in rows]
 
     def user_duels(self, user_id: int, limit: int = 30) -> list[dict]:
         rows = self._all(
