@@ -9,7 +9,10 @@ const T = {
   open: 'Ochish',
   resume: 'Davom ettirish',
   activeTitle: 'Davom etayotgan oʻyinlar',
-  phase: { lobby: 'lobbi', ready: 'savol', question: 'savol', reveal: 'natija', leaderboard: 'reyting', podium: 'tugagan' },
+  phase: {
+    lobby: 'lobbi', topic_intro: 'boshlanmoqda', question_read: 'savol oʻqilmoqda', question_active: 'savol',
+    question_result: 'natija', leaderboard: 'reyting', podium: 'tugagan',
+  },
   players: (n) => `${n} ta oʻquvchi`,
   octagon: {
     tag: 'Jonli viktorina',
@@ -23,8 +26,18 @@ const T = {
   },
 };
 
+/** Keyingi ehtimoliy sahifa (Octagon o'qituvchi ekrani) moduli bo'sh vaqtda oldindan yuklanadi — bajarilmaydi. */
+function prefetchModule(rel) {
+  const href = new URL(rel, import.meta.url).href;
+  if ([...document.querySelectorAll('link[rel="modulepreload"]')].some((l) => l.href === href)) return;
+  const add = () => document.head.append(h('link', { rel: 'modulepreload', href }));
+  if ('requestIdleCallback' in window) window.requestIdleCallback(add, { timeout: 2000 });
+  else setTimeout(add, 300);
+}
+
 export function gamesView(root) {
   let alive = true;
+  prefetchModule('./octagon.js');
   const activeBox = h('div');
   root.append(h('section.screen.games',
     h('div.page-head', h('div', h('h1', T.title), h('p.muted', T.lead))),

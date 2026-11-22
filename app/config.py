@@ -49,6 +49,10 @@ TRUST_PROXY = os.environ.get("TD_TRUST_PROXY", "") == "1" or any(
     os.environ.get(k) for k in ("RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID")
 )
 
+# Ishlab chiquvchi rejimi: statik fayllar har so'rovda diskdan o'qiladi va keshlanmaydi (TD_DEV=1). Ishlab chiqarishda —
+# o'chiq: fayllar xotiradan, gzip bilan, mazmun xeshli manzillarda bir yillik kesh bilan beriladi (app/assets.py).
+DEV = os.environ.get("TD_DEV", "") == "1"
+
 SESSION_COOKIE = "td_sid"
 SESSION_DAYS = 30
 

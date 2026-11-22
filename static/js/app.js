@@ -357,6 +357,16 @@ function onLogin(user) {
   navigate(invite ? `/invite/${encodeURIComponent(invite)}` : '/duel');
 }
 
+/** Foydalanuvchiga xos, qurilmada qolgan ma'lumotlar (umumiy kompyuterda keyingi foydalanuvchiga qolmasin).
+ * Mavzu/ovoz kabi interfeys sozlamalari shaxsiy emas — ular qoldiriladi. */
+function clearUserData() {
+  try {
+    sessionStorage.removeItem('td-practice'); // tugallanmagan mashq: savollar va berilgan javoblar
+  } catch {
+    /* saqlash imkoni yo'q — e'tiborsiz */
+  }
+}
+
 async function logout() {
   if (inActiveDuel()) {
     if (!(await confirmLeave())) return;
@@ -371,6 +381,7 @@ async function logout() {
     /* baribir chiqamiz */
   }
   live.disconnect();
+  clearUserData();
   state.user = null;
   shell = null;
   navigate('/login');
@@ -410,6 +421,7 @@ live.on('unauthorized', (reason) => {
   state.user = null;
   shell = null;
   live.disconnect();
+  clearUserData();
   toast(SIGNED_OUT[reason] || 'Sessiya muddati tugagan. Qaytadan kiring', reason === 'blocked' || reason === 'deleted' ? 'error' : 'warning', 7000);
   navigate('/login');
 });

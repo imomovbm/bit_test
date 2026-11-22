@@ -32,11 +32,27 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PROTO = None  # serverning protokol versiyasi (hello/"v" dan); v1 da yo'q
+PROTO = 2  # 2 — joriy protokol (qo'shilishda versiya va avatar indeksi); --v1 — eski server bilan solishtirish uchun
 
 # v1 (eski) va v2 bosqich nomlari -> umumiy nomlar
 PHASE = {"lobby": "lobby", "ready": "read", "question": "active", "reveal": "result", "leaderboard": "board", "podium": "podium",
-         "intro": "intro", "read": "read", "active": "active", "result": "result", "board": "board"}
+         "topic_intro": "intro", "question_read": "read", "question_active": "active", "question_result": "result"}
+# v2: o'quvchi holatida bosqich indeks bilan keladi (app/octagon_flow.py: PHASES bilan bir xil tartib)
+PHASES_V2 = ("lobby", "topic_intro", "question_read", "question_active", "question_result", "leaderboard", "podium")
+AVATAR_COUNT = 30
+
+
+def phase_of(d):
+    """O'quvchi holatidagi bosqich -> umumiy nom (v2 — indeks, v1 — nom)."""
+    p = d.get("p")
+    if PROTO == 2:
+        return PHASE.get(PHASES_V2[p]) if isinstance(p, int) and 0 <= p < len(PHASES_V2) else None
+    return PHASE.get(p)
+
+
+def hello(d):
+    """Qo'shilish/qayta ulanish/o'qituvchi xabarlariga protokol versiyasi (v2)."""
+    return {"v": PROTO, **d} if PROTO == 2 else d
 
 
 def pct(values, p):
@@ -60,6 +76,10 @@ class Stats:
         self.errors = Counter()
         self.bytes_in = Counter()   # xabar turi -> o'quvchilarga kelgan baytlar
         self.msgs_in = Counter()
+        self.host_bytes = 0         # o'qituvchi ekranlariga kelgan "h" xabarlari (eng katta o'yin alohida)
+        self.host_msgs = 0
+        self.big_host_bytes = 0
+        self.big_host_msgs = 0
 
 
 def proc_sample(pid):
@@ -90,7 +110,7 @@ class Player:
         self.state = {}
         self.waiters: list[tuple] = []  # (predikat, future)
         self.reader = None
-        self.avatar = idx % 40
+        self.avatar = idx % AVATAR_COUNT
 
     async def connect(self, session, url):
         self.ws = await session.ws_connect(url, headers={"X-Forwarded-For": self.ip}, max_msg_size=0)
@@ -154,7 +174,12 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
                 break
             m = json.loads(msg.data)
             if m.get("t") == "h":
-                game.host_state = m["d"]
+                st.host_bytes += len(msg.data)
+                st.host_msgs += 1
+                if game.gi == 0:
+                    st.big_host_bytes += len(msg.data)
+                    st.big_host_msgs += 1
+                game.host_state = {**game.host_state, **m["d"]}  # yangilanishlarda o'zgarmas maydonlar yuborilmaydi
                 for item in list(game.host_waiters):
                     pred, fut = item
                     if not fut.done() and pred(m["d"]):
@@ -175,7 +200,7 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
     async def host_send(t, d=None):
         await host.send_str(json.dumps({"t": t, "d": {"phase": game.host_state.get("phase"), "q": game.host_state.get("index"), **(d or {})}}))
 
-    await host.send_str(json.dumps({"t": "host", "d": {"pin": game.pin}}))
+    await host.send_str(json.dumps({"t": "host", "d": hello({"pin": game.pin})}))
     await host_wait(lambda h: True, current=False)
 
     # ------------------------------------------------------------- qo'shilish
@@ -185,9 +210,9 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
         t0 = time.perf_counter()
         fut = p.wait(lambda t, d: t == "w")
         data = {"pin": game.pin, "nick": p.nick}
-        if opts.avatars:
+        if opts.avatars or PROTO == 2:  # v2 da avatar majburiy
             data["av"] = p.avatar
-        await p.send("join", data)
+        await p.send("join", hello(data))
         try:
             t1, _, _ = await fut
             st.lat["join"].append((t1 - t0) * 1000)
@@ -200,7 +225,7 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
 
     async def broadcast(action, want_phase, extra=None):
         """O'qituvchi amali -> har bir o'yinchiga yangi bosqich yetib kelguncha bo'lgan vaqt."""
-        futs = [p.wait(lambda t, d, w=want_phase: t == "s" and PHASE.get(d.get("p")) == w) for p in game.players if p.ws and not p.ws.closed]
+        futs = [p.wait(lambda t, d, w=want_phase: t == "s" and phase_of(d) == w) for p in game.players if p.ws and not p.ws.closed]
         t0 = time.perf_counter()
         await host_send(action, extra)
         res = await asyncio.gather(*futs, return_exceptions=True)
@@ -221,7 +246,7 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
         await p.connect(session, ws_url)
         fut = p.wait(lambda t, d: t == "s")
         t0 = time.perf_counter()
-        await p.send("resume", {"pin": game.pin, "id": p.id, "tok": p.tok})
+        await p.send("resume", hello({"pin": game.pin, "id": p.id, "tok": p.tok}))
         try:
             t1, _, d = await fut
             st.lat["resume"].append((t1 - t0) * 1000)
@@ -231,10 +256,10 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
         except asyncio.TimeoutError:
             st.errors["resume_timeout"] += 1
 
-    await broadcast("start", "intro" if opts.v2 else "read")
+    await broadcast("start", "intro" if PROTO == 2 else "read")
     for qi in range(opts.questions):
         # o'qish bosqichi tugashini kutamiz (server taymeri), so'ng javoblar
-        actives = [p.wait(lambda t, d, q=qi: t == "s" and PHASE.get(d.get("p")) == "active" and d.get("q") == q, timeout=40, current=True) for p in game.players]
+        actives = [p.wait(lambda t, d, q=qi: t == "s" and phase_of(d) == "active" and d.get("q") == q, timeout=40, current=True) for p in game.players]
         res = await asyncio.gather(*actives, return_exceptions=True)
         if any(not isinstance(r, tuple) for r in res):
             st.errors["active_timeout"] += sum(1 for r in res if not isinstance(r, tuple))
@@ -245,7 +270,7 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
             await asyncio.sleep(rnd.uniform(0.2, opts.answer_spread))
             if p in reconnecting:
                 await resume(p)
-            if PHASE.get(p.state.get("p")) != "active" or p.state.get("q") != q:
+            if phase_of(p.state) != "active" or p.state.get("q") != q:
                 st.c["closed_before_answer"] += 1  # savol yopilgan (hamma ulangan o'yinchi javob berdi) — kutilgan holat
                 return
             fut = p.wait(lambda t, d: (t == "s" and d.get("a") is not None and d.get("q") == q) or (t == "e" and d.get("c") == "late"))
@@ -355,6 +380,8 @@ async def main_async(opts, port, pid):
         "studentBytesByType": dict(stats.bytes_in),
         "studentMsgsByType": dict(stats.msgs_in),
         "avgStudentMsgBytes": {t: round(stats.bytes_in[t] / max(1, stats.msgs_in[t]), 1) for t in stats.msgs_in},
+        "host": {"msgs": stats.host_msgs, "bytes": stats.host_bytes, "biggestGameMsgs": stats.big_host_msgs,
+                 "biggestGameBytes": stats.big_host_bytes},
         "server": {"cpuSeconds": round((cpu1 or 0) - (cpu0 or 0), 1), "cpuPercentOfOneCore": round(100 * ((cpu1 or 0) - (cpu0 or 0)) / elapsed, 1),
                    "rssPeakMB": round(rss_peak, 1), "rssEndMB": round(rss_end or 0, 1)},
     }
@@ -370,13 +397,16 @@ def main(argv=None):
     ap.add_argument("--join-spread", type=float, default=3.0, help="o'yinchilar shuncha soniya ichida qo'shiladi")
     ap.add_argument("--answer-spread", type=float, default=3.0)
     ap.add_argument("--reconnect-share", type=float, default=0.1, help="har bir savolda qayta ulanadigan o'yinchilar ulushi")
-    ap.add_argument("--avatars", action="store_true", help="qo'shilishda avatar (v2)")
-    ap.add_argument("--v2", action="store_true", help="v2 protokol (topic intro bosqichi)")
+    ap.add_argument("--avatars", action="store_true", help="qo'shilishda avatar (v2 da har doim yuboriladi)")
+    ap.add_argument("--v1", action="store_true", help="eski (v1) protokol: versiyasiz, avatarsiz — boshlang'ich o'lchov uchun")
+    ap.add_argument("--v2", action="store_true", help="(standart; eski buyruqlar bilan moslik uchun qoldirilgan)")
     ap.add_argument("--port", type=int, default=8798)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--json", type=Path)
     ap.add_argument("--env", action="append", default=[], help="server uchun qo'shimcha muhit o'zgaruvchisi KEY=VALUE")
     opts = ap.parse_args(argv)
+    global PROTO
+    PROTO = 1 if opts.v1 else 2
     tmp = Path(tempfile.mkdtemp(prefix="octagon-load-"))
     env = dict(os.environ, TD_SUPERADMIN_PASSWORD="owner123", TD_TRUST_PROXY="1")
     for kv in opts.env:

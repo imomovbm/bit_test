@@ -82,6 +82,15 @@ async function measure(browser, route, cookie) {
     const [name, value] = cookie.split('=');
     await ctx.addCookies([{ name, value, domain: '127.0.0.1', path: '/', httpOnly: true }]);
   }
+  // Joylashuv siljishi (CLS): sahifa yuklanayotganda elementlar sakrab ketmasligi kerak
+  await ctx.addInitScript(() => {
+    window.__cls = 0;
+    try {
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) if (!e.hadRecentInput) window.__cls += e.value;
+      }).observe({ type: 'layout-shift', buffered: true });
+    } catch { /* eski brauzer */ }
+  });
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
   await cdp.send('Network.enable');
@@ -118,11 +127,13 @@ async function measure(browser, route, cookie) {
       const n = performance.getEntriesByType('navigation')[0];
       const paint = performance.getEntriesByType('paint').find((p) => p.name === 'first-contentful-paint');
       const res = performance.getEntriesByType('resource').map((r) => ({ name: new URL(r.name).pathname, transfer: r.transferSize, encoded: r.encodedBodySize, decoded: r.decodedBodySize }));
-      return { ttfb: n.responseStart, dcl: n.domContentLoadedEventEnd, load: n.loadEventEnd, fcp: paint ? paint.startTime : null, res, docTransfer: n.transferSize };
+      return { ttfb: n.responseStart, dcl: n.domContentLoadedEventEnd, load: n.loadEventEnd, fcp: paint ? paint.startTime : null, res, docTransfer: n.transferSize, cls: window.__cls || 0 };
     });
     page.off('response', onResponse);
     const transferred = nav.docTransfer + nav.res.reduce((a, r) => a + (r.transfer || 0), 0);
-    results.push({ visit, usableMs: Math.round(usable), fcpMs: nav.fcp && Math.round(nav.fcp), dclMs: Math.round(nav.dcl), loadMs: Math.round(nav.load), wallMs: Date.now() - t0, transferredBytes: transferred, resources });
+    // tarmoqqa chiqqan so'rovlar (disk/xotira keshidan olinganlari — transferSize 0 — hisoblanmaydi; 304 hisoblanadi)
+    const networkRequests = (nav.docTransfer > 0 ? 1 : 0) + nav.res.filter((r) => r.transfer > 0).length;
+    results.push({ visit, usableMs: Math.round(usable), fcpMs: nav.fcp && Math.round(nav.fcp), dclMs: Math.round(nav.dcl), loadMs: Math.round(nav.load), wallMs: Date.now() - t0, transferredBytes: transferred, networkRequests, cls: Math.round(nav.cls * 1000) / 1000, resources });
   }
   await ctx.close();
   return { results, errors };
@@ -145,6 +156,8 @@ function summarize(route, runs) {
     coldTransferred: med(cold.map((r) => r.transferredBytes)),
     repeatTransferred: med(repeat.map((r) => r.transferredBytes)),
     repeatRequests: repeat[0].resources.length,
+    repeatNetworkRequests: med(repeat.map((r) => r.networkRequests)),
+    coldCls: Math.max(...cold.map((r) => r.cls)),
     contentEncoding: [...new Set(res.map((r) => r.encoding || '-'))].join(','),
     cacheHeaders: Object.fromEntries(cold[0].resources.filter((r) => ['js', 'css', 'html'].includes(r.kind)).map((r) => [r.url, r.cache || '(none)'])),
     files: res.map((r) => `${r.url} ${r.raw}B gz${r.gz}B`),
@@ -170,7 +183,7 @@ function summarize(route, runs) {
       console.log(`\n${s.route}`);
       console.log(`  JS ${s.js.files} fayl: ${(s.js.raw / 1024).toFixed(1)} KB (gzip ${(s.js.gzip / 1024).toFixed(1)} KB) · CSS ${(s.css.raw / 1024).toFixed(1)} KB (gzip ${(s.css.gzip / 1024).toFixed(1)} KB) · HTML ${(s.html.raw / 1024).toFixed(1)} KB`);
       console.log(`  sovuq: foydalanishga tayyor ${s.coldUsableMs} ms (FCP ${s.coldFcpMs} ms), uzatilgan ${(s.coldTransferred / 1024).toFixed(1)} KB, kodlash: ${s.contentEncoding}`);
-      console.log(`  takroriy: ${s.repeatUsableMs} ms, uzatilgan ${(s.repeatTransferred / 1024).toFixed(1)} KB, ${s.repeatRequests} ta so'rov`);
+      console.log(`  takroriy: ${s.repeatUsableMs} ms, uzatilgan ${(s.repeatTransferred / 1024).toFixed(1)} KB, tarmoqqa ${s.repeatNetworkRequests} ta so'rov (jami ${s.repeatRequests}) · CLS ${s.coldCls}`);
     }
     // API va ochiq ma'lumotlar uchun kesh sarlavhalari
     const headersOf = async (url, cookie) => {
@@ -180,6 +193,8 @@ function summarize(route, runs) {
     };
     const api = [
       await headersOf('/api/auth/me', owner),
+      await headersOf('/api/topics', owner),
+      await headersOf('/api/stats/leaderboard', owner),
       await headersOf('/api/octagon/topics', owner),
       await headersOf('/api/topics/browse?period=hot', owner),
       await headersOf(`/api/octagon/games/${pin}`, owner),

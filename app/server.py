@@ -16,9 +16,10 @@ from aiohttp import WSCloseCode, web
 
 from . import config
 from .api import ensure_superadmin, error_middleware, guard_middleware, routes, session_middleware
+from .assets import REVALIDATE, AssetStore, accepts_gzip, not_modified, respond
 from .db import Database
 from .hub import DuelHub, LoopClock
-from .keys import CSP, DB, HUB, OCTAGON, SOCKETS
+from .keys import ASSETS, CSP, DB, HUB, OCTAGON, SOCKETS
 from .octagon import OctagonHub
 from .ws import octagon_ws_handler, ws_handler
 
@@ -99,12 +100,18 @@ def detect_lan_ip() -> str | None:
 
 async def index(request: web.Request) -> web.StreamResponse:
     # index.html dagi kichik ichki skript (mavzuni tiklash) CSP da xeshi bilan ruxsat etilgan
-    return web.FileResponse(config.STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache", "Content-Security-Policy": request.app[CSP]})
+    store = request.app[ASSETS]
+    return store_page(request, store, "index.html", {"Content-Security-Policy": request.app[CSP]})
 
 
 async def play_page(request: web.Request) -> web.StreamResponse:
     """O'quvchilar sahifasi (/play, /play/PIN): ro'yxatdan o'tmasdan, alohida yengil sahifa (asosiy ilova yuklanmaydi)."""
-    return web.FileResponse(config.STATIC_DIR / "play.html", headers={"Cache-Control": "no-cache"})
+    return store_page(request, request.app[ASSETS], "play.html")
+
+
+def store_page(request: web.Request, store: AssetStore, name: str, headers: dict | None = None) -> web.Response:
+    """HTML qobiq: har doim qayta tekshiriladi (no-cache + ETag/304) — yangi versiya darhol ko'rinadi."""
+    return respond(request, store.page(name), REVALIDATE, headers)
 
 
 async def invite_page(request: web.Request) -> web.Response:
@@ -127,12 +134,39 @@ async def invite_page(request: web.Request) -> web.Response:
 
 DEFAULT_CSP = content_security_policy()
 
+# Hamma foydalanuvchiga bir xil, shaxsiy ma'lumotsiz ro'yxatlar: brauzer saqlashi mumkin, lekin har safar qayta
+# tekshiradi (ETag -> 304, tana qayta yuborilmaydi). Umumiy (CDN/proksi) kesh saqlamaydi: private.
+SHARED_LISTS = frozenset({"/api/topics", "/api/topics/browse", "/api/octagon/topics", "/api/stats/leaderboard"})
+API_PRIVATE = "private, no-store"
+API_SHARED = "private, no-cache"
+GZIP_MIN = 1024  # bundan kichik javoblarni siqish foyda bermaydi
+
+
+@web.middleware
+async def http_cache_middleware(request: web.Request, handler):
+    """API javoblari: kesh sarlavhasi, umumiy ro'yxatlar uchun ETag/304, katta javoblar uchun gzip."""
+    response = await handler(request)
+    if not request.path.startswith("/api/") or type(response) is not web.Response:
+        return response
+    body = response.body if isinstance(response.body, bytes) else None
+    if request.method == "GET" and request.path in SHARED_LISTS and response.status == 200 and body is not None:
+        etag = f'W/"{hashlib.sha256(body).hexdigest()[:20]}"'
+        response.headers["ETag"] = etag
+        response.headers["Cache-Control"] = API_SHARED
+        if not_modified(request, etag):
+            return web.Response(status=304, headers={"ETag": etag, "Cache-Control": API_SHARED, "Vary": "Accept-Encoding"})
+    response.headers.setdefault("Cache-Control", API_PRIVATE)
+    if body is not None and len(body) >= GZIP_MIN and accepts_gzip(request) and "Content-Encoding" not in response.headers:
+        response.enable_compression(web.ContentCoding.gzip)
+        response.headers["Vary"] = "Accept-Encoding"
+    return response
+
 
 async def _response_headers(request: web.Request, response: web.StreamResponse) -> None:
     """Kesh va xavfsizlik sarlavhalari (barcha javoblarga)."""
     headers = response.headers
-    if request.path.startswith(("/js/", "/css/", "/img/")):
-        headers["Cache-Control"] = "no-cache"
+    if request.path.startswith("/api/"):
+        headers.setdefault("Cache-Control", API_PRIVATE)  # foydalanuvchiga xos javob hech qayerda saqlanmasin
     headers.setdefault("X-Content-Type-Options", "nosniff")
     headers.setdefault("X-Frame-Options", "DENY")
     headers.setdefault("Referrer-Policy", "same-origin")
@@ -160,7 +194,7 @@ async def _on_cleanup(app: web.Application) -> None:
 
 def create_app(db_path: Path | str | None = None, lan_url: str | None = None, clock=None) -> web.Application:
     app = web.Application(
-        middlewares=[error_middleware, guard_middleware, session_middleware],
+        middlewares=[http_cache_middleware, error_middleware, guard_middleware, session_middleware],
         client_max_size=config.MAX_UPLOAD_CHARS * 4 + 1024 * 1024,
     )
     db = Database(db_path or config.DB_PATH)
@@ -169,6 +203,7 @@ def create_app(db_path: Path | str | None = None, lan_url: str | None = None, cl
     app[HUB] = DuelHub(db, clock, lan_url=lan_url)
     app[OCTAGON] = OctagonHub(db, clock)
     app[SOCKETS] = set()
+    app[ASSETS] = AssetStore(config.STATIC_DIR, dev=config.DEV)
     app[CSP] = content_security_policy(*inline_scripts((config.STATIC_DIR / "index.html").read_text(encoding="utf-8")))
     app.on_startup.append(_on_startup)
     app.on_shutdown.append(_on_shutdown)
@@ -181,8 +216,7 @@ def create_app(db_path: Path | str | None = None, lan_url: str | None = None, cl
     app.router.add_get("/play", play_page)
     app.router.add_get("/play/{pin}", play_page)
     app.router.add_get("/d/{code}", invite_page)
-    for sub in ("js", "css", "img"):
-        app.router.add_static(f"/{sub}", config.STATIC_DIR / sub)
+    app[ASSETS].add_routes(app)
     return app
 
 

@@ -316,11 +316,13 @@ function onMessage(t, d) {
     case 'reload': // server protokoli yangilangan — eski sahifa jim buzilmasin
       showClosed('reload');
       break;
-    case 'c':
-      pending = null;
-      st.error = '';
-      st.view = 'nick';
-      render();
+    case 'c':  // PIN to'g'ri (ism maydoni oldindan ko'rsatilgan bo'lsa — yozish bo'lmasin deb qayta chizilmaydi)
+      if (pending && pending.t === 'check') pending = null;
+      if (st.view !== 'nick' || st.error) {
+        st.error = '';
+        st.view = 'nick';
+        render();
+      }
       break;
     case 'w':
       pending = null;
@@ -862,7 +864,9 @@ function boot() {
       st.me = me;
       st.view = 'game';
     } else {
-      st.view = 'checking';
+      // Havoladagi PIN: ism maydoni darhol ko'rsatiladi, PIN fonda tekshiriladi (qo'shilishda server baribir tekshiradi;
+      // PIN noto'g'ri yoki o'yin tugagan bo'lsa — xato bilan PIN ekraniga qaytadi). Sekin tarmoqda bir aylanish tejaladi.
+      st.view = 'nick';
       pending = { t: 'check', d: { v: PROTOCOL_VERSION, pin } };
     }
   }

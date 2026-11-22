@@ -67,6 +67,11 @@ SURGE_FAIL_LIMIT = 5                          # hujum paytida bitta IP ga ruxsat
 JOIN_LIMIT, JOIN_WINDOW = 1000, 600          # yangi o'yinchilar: IP bo'yicha, 10 daqiqada (≥ bir necha to'liq sinf bitta NAT ortida)
 MAX_FINISHED_PER_OWNER = 5                    # tugagan (podium) o'yinlar: o'qituvchi uchun xotirada saqlanadigan eng ko'p soni
 HOST_FLUSH = 0.25               # o'qituvchi ekranini yangilash oralig'i (o'quvchilar qo'shilganda, javob berganda)
+HOST_FLUSH_BIG = 1.0            # katta o'yinlarda (HOST_FLUSH_BIG_FROM dan ko'p o'yinchi) — sekundiga ko'pi bilan bir marta
+HOST_FLUSH_BIG_FROM = 40
+# O'yin davomida o'zgarmaydigan maydonlar: o'qituvchi oynasi ulanganda bir marta yuboriladi, keyingi yangilanishlarda
+# takrorlanmaydi (QR kodning o'zi ~3 KB).
+HOST_STATIC = ("qr", "joinUrl", "joinBase", "topicName", "createdAt")
 SWEEP_EVERY = 60.0
 PIN_RE = re.compile(r"^[1-9][0-9]{5}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
@@ -817,7 +822,7 @@ class OctagonHub:
         game.hosts.add(conn)
         self.conn_info[conn] = ("host", game.pin, user["id"])
         self._touch(game)
-        conn.send("h", self.host_state(game))
+        conn.send("h", self.host_state(game))  # to'liq holat (o'zgarmas maydonlar ham)
 
     def drop_host(self, conn, error: OctagonError | None = None) -> None:
         """Boshqaruv oynasini o'yindan uzadi va ulanishni yopadi (4401 — qaytadan tizimga kirish kerak)."""
@@ -896,8 +901,8 @@ class OctagonHub:
             d["top"] = [[x.nick, x.score, x.avatar] for x in self.standings(game)[:3]]
         return d
 
-    def host_state(self, game: Game) -> dict:
-        standings = self.standings(game)
+    def host_state(self, game: Game, full: bool = True) -> dict:
+        """O'qituvchi ekrani holati. full=False — yangilanish: HOST_STATIC maydonlarisiz (mijoz ularni saqlab qoladi)."""
         d = {
             "v": PROTOCOL_VERSION,
             "pin": game.pin,
@@ -932,10 +937,14 @@ class OctagonHub:
             d["question"]["correct"] = game.questions[game.index]["correct"]
             d.update(counts=st["counts"], answered=st["answered"], correctCount=st["correct"])
         if game.phase in (flow.BOARD, flow.PODIUM):
+            standings = self.standings(game)  # saralash faqat kerak bo'lganda
             d["leaderboard"] = [self._row(p, i) for i, p in enumerate(standings[:5])]
-        if game.phase == flow.PODIUM:
-            d["ranking"] = [self._row(p, i) for i, p in enumerate(standings)]
-            d["played"] = len(game.stats)
+            if game.phase == flow.PODIUM:
+                d["ranking"] = [self._row(p, i) for i, p in enumerate(standings)]
+                d["played"] = len(game.stats)
+        if not full:
+            for key in HOST_STATIC:
+                d.pop(key, None)
         return d
 
     def _row(self, p: Player, i: int) -> dict:
@@ -972,14 +981,15 @@ class OctagonHub:
             game.host_timer = None
             self._flush_hosts(game.pin)
         elif game.host_timer is None:
-            game.host_timer = self._later(HOST_FLUSH, self._flush_hosts, game.pin)
+            every = HOST_FLUSH_BIG if len(game.players) > HOST_FLUSH_BIG_FROM else HOST_FLUSH
+            game.host_timer = self._later(every, self._flush_hosts, game.pin)
 
     def _flush_hosts(self, pin: str) -> None:
         game = self.games.get(pin)
         if not game:
             return
         game.host_timer = None
-        state = self.host_state(game)
+        state = self.host_state(game, full=False)
         for c in list(game.hosts):
             c.send("h", state)
 

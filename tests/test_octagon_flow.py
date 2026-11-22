@@ -233,10 +233,10 @@ def test_host_state_carries_absolute_phase_times_and_version(env):
     join(env, game, "Ali")
     host = FakeConn()
     env.hub.handle(host, "host", {"v": PV, "pin": game.pin}, env.owner)
-    assert host.last("h")["v"] == PV and "phaseEnd" not in host.last("h")
+    assert host.last("h")["v"] == PV and "phaseEnd" not in host.last("h") and host.last("h")["topicName"] == "Mavzu"
     act(env, game, "start")
-    h = host.last("h")
-    assert h["phase"] == "topic_intro" and h["topicName"] == "Mavzu" and h["phaseEnd"] - h["phaseStart"] == int(config.OCTAGON_INTRO * 1000)
+    h = host.last("h")  # yangilanish: mavzu nomi (o'zgarmas maydon) ulanishdagi birinchi xabarda kelgan
+    assert h["phase"] == "topic_intro" and "topicName" not in h and h["phaseEnd"] - h["phaseStart"] == int(config.OCTAGON_INTRO * 1000)
     assert "question" not in h  # mavzu kirishida savol hali ko'rsatilmaydi
     env.clock.advance(config.OCTAGON_INTRO)
     h = host.last("h")

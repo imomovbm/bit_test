@@ -42,3 +42,14 @@ def test_avatar_names_cover_every_avatar():
     block, _ = table((ROOT / "static/js/play.js").read_text(encoding="utf-8"))
     names = re.search(r"avatarNames: \[(.*?)\]", block, re.S).group(1)
     assert len(re.findall(r"'([^']+)'", names)) == len(AVATARS)
+
+
+def test_games_panel_names_every_octagon_phase():
+    """«Davom etayotgan o'yinlar» ro'yxati bosqich nomini ko'rsatadi: serverdagi har bir bosqich uchun matn bo'lishi
+    kerak (aks holda ekranda "question_read" kabi ichki nom chiqadi; audit V2-F11)."""
+    from app.octagon_flow import PHASES
+
+    block, _ = table((ROOT / "static/js/views/games.js").read_text(encoding="utf-8"))
+    labels = re.search(r"phase: \{(.*?)\}", block, re.S).group(1)
+    named = set(re.findall(r"(\w+):\s*'[^']+'", labels))
+    assert not set(PHASES) - named, sorted(set(PHASES) - named)

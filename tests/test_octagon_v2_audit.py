@@ -222,3 +222,55 @@ def test_octagon_ui_code_has_no_html_injection_sinks():
         src = f.read_text(encoding="utf-8")
         for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
             assert sink not in src, (f.name, sink)
+
+
+# ---------------------------------------------------- tarmoq yuki (V4)
+def test_static_host_fields_are_sent_once_per_teacher_connection(env):
+    """QR kod (~3 KB), havola va mavzu nomi o'qituvchi oynasi ulanganda bir marta keladi; yangilanishlarda takrorlanmaydi."""
+    game = make_game(env)
+    host = FakeConn()
+    env.hub.handle(host, "host", {"v": PV, "pin": game.pin}, env.owner)
+    first = host.last("h")
+    assert all(k in first for k in octagon.HOST_STATIC) and first["qr"]
+    join(env, game, "Ali")
+    env.clock.advance(1)
+    update = host.last("h")
+    assert update is not first and not any(k in update for k in octagon.HOST_STATIC)
+    assert [p["nick"] for p in update["players"]] == ["Ali"]
+    host2 = FakeConn()  # qayta ulanish / ikkinchi oyna — yana to'liq holat
+    env.hub.handle(host2, "host", {"v": PV, "pin": game.pin}, env.owner)
+    assert all(k in host2.last("h") for k in octagon.HOST_STATIC)
+
+
+def test_client_keeps_the_same_static_host_fields():
+    from pathlib import Path
+    import re as _re
+    js = (Path(__file__).resolve().parent.parent / "static/js/views/octagon.js").read_text(encoding="utf-8")
+    keys = _re.findall(r"'(\w+)'", _re.search(r"const HOST_STATIC = \[(.*?)\];", js).group(1))
+    assert tuple(keys) == octagon.HOST_STATIC
+
+
+def test_big_lobby_updates_teacher_screen_at_most_once_per_second(env):
+    game = make_game(env)
+    host = FakeConn()
+    env.hub.handle(host, "host", {"v": PV, "pin": game.pin}, env.owner)
+    for i in range(octagon.HOST_FLUSH_BIG_FROM):
+        join(env, game, f"Oquvchi {i}", ip=f"10.9.0.{i}")
+    env.clock.advance(1)
+    sent = sum(1 for t, _ in host.msgs if t == "h")
+    for i in range(30):  # katta lobbi: 3 soniyada 30 ta qo'shilish
+        join(env, game, f"Yangi {i}", ip=f"10.9.1.{i}")
+        env.clock.advance(0.1)
+    updates = sum(1 for t, _ in host.msgs if t == "h") - sent
+    assert 2 <= updates <= 4, updates
+    env.clock.advance(1)
+    assert len(host.last("h")["players"]) == octagon.HOST_FLUSH_BIG_FROM + 30
+
+
+def test_small_lobby_still_updates_quickly(env):
+    game = make_game(env)
+    host = FakeConn()
+    env.hub.handle(host, "host", {"v": PV, "pin": game.pin}, env.owner)
+    join(env, game, "Ali")
+    env.clock.advance(octagon.HOST_FLUSH)
+    assert [p["nick"] for p in host.last("h")["players"]] == ["Ali"]

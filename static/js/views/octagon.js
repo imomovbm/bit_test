@@ -492,6 +492,14 @@ function soundOn() {
   }
 }
 
+const HOST_STATIC = ['qr', 'joinUrl', 'joinBase', 'topicName', 'createdAt']; // app/octagon.py: HOST_STATIC
+
+function pick(obj, keys) {
+  const out = {};
+  for (const k of keys) if (obj[k] !== undefined) out[k] = obj[k];
+  return out;
+}
+
 function hostView(root, pinParam) {
   const pin = String(pinParam).replace(/\D/g, '');
   const clock = serverClock();
@@ -577,8 +585,10 @@ function hostView(root, pinParam) {
     play('tick');
   }
 
-  function render(g) {
+  function render(next) {
     const prev = game;
+    // yangilanishlarda o'zgarmas maydonlar (QR, havola, mavzu nomi) yuborilmaydi — oldingisidan olinadi
+    const g = prev && prev.pin === next.pin ? { ...pick(prev, HOST_STATIC), ...next } : next;
     game = g;
     countPill.querySelector('b').textContent = String(g.playerCount);
     countPill.title = T.online(g.connectedCount, g.playerCount);
