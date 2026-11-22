@@ -79,7 +79,9 @@ LIVE_TOPICS_LIMIT = 12                                # "hozir faol mavzular" bo
 SUGGEST_IDLE_DAYS = _int("TD_SUGGEST_IDLE_DAYS", 90)  # shuncha kun o'ynalmagan mavzular o'chirishga tavsiya qilinadi
 
 # ---- Octagon (jonli viktorina) ----
-OCTAGON_READY = _float("TD_OCTAGON_READY", 3.0)    # har bir savol oldidan "tayyorlaning" sanog'i (soniya)
+OCTAGON_INTRO = _float("TD_OCTAGON_INTRO", 5.0)    # «Boshlash»dan keyin mavzu nomi hamma ekranda (bir marta), soniya
+# Savolni o'qish vaqti (matn faqat o'qituvchi ekranida, javob tugmalari yopiq). TD_OCTAGON_READY — eski nomi (v1).
+OCTAGON_READ = _float("TD_OCTAGON_READ", _float("TD_OCTAGON_READY", 5.0))
 OCTAGON_TTL = _float("TD_OCTAGON_TTL", 7200.0)     # shuncha soniya faolsiz qolgan o'yin xotiradan o'chiriladi
 OCTAGON_MAX_SOCKETS = _int("TD_OCTAGON_MAX_SOCKETS", 5000)  # jami ochiq o'quvchi/o'qituvchi ulanishlari
 

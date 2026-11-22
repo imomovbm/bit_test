@@ -1,8 +1,11 @@
-// Octagon — o'qituvchi ekrani (proyektor yoki telefon): sozlash -> lobbi (PIN + QR) -> savol -> natija -> reyting -> podium.
-// O'yin holati serverda: sahifa yangilansa yoki aloqa uzilsa, o'qituvchi o'sha o'yinni boshqarishda davom etadi.
+// Octagon — o'qituvchi ekrani (proyektor yoki telefon): sozlash -> lobbi (PIN + QR) -> mavzu -> savolni o'qish -> savol
+// -> natija -> reyting -> ... -> podium. O'yin holati serverda: sahifa yangilansa yoki aloqa uzilsa, o'qituvchi o'sha
+// o'yinni boshqarishda davom etadi. Sanoqlar serverdagi mutlaq vaqtlardan (phaseStart/phaseEnd) ko'rsatiladi.
 import { h, icon, toast, confirmDialog, spinner, emptyState, beep, confetti } from '../lib.js';
 import { api } from '../api.js';
-import { GAME_NAME, OCTAGON_RING, SHAPES, formatPin, octagonLoader, octagonMark, shapeClass, shapeIcon } from '../octagon/common.js';
+import {
+  GAME_NAME, OCTAGON_RING, PROTOCOL_VERSION, SHAPES, avatarEmoji, formatPin, octagonLoader, octagonMark, serverClock, shapeClass, shapeIcon,
+} from '../octagon/common.js';
 
 const T = {
   back: 'Oʻyinlar',
@@ -35,9 +38,9 @@ const T = {
   closeConfirm: (pin) => `PIN ${formatPin(pin)} oʻyini yopiladi va oʻquvchilar undan chiqariladi.`,
   howTitle: 'Qanday oʻynaladi',
   how: [
-    ['Lobbi', 'Ekranda PIN kod va QR kod chiqadi. Oʻquvchilar telefonda QR kodni skanerlaydi yoki sahifani ochib PIN kiritadi, soʻng ism yozadi — roʻyxatdan oʻtish shart emas.'],
-    ['Boshlash', 'Hamma qoʻshilgach «Boshlash» tugmasini bosing. Siz bosmaguningizcha oʻyin boshlanmaydi; kechikkanlar oʻyin davomida ham qoʻshila oladi.'],
-    ['Savol', 'Savol va javoblar shu ekranda koʻrinadi, oʻquvchilar telefonida esa faqat rangli shakllar. Hamma javob bersa yoki vaqt tugasa, savol yopiladi.'],
+    ['Lobbi', 'Ekranda PIN kod va QR kod chiqadi. Oʻquvchilar telefonda QR kodni skanerlaydi yoki sahifani ochib PIN kiritadi, soʻng ism va avatar tanlaydi — roʻyxatdan oʻtish shart emas.'],
+    ['Boshlash', 'Hamma qoʻshilgach «Boshlash» tugmasini bosing: avval mavzu nomi hamma ekranda koʻrinadi. Siz bosmaguningizcha oʻyin boshlanmaydi; kechikkanlar oʻyin davomida ham qoʻshila oladi.'],
+    ['Savol', 'Har bir savol avval bir necha soniya faqat shu ekranda oʻqiladi, soʻng javoblar ochiladi: oʻquvchilar telefonida rangli shakllar. Hamma javob bersa yoki vaqt tugasa, savol yopiladi.'],
     ['Ball', 'Toʻgʻri javob: 500 ball + tezlik uchun 500 gacha. 0,5 soniyada javob — 1000 ball, vaqt oxirida — 500. Notoʻgʻri yoki javobsiz — 0.'],
     ['Natijalar', 'Har savoldan keyin javoblar taqsimoti va eng yaxshi 5 talik, oxirida — podium.'],
   ],
@@ -63,7 +66,13 @@ const T = {
   settingsLine: (n, t) => `${n} ta savol · har biriga ${t} soniya`,
   timeLocked: 'Vaqt oʻyin boshlangach qulflanadi',
   question: (i, n) => `Savol ${i} / ${n}`,
-  getReady: 'Tayyorlaning…',
+  starting: 'Oʻyin boshlanmoqda…',
+  readHint: 'Savolni oʻqing — javoblar tez orada ochiladi',
+  skipIntro: 'Oʻtkazib yuborish',
+  openAnswers: 'Javoblarni hozir ochish',
+  reloadTitle: 'Sayt yangilandi',
+  reloadText: 'Oʻyinni boshqarishda davom etish uchun sahifani yangilang — oʻyin serverda saqlanadi.',
+  reload: 'Sahifani yangilash',
   answered: (a, n) => `${a}/${n} javob`,
   skip: 'Savolni yakunlash',
   next: 'Keyingi',
@@ -365,7 +374,7 @@ function setupView(root, ctx) {
 }
 
 // ========================================================== o'qituvchi ekrani
-function hostSocket(pin, { onMessage, onStatus }) {
+function hostSocket(pin, clock, { onMessage, onStatus }) {
   let ws = null;
   let retry = 0;
   let timer = 0;
@@ -378,7 +387,8 @@ function hostSocket(pin, { onMessage, onStatus }) {
     sock.onopen = () => {
       retry = 0;
       onStatus('online');
-      sock.send(JSON.stringify({ t: 'host', d: { pin } }));
+      clock.request((t, d) => sock.send(JSON.stringify({ t, d })));
+      sock.send(JSON.stringify({ t: 'host', d: { v: PROTOCOL_VERSION, pin } }));
     };
     sock.onmessage = (ev) => {
       let msg;
@@ -472,11 +482,6 @@ function fmt(n) {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
-function initials(nick) {
-  const parts = String(nick).trim().split(/\s+/).filter(Boolean);
-  return ((parts[0] || '?')[0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
-}
-
 const SOUND_KEY = 'td-octagon-sound';
 
 function soundOn() {
@@ -489,8 +494,8 @@ function soundOn() {
 
 function hostView(root, pinParam) {
   const pin = String(pinParam).replace(/\D/g, '');
+  const clock = serverClock();
   let game = null;
-  let deadline = 0;
   let lastPhaseKey = '';
   let lastBoard = '';
   let alive = true;
@@ -514,7 +519,7 @@ function hostView(root, pinParam) {
   root.append(section);
   paintSound();
 
-  const sock = hostSocket(pin, {
+  const sock = hostSocket(pin, clock, {
     onStatus(s) {
       connPill.hidden = s === 'online';
     },
@@ -522,6 +527,13 @@ function hostView(root, pinParam) {
       if (!alive) return;
       if (t === 'h') {
         render(d);
+      } else if (t === 'sync') {
+        clock.onSync(d);
+        tick();
+      } else if (t === 'reload') { // server yangilangan: eski sahifa jim buzilmasin
+        sock.close();
+        stage.replaceChildren(emptyState('refresh', T.reloadTitle, T.reloadText,
+          h('button.btn.primary', { type: 'button', onclick: () => location.reload() }, icon('refresh', 16), T.reload)));
       } else if (t === 'closed') {
         sock.close();
         showClosed();
@@ -573,7 +585,6 @@ function hostView(root, pinParam) {
     joinLine.replaceChildren(h('span', T.joinAt), h('b', g.joinBase.replace(/^https?:\/\//, '') + '/play'));
     endBtn.hidden = g.phase === 'podium';
     paintLock(g);
-    if (typeof g.remainingMs === 'number') deadline = performance.now() + g.remainingMs;
     const key = `${g.phase}:${g.index}`;
     section.className = `screen oct-host phase-${g.phase}`;
     if (key === lastPhaseKey && prev) {
@@ -582,16 +593,17 @@ function hostView(root, pinParam) {
     }
     lastPhaseKey = key;
     lastBoard = boardKey(g);
-    if (g.phase === 'question') play('tick');
+    if (g.phase === 'question_active') play('tick');
     if (g.phase === 'podium') {
       play('win');
       confetti(themeColors());
     }
     stage.replaceChildren(({
       lobby: lobbyScreen,
-      ready: readyScreen,
-      question: questionScreen,
-      reveal: revealScreen,
+      topic_intro: introScreen,
+      question_read: readScreen,
+      question_active: questionScreen,
+      question_result: revealScreen,
       leaderboard: boardScreen,
       podium: podiumScreen,
     }[g.phase] || (() => spinner()))(g));
@@ -620,7 +632,7 @@ function hostView(root, pinParam) {
       if (count) count.textContent = g.playerCount ? T.playersJoined(g.playerCount) : T.waitingPlayers;
       const timeRow = stage.querySelector('[data-time]');
       if (timeRow) timeRow.replaceWith(lobbyTime(g));
-    } else if (g.phase === 'question') {
+    } else if (g.phase === 'question_active') {
       const a = stage.querySelector('[data-answered]');
       if (a) a.textContent = T.answered(g.answered, g.connectedCount || g.playerCount);
     } else if ((g.phase === 'podium' || g.phase === 'leaderboard') && boardKey(g) !== lastBoard) {
@@ -667,7 +679,7 @@ function hostView(root, pinParam) {
     }
     return h('ul.oct-players', { 'data-players': '' }, g.players.map((p, i) => h(`li.oct-player${p.online ? '' : '.off'}`,
       { title: p.online ? null : `${p.nick} — ${T.offline}` },
-      h(`span.oct-avatar.oc-oct.${shapeClass(i % SHAPES.length)}`, { 'aria-hidden': 'true' }, initials(p.nick)),
+      h(`span.oct-avatar.oc-oct.${shapeClass(i % SHAPES.length)}`, { 'aria-hidden': 'true' }, avatarEmoji(p.av)),
       p.online ? null : h('span.oct-off', { role: 'img', 'aria-label': T.offline }, icon('wifiOff', 14)),
       h('span.oct-player-nick', p.nick),
       h('button.oct-kick', { type: 'button', title: T.kick(p.nick), 'aria-label': T.kick(p.nick), onclick: () => kick(p) }, icon('x', 16)))));
@@ -692,12 +704,22 @@ function hostView(root, pinParam) {
       extra || null);
   }
 
-  function readyScreen(g) {
+  function introScreen(g) {
+    return h('div.oct-intro',
+      h('p.oct-intro-label', T.topic),
+      h('h1.oct-intro-topic', g.topicName),
+      octRing('.big'),
+      h('p.oct-dim', `${T.starting} · ${T.settingsLine(g.total, g.timeLimit)}`),
+      h('div.oct-actions', h('button.btn.ghost', { type: 'button', onclick: () => act('skip') }, icon('skip', 16), T.skipIntro)));
+  }
+
+  function readScreen(g) {
     return h('div.oct-ready',
       qHead(g),
       h('div.oct-qtext', { class: g.question.text.length > 160 ? 'long' : null }, g.question.text),
       octRing('.big'),
-      h('p.oct-dim', T.getReady));
+      h('p.oct-dim', T.readHint),
+      h('div.oct-actions', h('button.btn.ghost', { type: 'button', onclick: () => act('skip') }, icon('skip', 16), T.openAnswers)));
   }
 
   function tiles(g, reveal) {
@@ -743,6 +765,7 @@ function hostView(root, pinParam) {
       g.leaderboard.length
         ? h('ol.oct-rank', g.leaderboard.map((r) => h('li',
           rankBadge(r.rank),
+          h('span.oct-rank-av', { 'aria-hidden': 'true' }, avatarEmoji(r.av)),
           h('span.oct-rank-nick', r.nick),
           r.gained ? h('span.oct-rank-gain', `+${fmt(r.gained)}`) : null,
           h('b.oct-rank-score', fmt(r.score)))))
@@ -759,6 +782,7 @@ function hostView(root, pinParam) {
       g.endedEarly ? h('p.oct-dim.center', `${T.endedEarly} · ${T.played(g.played, g.total)}`) : null,
       top.length ? h('div.oct-podium', order.map((i) => h(`div.oct-step.place-${i + 1}`,
         h(`div.oct-medal.oc-oct.m${i + 1}`, h('b', String(i + 1))),
+        h('span.oct-step-av', { 'aria-hidden': 'true' }, avatarEmoji(top[i].av)),
         h('span.oct-step-nick', top[i].nick),
         h('span.oct-step-score', `${fmt(top[i].score)} ${T.points}`),
         h('div.oct-step-block')))) : h('p.oct-dim.center', T.noPlayers),
@@ -766,6 +790,7 @@ function hostView(root, pinParam) {
         h('summary', T.fullRanking),
         h('ol.oct-rank.compact', g.ranking.map((r) => h('li',
           rankBadge(r.rank),
+          h('span.oct-rank-av', { 'aria-hidden': 'true' }, avatarEmoji(r.av)),
           h('span.oct-rank-nick', r.nick),
           h('span.small.oct-dim', T.correctShort(r.correct)),
           h('b.oct-rank-score', fmt(r.score)))))) : null,
@@ -795,17 +820,19 @@ function hostView(root, pinParam) {
 
   // -------------------------------------------------------------- taymer
   function tick() {
-    if (!game || (game.phase !== 'ready' && game.phase !== 'question')) return;
-    const left = Math.max(0, deadline - performance.now());
-    const secs = game.phase === 'ready' ? Math.max(1, Math.ceil(left / 1000)) : Math.ceil(left / 1000);
+    if (!game || typeof game.phaseEnd !== 'number') return;
+    const left = Math.max(0, game.phaseEnd - clock.now());
+    const span = Math.max(1, game.phaseEnd - (game.phaseStart || game.phaseEnd));
+    const active = game.phase === 'question_active';
+    const secs = active ? Math.ceil(left / 1000) : Math.max(1, Math.ceil(left / 1000));
     for (const n of stage.querySelectorAll('[data-countdown]')) {
       if (n.textContent !== String(secs)) n.textContent = String(secs);
     }
     const ring = stage.querySelector('[data-ring]');
-    if (ring && game.phase === 'question') {
-      const p = Math.min(1, left / (game.timeLimit * 1000));
+    if (ring) {
+      const p = Math.min(1, left / span);
       ring.querySelector('.bar').style.strokeDashoffset = String(100 - p * 100);
-      ring.classList.toggle('low', left < 5000);
+      ring.classList.toggle('low', active && left < 5000);
     }
   }
   const tickTimer = setInterval(tick, 200);
@@ -849,9 +876,12 @@ function hostView(root, pinParam) {
       e.preventDefault();
       toggleFullscreen();
     } else if (e.key === ' ' || e.key === 'Enter') {
-      if (game.phase === 'reveal' || game.phase === 'leaderboard') {
+      if (game.phase === 'question_result' || game.phase === 'leaderboard') {
         e.preventDefault();
         act('next');
+      } else if (game.phase === 'topic_intro' || game.phase === 'question_read') {
+        e.preventDefault();
+        act('skip');
       } else if (game.phase === 'lobby' && game.playerCount) {
         e.preventDefault();
         act('start');

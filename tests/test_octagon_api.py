@@ -1,11 +1,13 @@
 """Octagon: rollar va huquqlar (REST + WebSocket), ommaviy /play sahifasi va haqiqiy WebSocket orqali to'liq o'yin."""
 import asyncio
 import json
+import time
 
 import aiohttp
 from aiohttp.test_utils import TestClient, TestServer
 
 from app import config
+from app import octagon_flow as flow
 from app.server import create_app
 
 QUESTIONS = "\n++++\n".join(
@@ -17,12 +19,14 @@ TEXTS = [f"Savol matni {i}" for i in range(6)] + [f"Variant {x} {i}" for i in ra
 
 
 def test_roles_and_permissions(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "OCTAGON_READY", 0.05)
+    monkeypatch.setattr(config, "OCTAGON_INTRO", 0.05)
+    monkeypatch.setattr(config, "OCTAGON_READ", 0.05)
     asyncio.run(_roles(tmp_path))
 
 
 def test_live_game_over_websocket(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "OCTAGON_READY", 0.05)
+    monkeypatch.setattr(config, "OCTAGON_INTRO", 0.05)
+    monkeypatch.setattr(config, "OCTAGON_READ", 0.05)
     asyncio.run(_live(tmp_path))
 
 
@@ -60,7 +64,7 @@ async def recv(ws, t, timeout=5.0, sink=None):
 async def recv_state(ws, phase, sink=None, timeout=5.0):
     while True:
         d = await recv(ws, "s", timeout, sink)
-        if "__closed__" in d or d["p"] == phase:
+        if "__closed__" in d or flow.PHASES[d["p"]] == phase:  # simda bosqich indeksi
             return d
 
 
@@ -123,10 +127,10 @@ async def _roles(tmp_path):
         assert status == 201
         admin_pin = data["game"]["pin"]
         phone = await guest.ws_connect("/ws/octagon")
-        await phone.send_json({"t": "join", "d": {"pin": admin_pin, "nick": "Talaba"}})
+        await phone.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": admin_pin, "nick": "Talaba"}})
         assert (await recv(phone, "w"))["nick"] == "Talaba"
         status, data = await call(admin2, "POST", f"/api/octagon/games/{admin_pin}/action", {"action": "start"})
-        assert status == 200 and data["game"]["phase"] == "ready"
+        assert status == 200 and data["game"]["phase"] == "topic_intro"
         status, data = await call(admin2, "POST", f"/api/octagon/games/{admin_pin}/action", {"action": "end"})
         assert status == 200 and data["game"]["phase"] == "podium" and data["game"]["endedEarly"] is True
         await phone.close()
@@ -136,7 +140,7 @@ async def _roles(tmp_path):
         # --- WebSocket: oddiy foydalanuvchi va mehmon o'yinni boshqara olmaydi
         for client in (student, guest):
             ws = await client.ws_connect("/ws/octagon")
-            await ws.send_json({"t": "host", "d": {"pin": pin}})
+            await ws.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
             err = await recv(ws, "e")
             assert err["status"] == 403
             for action in ("start", "next", "skip", "end", "kick", "settings", "close"):
@@ -186,7 +190,7 @@ async def _live(tmp_path):
         assert data["game"]["qr"]["path"] and data["game"]["phase"] == "lobby"
 
         host = await teacher.ws_connect("/ws/octagon")
-        await host.send_json({"t": "host", "d": {"pin": pin}})
+        await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
         h = await recv(host, "h")
         assert h["pin"] == pin and h["phase"] == "lobby" and h["players"] == []
 
@@ -195,16 +199,17 @@ async def _live(tmp_path):
         ids = {}
         for phone, nick in zip(phones[:3], ("ali", "vali", "olim")):
             ws = await phone.ws_connect("/ws/octagon")
-            await ws.send_json({"t": "check", "d": {"pin": "000000"}})
+            await ws.send_json({"t": "check", "d": {"v": 2, "pin": "000000"}})
             assert (await recv(ws, "e", sink=sink[nick]))["c"] == "pin"
-            await ws.send_json({"t": "check", "d": {"pin": pin}})
+            await ws.send_json({"t": "check", "d": {"v": 2, "pin": pin}})
             assert (await recv(ws, "c", sink=sink[nick]))["pin"] == pin
-            await ws.send_json({"t": "join", "d": {"pin": pin, "nick": nick.title()}})
+            await ws.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": nick.title()}})
             ids[nick] = await recv(ws, "w", sink=sink[nick])
-            assert (await recv_state(ws, "lobby", sink[nick]))["pl"] >= 1
+            assert ids[nick]["av"] == 0 and ids[nick]["tn"] == "Informatika" and ids[nick]["n"] >= 1  # o'zgarmas ma'lumot — bir marta
+            assert (await recv_state(ws, "lobby", sink[nick]))["sc"] == 0
             socks[nick] = ws
         dup = await phones[3].ws_connect("/ws/octagon")
-        await dup.send_json({"t": "join", "d": {"pin": pin, "nick": "ALI"}})
+        await dup.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": "ALI"}})
         assert (await recv(dup, "e"))["c"] == "taken"
         await dup.close()
 
@@ -215,14 +220,14 @@ async def _live(tmp_path):
 
         await host.send_json({"t": "start", "d": {"phase": "lobby"}})
         for nick in socks:
-            s = await recv_state(socks[nick], "question", sink[nick])
-            assert s["q"] == 0 and s["o"] == 4 and s["t"] == 5000 and 0 < s["r"] <= 5000
+            s = await recv_state(socks[nick], "question_active", sink[nick])
+            assert s["q"] == 0 and s["o"] == 4 and s["pe"] - s["ps"] == 5000 and 0 < s["pe"] - time.time() * 1000 <= 5000
         # Q0: to'g'ri javob A (0). Ali va Vali to'g'ri, Olim xato
         await socks["ali"].send_json({"t": "a", "d": {"q": 0, "o": 0}})
-        assert (await recv_state(socks["ali"], "question", sink["ali"]))["a"] == 0
+        assert (await recv_state(socks["ali"], "question_active", sink["ali"]))["a"] == 0
         await socks["vali"].send_json({"t": "a", "d": {"q": 0, "o": 0}})
         await socks["olim"].send_json({"t": "a", "d": {"q": 0, "o": 3}})
-        results = {n: await recv_state(socks[n], "reveal", sink[n]) for n in socks}
+        results = {n: await recv_state(socks[n], "question_result", sink[n]) for n in socks}
         assert results["ali"]["res"]["ok"] is True and results["olim"]["res"] == {"ok": False, "pts": 0, "co": 0}
         assert 500 <= results["ali"]["res"]["pts"] <= 1000 and results["ali"]["sc"] == results["ali"]["res"]["pts"]
         assert sorted(r["k"] for r in results.values()) == [1, 2, 3]
@@ -231,15 +236,15 @@ async def _live(tmp_path):
         before = results["vali"]["sc"]
         await socks["vali"].close()
         vali2 = await phones[1].ws_connect("/ws/octagon")
-        await vali2.send_json({"t": "resume", "d": {"pin": pin, "id": ids["vali"]["id"], "tok": ids["vali"]["tok"]}})
+        await vali2.send_json({"t": "resume", "d": {"v": 2, "pin": pin, "id": ids["vali"]["id"], "tok": ids["vali"]["tok"]}})
         w = await recv(vali2, "w", sink=sink["vali"])
         s = await recv(vali2, "s", sink=sink["vali"])
         assert w["id"] == ids["vali"]["id"] and w["nick"] == "Vali" and "tok" not in w
-        assert s["p"] == "reveal" and s["sc"] == before and s["res"]["ok"] is True
+        assert flow.PHASES[s["p"]] == "question_result" and s["sc"] == before and s["res"]["ok"] is True
         socks["vali"] = vali2
         # --- o'sha token ikkinchi oynada: yangi ulanish eskisini almashtiradi
         tab2 = await phones[3].ws_connect("/ws/octagon")
-        await tab2.send_json({"t": "resume", "d": {"pin": pin, "id": ids["vali"]["id"], "tok": ids["vali"]["tok"]}})
+        await tab2.send_json({"t": "resume", "d": {"v": 2, "pin": pin, "id": ids["vali"]["id"], "tok": ids["vali"]["tok"]}})
         await recv(tab2, "w")
         kicked = await recv(vali2, "k", sink=sink["vali"])
         assert kicked == {"r": "replaced"}
@@ -253,41 +258,41 @@ async def _live(tmp_path):
         # --- o'qituvchi sahifani yangiladi: boshqaruv saqlanadi
         await host.close()
         host = await teacher.ws_connect("/ws/octagon")
-        await host.send_json({"t": "host", "d": {"pin": pin}})
+        await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
         h = await recv(host, "h")
-        assert h["phase"] == "reveal" and h["counts"] == [2, 0, 0, 1] and h["question"]["correct"] == 0
-        await host.send_json({"t": "next", "d": {"phase": "reveal", "q": 0}})
+        assert h["phase"] == "question_result" and h["counts"] == [2, 0, 0, 1] and h["question"]["correct"] == 0
+        await host.send_json({"t": "next", "d": {"phase": "question_result", "q": 0}})
         h = await recv(host, "h")
         assert h["phase"] == "leaderboard" and [r["nick"] for r in h["leaderboard"]][2] == "Olim"
         await host.send_json({"t": "next", "d": {"phase": "leaderboard", "q": 0}})
         for n in socks:
-            await recv_state(socks[n], "question", sink[n])
+            await recv_state(socks[n], "question_active", sink[n])
 
         # --- kech qo'shilgan o'quvchi (o'yin o'rtasida)
         late = await phones[2].ws_connect("/ws/octagon")  # boshqa telefon
-        await late.send_json({"t": "join", "d": {"pin": pin, "nick": "Kechikkan"}})
+        await late.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": "Kechikkan"}})
         await recv(late, "w", sink=sink["late"])
         s = await recv(late, "s", sink=sink["late"])
-        assert s["p"] == "question" and s["q"] == 1 and s["sc"] == 0 and s["pl"] == 4
+        assert flow.PHASES[s["p"]] == "question_active" and s["q"] == 1 and s["sc"] == 0
         # Q1: to'g'ri — B (1)
         for n, o in (("ali", 1), ("vali", 1), ("olim", 1)):
             await socks[n].send_json({"t": "a", "d": {"q": 1, "o": o}})
         await late.send_json({"t": "a", "d": {"q": 1, "o": 2}})
-        s = await recv_state(late, "reveal", sink["late"])
+        s = await recv_state(late, "question_result", sink["late"])
         assert s["res"] == {"ok": False, "pts": 0, "co": 1} and s["k"] == 4
         # PIN noto'g'ri bo'lgan ikkinchi qo'shilish — o'sha ulanishda rad
         await late.send_json({"t": "a", "d": {"q": 1, "o": 1}})
         assert (await recv(late, "e", sink=sink["late"]))["c"] == "late"
 
         # --- 3-savol, so'ng podium
-        await host.send_json({"t": "next", "d": {"phase": "reveal"}})
+        await host.send_json({"t": "next", "d": {"phase": "question_result"}})
         await host.send_json({"t": "next", "d": {"phase": "leaderboard"}})
         for n in socks:
-            await recv_state(socks[n], "question", sink[n])
-        await recv_state(late, "question", sink["late"])
+            await recv_state(socks[n], "question_active", sink[n])
+        await recv_state(late, "question_active", sink["late"])
         await host.send_json({"t": "skip", "d": {}})  # vaqtni kutmasdan yakunlash
-        await recv_state(late, "reveal", sink["late"])
-        await host.send_json({"t": "next", "d": {"phase": "reveal"}})
+        await recv_state(late, "question_result", sink["late"])
+        await host.send_json({"t": "next", "d": {"phase": "question_result"}})
         await host.send_json({"t": "next", "d": {"phase": "leaderboard"}})
         final = await recv_state(late, "podium", sink["late"])
         assert final["k"] == 4 and len(final["top"]) == 3
@@ -306,12 +311,12 @@ async def _live(tmp_path):
             for raw in raw_msgs:
                 assert len(raw.encode()) < 300, raw
                 msg = json.loads(raw)
-                if msg["t"] == "s" and msg["d"]["p"] in ("lobby", "ready", "question"):
+                if msg["t"] == "s" and flow.PHASES[msg["d"]["p"]] in ("lobby", "topic_intro", "question_read", "question_active"):
                     assert "res" not in msg["d"]
 
         # --- o'yin tugadi: yangi qo'shilish rad etiladi; o'qituvchi o'yinni yopadi
         extra = await phones[3].ws_connect("/ws/octagon")
-        await extra.send_json({"t": "join", "d": {"pin": pin, "nick": "Yangi"}})
+        await extra.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": "Yangi"}})
         assert (await recv(extra, "e"))["c"] == "ended"
         await host.send_json({"t": "close", "d": {}})
         assert (await recv(host, "closed"))["pin"] == pin

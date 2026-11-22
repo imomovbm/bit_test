@@ -70,3 +70,46 @@ export function formatPin(pin) {
   const p = String(pin || '');
   return p.length === 6 ? `${p.slice(0, 3)} ${p.slice(3)}` : p;
 }
+
+// Protokol versiyasi — serverdagi app/octagon.py PROTOCOL_VERSION bilan bir xil. Server boshqa versiyani ko'rsa,
+// "reload" xabarini yuboradi: eski (keshdagi) sahifa jim buzilmaydi, "sahifani yangilang" deydi.
+export const PROTOCOL_VERSION = 2;
+
+// Bosqichlar — app/octagon_flow.PHASES bilan bir xil tartibda (o'quvchilarga bosqich nomi emas, indeksi yuboriladi).
+export const PHASES = ['lobby', 'topic_intro', 'question_read', 'question_active', 'question_result', 'leaderboard', 'podium'];
+
+// Avatarlar — app/octagon.py AVATARS bilan bir xil tartibda (simda faqat indeks; rasm fayllari yo'q).
+export const AVATARS = [
+  '🐶', '🐱', '🐭', '🐹', '🐰', '🐺', '🐻', '🐼', '🐨', '🐯', '🐲', '🐸', '🐵', '🐧', '🐢',
+  '🐙', '🐬', '🐳', '🐝', '🐞', '🍎', '🍉', '🍓', '🍕', '⚽', '🏀', '🚀', '🎈', '🎸', '🌈',
+];
+
+/** Avatar belgisi (emoji matn sifatida — HTML emas). Noma'lum indeks — bo'sh doira. */
+export function avatarEmoji(index) {
+  return Number.isInteger(index) && index >= 0 && index < AVATARS.length ? AVATARS[index] : '○';
+}
+
+/**
+ * Server soati: har bir ulanishda bir marta o'lchanadi (sync). Faqat sanoqni ko'rsatish uchun — hech qanday qaror
+ * (javob qabul qilish, vaqt tugashi) mijoz soatiga bog'liq emas, ularni server hal qiladi.
+ */
+export function serverClock() {
+  let offset = 0;
+  let best = Infinity;
+  return {
+    request(send) {
+      send('sync', { c: Date.now() });
+    },
+    onSync(d) {
+      const now = Date.now();
+      if (!d || typeof d.c !== 'number' || typeof d.s !== 'number') return;
+      const rtt = now - d.c;
+      if (rtt < 0 || rtt > 10000 || rtt > best) return; // eng tez javob — eng aniq farq
+      best = rtt;
+      offset = d.s + rtt / 2 - now;
+    },
+    now() {
+      return Date.now() + offset;
+    },
+  };
+}

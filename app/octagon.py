@@ -1,55 +1,56 @@
 """Octagon — jonli viktorina: o'qituvchi ekrani (proyektor) + o'quvchilar telefonlari.
 
-Oqim: o'qituvchi mavzu va sozlamalarni tanlaydi -> lobbi ochiladi (PIN + QR kod) -> o'quvchilar telefonda PIN va ism
-bilan qo'shiladi (ro'yxatdan o'tmasdan) -> o'qituvchi «Boshlash»ni bosadi -> har bir savol uchun:
-``ready`` (tayyorlaning, config.OCTAGON_READY s) -> ``question`` (savol vaqti) -> ``reveal`` (javoblar taqsimoti va
-to'g'ri javob) -> ``leaderboard`` (top 5) -> ... -> ``podium`` (yakuniy natijalar).
+Oqim (bosqichlar mashinasi — app/octagon_flow.py, vaqtlar — app/config.py): o'qituvchi mavzu va sozlamalarni tanlaydi ->
+lobbi (PIN + QR kod) -> o'quvchilar telefonda PIN, ism va avatar (emoji) bilan qo'shiladi -> o'qituvchi «Boshlash»ni
+bosadi -> ``topic_intro`` (mavzu nomi hamma ekranda, bir marta) -> har bir savol uchun ``question_read`` (savol matni
+faqat o'qituvchi ekranida) -> ``question_active`` (javoblar) -> ``question_result`` -> ``leaderboard`` -> ... -> ``podium``.
 
-Barcha holat serverda (xotirada) saqlanadi — server yagona manba. Hub to'liq sinxron va tashqi dunyo bilan faqat
+Barcha holat serverda (xotirada) — server yagona manba. Hub to'liq sinxron va tashqi dunyo bilan faqat
 ``conn.send(type, data)``, ``conn.close(reason, code)`` va ``clock.call_later(delay, fn, *args)`` orqali bog'lanadi,
 shuning uchun soxta soat bilan testlanadi (tests/test_octagon.py).
 
-O'quvchilarga yuboriladigan xabarlar ataylab juda kichik: savol matni, variantlar matni va (savol tugaguncha) to'g'ri
-javob hech qachon yuborilmaydi — faqat savol raqami, variantlar soni, qolgan vaqt va shaxsiy natija.
+O'quvchilarga yuboriladigan xabarlar ataylab juda kichik: savol matni, variantlar matni va (savol yopilguncha) to'g'ri
+javob hech qachon yuborilmaydi — faqat bosqich kodi, savol raqami, variantlar soni, bosqich vaqtlari va shaxsiy natija.
 
-WebSocket /ws/octagon xabarlari — JSON ``{"t": tur, "d": ma'lumot}``:
-  o'quvchi -> server: check {pin} | join {pin, nick} | resume {pin, id, tok} | a {q, o} | ping
-  server -> o'quvchi: c {pin} | w {pin, id, nick, tok?} | s {holat} | e {c: kod, m: matn} | k {r: sabab} | pong
-  o'qituvchi -> server: host {pin} | start | next | skip | end | kick {id} | settings {timeLimit} | lock {locked} | close
-  server -> o'qituvchi: h {to'liq holat} | closed {pin} | e {c, m, status}
+WebSocket /ws/octagon xabarlari — JSON ``{"t": tur, "d": ma'lumot}``, protokol versiyasi PROTOCOL_VERSION:
+  o'quvchi -> server: sync {c} | check {v, pin} | join {v, pin, nick, av} | resume {v, pin, id, tok} | av {i} | a {q, o} | ping
+  server -> o'quvchi: sync {c, s} | c {pin} | w {v, pin, id, nick, av, tn, n, tok?} | s {holat} | e {c: kod, m: matn}
+                      | k {r: sabab} | reload {v} | pong
+  o'qituvchi -> server: host {v, pin} | start | next | skip | end | kick {id} | settings {timeLimit} | lock {locked} | close
+  server -> o'qituvchi: h {to'liq holat} | closed {pin} | e {c, m, status} | reload {v}
 
-O'quvchi holati ``s``: p — bosqich, q — savol indeksi (0 dan), n — savollar soni, o — variantlar soni,
-r — bosqich tugashiga qolgan ms, t — savol vaqti (ms), a — o'quvchi tanlagan variant, sc — umumiy ball,
-k — o'rin, pl — o'yinchilar soni, res — savol natijasi {ok, pts, co (to'g'ri variant)}, top — podium (top 3).
+O'quvchi holati ``s``: p — bosqich kodi (octagon_flow.PHASES dagi indeks), q — savol indeksi (0 dan), o — variantlar
+soni, ps/pe — bosqich boshlangan/tugaydigan payt (server soati, Unix ms; faqat vaqtli bosqichlarda), a — o'quvchi
+tanlagan variant, sc — umumiy ball, k — o'rin, pl — o'yinchilar soni, res — savol natijasi {ok, pts, co (to'g'ri
+variant)}, top — podium (top 3: [ism, ball, avatar]). Mijoz soatlar farqini bir marta (``sync``) o'lchaydi va sanoqni
+ps/pe dan ko'rsatadi; hech qanday qaror mijoz soatiga bog'liq emas.
 
-Javob vaqti faqat serverda o'lchanadi: savol ochilgan paytdan (server soati) javob serverga yetib kelgan paytgacha.
-Tarmoq kechikishi o'quvchi hisobiga ketadi; server vaqti tugagach kelgan javob qabul qilinmaydi. O'quvchi ekranidagi
-taymer o'lchangan kechikish (ping) bo'yicha biroz oldinroq tugaydi, shuning uchun u server muddatidan kech qolmaydi.
+Javob vaqti faqat serverda o'lchanadi: ``question_active`` boshlangan paytdan (server soati) javob serverga yetib kelgan
+paytgacha (o'qish bosqichi hisobga kirmaydi). Server vaqti tugagach kelgan javob qabul qilinmaydi.
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
 import logging
-import math
 import random
 import re
 import secrets
 import time
 import unicodedata
 from dataclasses import dataclass, field
-from fractions import Fraction
 from typing import Any
 
 from . import config
+from . import octagon_flow as flow
+from .octagon_scoring import calculate_score, standing_key
 from .qr import qr_path
 from .roles import is_teacher
 from .security import RateLimiter
 
 log = logging.getLogger("testduel.octagon")
 
-MAX_POINTS = 1000
-FULL_POINTS_MS = 500            # shundan tez (yoki aynan shu vaqtda) berilgan to'g'ri javob — to'liq ball
+PROTOCOL_VERSION = 2            # o'zgarsa, eski ochiq oynalar "sahifani yangilang" xabarini oladi
 MIN_TIME, MAX_TIME, DEFAULT_TIME = 5, 120, 20   # savol vaqti (soniya)
 MAX_OPTIONS = 4                 # shakllar: sakkizburchak, tomchi, yulduz, plyus (static/js/octagon/common.js)
 MAX_QUESTIONS = 100
@@ -72,27 +73,20 @@ TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 LONG_OPTIONS = ("trim", "skip")  # 4 tadan ko'p variantli savollar: qisqartirish yoki o'tkazib yuborish
 HOST_ACTIONS = ("start", "next", "skip", "end", "kick", "settings", "lock", "close")  # faqat o'yin egasi (WebSocket)
 
+# Avatarlar: oddiy, eski telefonlarda ham bir xil ko'rinadigan emojilar (bitta kod nuqtasi, Unicode ≤ 6.0; teri rangi,
+# bayroq va ZWJ ketma-ketliklari yo'q). Simda faqat indeks yuboriladi; static/js/octagon/common.js dagi AVATARS bilan
+# bir xil tartibda (tests/test_octagon_avatars.py tekshiradi).
+AVATARS = (
+    "🐶", "🐱", "🐭", "🐹", "🐰", "🐺", "🐻", "🐼", "🐨", "🐯", "🐲", "🐸", "🐵", "🐧", "🐢",
+    "🐙", "🐬", "🐳", "🐝", "🐞", "🍎", "🍉", "🍓", "🍕", "⚽", "🏀", "🚀", "🎈", "🎸", "🌈",
+)
 
-# =================================================================== ball
-def calculate_score(is_correct: bool, response_time_ms, timer_ms, max_points: int = MAX_POINTS) -> int:
-    """Bitta savol uchun ball (butun son): to'g'ri javob — 500 + tezlik uchun 500 gacha, noto'g'ri/javobsiz — 0.
 
-    ``score = round((1 - (t / timer) / 2) * max_points)`` — bu yerda t javob vaqti (ms):
-      * t ≤ 500 ms bo'lsa — to'liq ball (t = 0 deb olinadi);
-      * t > timer bo'lsa — t = timer (eng kamida max_points / 2). Vaqti o'tgan javobni o'yin qabul qilmaydi.
-    Hisob aniq kasrlar bilan bajariladi va faqat oxirida bir marta yaxlitlanadi (0.5 — yuqoriga).
-    """
-    if not is_correct:
-        return 0
-    timer = Fraction(timer_ms)
-    if timer <= 0:
-        raise ValueError("timer_ms musbat bo'lishi kerak")
-    t = Fraction(response_time_ms)
-    if t <= FULL_POINTS_MS:
-        t = Fraction(0)
-    t = min(t, timer)
-    exact = (1 - t / timer / 2) * max_points
-    return math.floor(exact + Fraction(1, 2))
+def clean_avatar(value) -> int:
+    """Avatar — faqat ro'yxatdagi indeks (butun son). Emoji matni, kasr, bool, boshqa tur — rad etiladi."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(AVATARS):
+        raise OctagonError("avatar", "Avatar notoʻgʻri — roʻyxatdan tanlang")
+    return value
 
 
 # ============================================================== ismlar
@@ -265,6 +259,7 @@ class Player:
     answers: dict = field(default_factory=dict)   # savol indeksi -> (variant, javob vaqti ms)
     last: dict | None = None       # oxirgi yopilgan savol natijasi {q, ok, pts, co}
     conn: Any = None
+    avatar: int = 0                # AVATARS dagi indeks (qayta ulanganda ham saqlanadi)
 
 
 @dataclass
@@ -280,9 +275,11 @@ class Game:
     join_base: str
     created_ms: int
     trimmed: int = 0
-    phase: str = "lobby"           # lobby | ready | question | reveal | leaderboard | podium
+    phase: str = flow.LOBBY        # octagon_flow.PHASES
     index: int = -1
-    q_open_at: float = 0.0         # savol javoblar uchun ochiladigan/ochilgan payt (server soati)
+    phase_start: float = 0.0       # joriy bosqich boshlangan payt (server monoton soati)
+    phase_end: float | None = None  # vaqtli bosqich tugaydigan payt (topic_intro, question_read, question_active)
+    q_open_at: float = 0.0         # savol javoblar uchun ochilgan payt (question_active boshlanishi)
     deadline: float = 0.0
     timer: Any = None
     host_timer: Any = None
@@ -316,6 +313,16 @@ class OctagonHub:
         self.socket_total = 0
         self._finished = 0
         self._sweep_timer = None
+        # Unix vaqti (ms) = _epoch0 + monoton soat * 1000: mijozlarga mutlaq vaqtlar shu orqali yuboriladi.
+        # Birinchi ishlatilganda hisoblanadi: ilova yig'ilayotganda hodisalar tsikli (loop soati) hali ishlamaydi.
+        self._epoch0: float | None = None
+
+    def wall_ms(self, mono: float | None = None) -> int:
+        """Server monoton soatidagi payt -> Unix vaqti (ms). Mijoz sanoqlari uchun (qarorlar monoton soat bilan)."""
+        now = self.clock.now()
+        if self._epoch0 is None:
+            self._epoch0 = time.time() * 1000 - now * 1000
+        return round(self._epoch0 + (now if mono is None else mono) * 1000)
 
     def _later(self, delay: float, fn, *args):
         """Taymer: xato bo'lsa ham jarayon va boshqa o'yinlar to'xtab qolmaydi (xato jurnalga yoziladi)."""
@@ -346,11 +353,11 @@ class OctagonHub:
 
     # ================================================================ o'qituvchi
     def create_game(self, owner: dict, topic: dict, rows: list[dict], settings: dict, join_base: str) -> Game:
-        mine = [g for g in self.games.values() if g.owner_id == owner["id"] and g.phase != "podium"]
+        mine = [g for g in self.games.values() if g.owner_id == owner["id"] and g.phase != flow.PODIUM]
         if len(mine) >= MAX_GAMES_PER_OWNER:
             raise OctagonError("limit", f"Sizda {len(mine)} ta tugallanmagan oʻyin bor. Avval ularni yakunlang", 409)
         if len(self.games) >= MAX_GAMES:
-            finished = sorted((g for g in self.games.values() if g.phase == "podium"), key=lambda g: g.finished_seq)
+            finished = sorted((g for g in self.games.values() if g.phase == flow.PODIUM), key=lambda g: g.finished_seq)
             if not finished:
                 raise OctagonError("busy", "Serverda oʻyinlar juda koʻp. Birozdan keyin qayta urinib koʻring", 503)
             self.close_game(finished[0].pin, "expired")  # eng eski tugagan o'yin joy bo'shatadi
@@ -411,8 +418,7 @@ class OctagonHub:
         elif action == "next":
             self._next(game)
         elif action == "skip":
-            if game.phase == "question":
-                self._end_question(game)
+            self._skip(game)
         elif action == "end":
             self._end(game)
             if game.pin not in self.games:
@@ -459,39 +465,51 @@ class OctagonHub:
     def _touch(self, game: Game) -> None:
         game.activity = self.clock.now()
 
-    def _set_phase(self, game: Game, phase: str) -> None:
+    def _set_phase(self, game: Game, phase: str, duration: float | None = None) -> None:
+        """Bosqich almashadi: o'tish qonuniyligi tekshiriladi (octagon_flow.TRANSITIONS), eski taymer bekor qilinadi."""
+        flow.check(game.phase, phase)
         _cancel(game.timer)
         game.timer = None
         game.phase = phase
+        game.phase_start = self.clock.now()
+        game.phase_end = game.phase_start + duration if duration is not None else None
         self._touch(game)
 
     def _start(self, game: Game) -> None:
-        if game.phase != "lobby":
+        if game.phase != flow.LOBBY:
             raise OctagonError("phase", "Oʻyin allaqachon boshlangan", 409)
         if not game.players:
             raise OctagonError("empty", "Kamida bitta oʻquvchi qoʻshilishi kerak", 409)
-        self._ready(game, 0)
+        self._set_phase(game, flow.INTRO, config.OCTAGON_INTRO)  # mavzu nomi — bir marta, 1-savoldan oldin
+        game.timer = self._later(config.OCTAGON_INTRO, self._after_intro, game.pin)
+        self._broadcast(game)
 
-    def _ready(self, game: Game, index: int) -> None:
+    def _after_intro(self, pin: str) -> None:
+        game = self.games.get(pin)
+        if game and game.phase == flow.INTRO:
+            self._read(game, 0)
+
+    def _read(self, game: Game, index: int) -> None:
+        """Savolni o'qish: matn faqat o'qituvchi ekranida, javob tugmalari hali yopiq."""
         game.index = index
-        self._set_phase(game, "ready")
-        game.q_open_at = self.clock.now() + config.OCTAGON_READY
-        game.timer = self._later(config.OCTAGON_READY, self._open_question, game.pin, index)
+        self._set_phase(game, flow.READ, config.OCTAGON_READ)
+        game.timer = self._later(config.OCTAGON_READ, self._open_question, game.pin, index)
         self._broadcast(game)
 
     def _open_question(self, pin: str, index: int) -> None:
         game = self.games.get(pin)
-        if not game or game.phase != "ready" or game.index != index:
-            return
-        self._set_phase(game, "question")
-        game.q_open_at = self.clock.now()
-        game.deadline = game.q_open_at + game.time_limit_ms / 1000
-        game.timer = self._later(game.time_limit_ms / 1000, self._timeout, pin, index)
+        if not game or game.phase != flow.READ or game.index != index:
+            return  # o'yin tugagan, o'tkazib yuborilgan yoki boshqa savolga o'tilgan — eski taymer hech narsa qilmaydi
+        limit = game.time_limit_ms / 1000
+        self._set_phase(game, flow.ACTIVE, limit)
+        game.q_open_at = game.phase_start       # javob vaqti shu paytdan o'lchanadi
+        game.deadline = game.q_open_at + limit
+        game.timer = self._later(limit, self._timeout, pin, index)
         self._broadcast(game)
 
     def _timeout(self, pin: str, index: int) -> None:
         game = self.games.get(pin)
-        if game and game.phase == "question" and game.index == index:
+        if game and game.phase == flow.ACTIVE and game.index == index:
             self._end_question(game)
 
     def _end_question(self, game: Game) -> None:
@@ -517,47 +535,57 @@ class OctagonHub:
             p.time_ms += ms
             p.last = {"q": game.index, "ok": ok, "pts": pts, "co": q["correct"]}
         game.stats.append({"counts": counts, "answered": answered, "correct": correct})
-        self._set_phase(game, "reveal")
+        self._set_phase(game, flow.RESULT)
         self._broadcast(game)
 
     def _next(self, game: Game) -> None:
-        if game.phase == "lobby":
+        if game.phase == flow.LOBBY:
             raise OctagonError("phase", "Avval oʻyinni boshlang", 409)
-        if game.phase == "question":
+        nxt = flow.on_next(game.phase, game.index + 1 < len(game.questions))
+        if nxt == flow.RESULT:
             self._end_question(game)
-        elif game.phase == "reveal":
-            self._set_phase(game, "leaderboard")
+        elif nxt == flow.BOARD:
+            self._set_phase(game, flow.BOARD)
             self._broadcast(game)
-        elif game.phase == "leaderboard":
-            if game.index + 1 < len(game.questions):
-                self._ready(game, game.index + 1)
-            else:
-                self._finish(game)
-        # ready / podium: hech narsa (sanoq tugashini kutamiz / o'yin tugagan)
+        elif nxt == flow.READ:
+            self._read(game, game.index + 1)
+        elif nxt == flow.PODIUM:
+            self._finish(game)
+        # topic_intro / question_read / podium: hech narsa (taymer tugaydi yoki «o'tkazib yuborish»)
+
+    def _skip(self, game: Game) -> None:
+        """O'qituvchi mavzu kirishini yoki o'qish vaqtini qisqartiradi, savolni muddatidan oldin yopadi."""
+        nxt = flow.on_skip(game.phase)
+        if nxt == flow.READ:
+            self._read(game, 0)
+        elif nxt == flow.ACTIVE:
+            self._open_question(game.pin, game.index)
+        elif nxt == flow.RESULT:
+            self._end_question(game)
 
     def _end(self, game: Game) -> None:
         """O'yinni muddatidan oldin tugatish. Lobbida — o'yin bekor qilinadi."""
-        if game.phase == "lobby":
+        if game.phase == flow.LOBBY:
             self.close_game(game.pin, "cancelled")
             return
-        if game.phase == "podium":
+        if game.phase == flow.PODIUM:
             return
-        if game.phase == "question":  # shu paytgacha berilgan javoblar hisoblanadi
+        if game.phase == flow.ACTIVE:  # shu paytgacha berilgan javoblar hisoblanadi
             self._end_question(game)
-        elif game.phase == "ready":   # hali ochilmagan savol o'ynalmagan hisoblanadi
+        elif game.phase in (flow.INTRO, flow.READ):   # hali ochilmagan savol o'ynalmagan hisoblanadi
             game.index = len(game.stats) - 1
         game.ended_early = True
         self._finish(game)
 
     def _finish(self, game: Game) -> None:
-        self._set_phase(game, "podium")
+        self._set_phase(game, flow.PODIUM)
         self._broadcast(game)
         top = self.standings(game)[:3]
         log.info("Octagon %s yakunlandi: %s", game.pin, ", ".join(f"{p.nick} {p.score}" for p in top) or "o'yinchilarsiz")
         self._finished += 1
         game.finished_seq = self._finished
         # tugagan o'yinlar xotirada cheksiz to'planmasin: o'qituvchining eng avval tugagan natijalari yopiladi
-        others = sorted((g for g in self.games.values() if g.owner_id == game.owner_id and g.phase == "podium" and g is not game),
+        others = sorted((g for g in self.games.values() if g.owner_id == game.owner_id and g.phase == flow.PODIUM and g is not game),
                         key=lambda g: -g.finished_seq)
         for old in others[MAX_FINISHED_PER_OWNER - 1:]:
             self.close_game(old.pin, "expired")
@@ -576,7 +604,7 @@ class OctagonHub:
         self._broadcast(game)  # o'rinlar o'zgaradi
 
     def _update_settings(self, game: Game, data: dict) -> None:
-        if game.phase != "lobby":
+        if game.phase != flow.LOBBY:
             raise OctagonError("locked", "Oʻyin boshlangan — sozlamalarni oʻzgartirib boʻlmaydi", 409)
         time_limit = data.get("timeLimit")
         if _int(time_limit) is None or not MIN_TIME <= time_limit <= MAX_TIME:
@@ -589,10 +617,19 @@ class OctagonHub:
     # ============================================================ o'quvchilar
     def handle(self, conn, msg_type, data: dict, user: dict | None = None) -> None:
         try:
+            if msg_type in ("check", "join", "resume", "host") and data.get("v") != PROTOCOL_VERSION:
+                # eski (yangilanmagan) sahifa: jim buzilmasin — "sahifani yangilang" xabari
+                conn.send("reload", {"v": PROTOCOL_VERSION})
+                return
             if msg_type == "ping":
                 conn.send("pong", {})
+            elif msg_type == "sync":  # soatlar farqini o'lchash (mijoz faqat sanoqni ko'rsatish uchun ishlatadi)
+                c = data.get("c")
+                conn.send("sync", {"c": c if isinstance(c, (int, float)) and not isinstance(c, bool) else None, "s": self.wall_ms()})
             elif msg_type == "a":
                 self._answer(conn, data)
+            elif msg_type == "av":
+                self._set_avatar(conn, data)
             elif msg_type == "check":
                 game = self._lookup(conn, data.get("pin"))
                 conn.send("c", {"pin": game.pin})
@@ -633,7 +670,7 @@ class OctagonHub:
         if not game:
             self._failed_attempt(ip)
             raise OctagonError("pin", "Bunday PIN bilan oʻyin topilmadi. PIN ni tekshiring", 404)
-        if game.phase == "podium":
+        if not flow.can_join(game.phase):
             self._failed_attempt(ip)  # tugagan o'yinlar PIN larini ham bepul "skanerlab" bo'lmaydi
             raise OctagonError("ended", "Bu oʻyin tugagan", 410)
         if game.locked:
@@ -651,6 +688,7 @@ class OctagonHub:
             nick = clean_nickname(data.get("nick"))
         except NicknameError as e:
             raise OctagonError("nick", str(e))
+        avatar = clean_avatar(data.get("av"))
         key = nickname_key(nick)
         if key in game.banned:
             raise OctagonError("banned", "Bu ism bilan qoʻshilib boʻlmaydi — boshqa ism tanlang", 403)
@@ -662,14 +700,14 @@ class OctagonHub:
         while pid in game.players:
             pid = secrets.token_urlsafe(6)
         token = secrets.token_urlsafe(24)
-        p = Player(id=pid, token_hash=_token_hash(token), nick=nick, key=key, conn=conn)
+        p = Player(id=pid, token_hash=_token_hash(token), nick=nick, key=key, conn=conn, avatar=avatar)
         p.time_ms = len(game.stats) * game.time_limit_ms  # kech qo'shilgan: o'tib ketgan savollar javobsiz hisoblanadi
         game.players[pid] = p
         game.keys[key] = pid
         self.conn_info[conn] = ("player", game.pin, pid)
         self.joins.hit(ip)
         self._touch(game)
-        conn.send("w", {"pin": game.pin, "id": pid, "nick": nick, "tok": token})
+        conn.send("w", {**self._welcome(game, p), "tok": token})
         conn.send("s", self.student_state(game, p))
         self._host_changed(game)
 
@@ -696,11 +734,16 @@ class OctagonHub:
         p.conn = conn
         self.conn_info[conn] = ("player", game.pin, p.id)
         self._touch(game)
-        conn.send("w", {"pin": game.pin, "id": p.id, "nick": p.nick})
+        conn.send("w", self._welcome(game, p))
         conn.send("s", self.student_state(game, p))
         self._host_changed(game)
 
-    def _answer(self, conn, data: dict) -> None:
+    def _welcome(self, game: Game, p: Player) -> dict:
+        """O'quvchiga bir marta (qo'shilish/qayta ulanishda): o'zgarmaydigan ma'lumotlar holat xabarlarida takrorlanmaydi."""
+        return {"v": PROTOCOL_VERSION, "pin": game.pin, "id": p.id, "nick": p.nick, "av": p.avatar,
+                "tn": game.topic_name, "n": len(game.questions)}
+
+    def _player_of(self, conn) -> tuple[Game, Player]:
         info = self.conn_info.get(conn)
         if not info or info[0] != "player":
             raise OctagonError("bad", "Avval oʻyinga qoʻshiling")
@@ -708,10 +751,27 @@ class OctagonHub:
         p = game.players.get(info[2]) if game else None
         if not p:
             raise OctagonError("gone", "Oʻyin topilmadi yoki siz undan chiqarilgansiz", 404)
+        return game, p
+
+    def _set_avatar(self, conn, data: dict) -> None:
+        """Avatarni lobbida (o'yin boshlanguncha) almashtirish mumkin."""
+        game, p = self._player_of(conn)
+        avatar = clean_avatar(data.get("i"))
+        if game.phase != flow.LOBBY:
+            raise OctagonError("started", "Oʻyin boshlangan — avatarni endi oʻzgartirib boʻlmaydi", 409)
+        if avatar != p.avatar:
+            p.avatar = avatar
+            self._touch(game)
+            self._host_changed(game)
+        conn.send("w", self._welcome(game, p))
+
+    def _answer(self, conn, data: dict) -> None:
+        game, p = self._player_of(conn)
         q, choice = _int(data.get("q")), _int(data.get("o"))
-        if game.phase == "ready" and q == game.index:
+        upcoming = 0 if game.phase == flow.INTRO else game.index
+        if game.phase in (flow.INTRO, flow.READ) and q == upcoming:
             raise OctagonError("early", "Savol hali ochilmagan — javob qabul qilinmadi", 409)
-        if game.phase != "question" or q != game.index:
+        if not flow.can_answer(game.phase) or q != game.index:
             raise OctagonError("late", "Bu savol yopilgan — javob qabul qilinmadi", 409)
         if q in p.answers:  # birinchi javob hisoblanadi, takrorlari e'tiborsiz
             conn.send("s", self.student_state(game, p))
@@ -719,7 +779,7 @@ class OctagonHub:
         if choice is None or not 0 <= choice < len(game.questions[q]["options"]):
             raise OctagonError("bad", "Notoʻgʻri javob")
         elapsed = round((self.clock.now() - game.q_open_at) * 1000)
-        if elapsed > game.time_limit_ms:
+        if elapsed > game.time_limit_ms:  # aynan chegaradagi (== taymer) javob qabul qilinadi
             raise OctagonError("late", "Vaqt tugadi — javob qabul qilinmadi", 409)
         p.answers[q] = (choice, max(0, elapsed))
         self._touch(game)
@@ -785,38 +845,46 @@ class OctagonHub:
 
     # ================================================================ holat
     def standings(self, game: Game) -> list[Player]:
-        """Reyting: ball (ko'p), umumiy javob vaqti (kam), ism (alifbo)."""
-        return sorted(game.players.values(), key=lambda p: (-p.score, p.time_ms, p.key, p.id))
+        """Reyting: ball (ko'p), umumiy javob vaqti (kam), ism (alifbo) — octagon_scoring.standing_key."""
+        return sorted(game.players.values(), key=lambda p: standing_key(p.score, p.time_ms, p.key, p.id))
 
     def _ranks(self, game: Game) -> dict[str, int]:
         return {p.id: i + 1 for i, p in enumerate(self.standings(game))}
 
-    def _remaining_ms(self, game: Game) -> int:
-        end = game.q_open_at if game.phase == "ready" else game.deadline
-        return max(0, round((end - self.clock.now()) * 1000))
+    def _times(self, game: Game) -> tuple[int, int] | None:
+        """Vaqtli bosqichning boshlanishi va tugashi — Unix ms (server soati)."""
+        if game.phase_end is None:
+            return None
+        return self.wall_ms(game.phase_start), self.wall_ms(game.phase_end)
 
     def student_state(self, game: Game, p: Player, ranks: dict | None = None) -> dict:
-        """O'quvchiga faqat kerakli minimal ma'lumot: savol matni va variantlar yuborilmaydi."""
-        ranks = ranks if ranks is not None else self._ranks(game)
-        d = {"p": game.phase, "n": len(game.questions), "sc": p.score, "k": ranks.get(p.id, 0), "pl": len(game.players)}
-        if game.phase in ("ready", "question", "reveal", "leaderboard"):
+        """O'quvchiga faqat ekrani uchun kerakli minimal ma'lumot (savol va variant matnlari yuborilmaydi)."""
+        phase = game.phase
+        d = {"p": flow.CODE[phase], "sc": p.score}
+        if phase in flow.WITH_QUESTION:
             d["q"] = game.index
-        if game.phase in ("ready", "question"):
+        if phase in (flow.READ, flow.ACTIVE):
             d["o"] = len(game.questions[game.index]["options"])
-            d["t"] = game.time_limit_ms
-            d["r"] = self._remaining_ms(game)
-        if game.phase in ("question", "reveal", "leaderboard"):
+        times = self._times(game)
+        if times:
+            d["ps"], d["pe"] = times
+        if phase in (flow.ACTIVE, flow.RESULT, flow.BOARD):
             a = p.answers.get(game.index)
             d["a"] = a[0] if a else None
-        if game.phase in ("reveal", "leaderboard") and p.last and p.last["q"] == game.index:
+        if phase in (flow.RESULT, flow.BOARD, flow.PODIUM):
+            ranks = ranks if ranks is not None else self._ranks(game)
+            d["k"] = ranks.get(p.id, 0)
+            d["pl"] = len(game.players)
+        if phase in (flow.RESULT, flow.BOARD) and p.last and p.last["q"] == game.index:
             d["res"] = {"ok": p.last["ok"], "pts": p.last["pts"], "co": p.last["co"]}
-        if game.phase == "podium":
-            d["top"] = [[x.nick, x.score] for x in self.standings(game)[:3]]
+        if phase == flow.PODIUM:
+            d["top"] = [[x.nick, x.score, x.avatar] for x in self.standings(game)[:3]]
         return d
 
     def host_state(self, game: Game) -> dict:
         standings = self.standings(game)
         d = {
+            "v": PROTOCOL_VERSION,
             "pin": game.pin,
             "phase": game.phase,
             "topicName": game.topic_name,
@@ -834,29 +902,31 @@ class OctagonHub:
             "locked": game.locked,
             "createdAt": game.created_ms,
         }
-        if game.phase == "lobby":
-            d["players"] = [{"id": p.id, "nick": p.nick, "online": p.conn is not None} for p in game.players.values()]
-        if game.phase in ("ready", "question", "reveal"):
+        times = self._times(game)
+        if times:
+            d["phaseStart"], d["phaseEnd"] = times
+        if game.phase == flow.LOBBY:
+            d["players"] = [{"id": p.id, "nick": p.nick, "av": p.avatar, "online": p.conn is not None} for p in game.players.values()]
+        if game.phase in (flow.READ, flow.ACTIVE, flow.RESULT):
             q = game.questions[game.index]
             d["question"] = {"text": q["text"], "options": q["options"]}
-        if game.phase in ("ready", "question"):
-            d["remainingMs"] = self._remaining_ms(game)
-        if game.phase == "question":
+        if game.phase == flow.ACTIVE:
             d["answered"] = sum(1 for p in game.players.values() if game.index in p.answers)
-        if game.phase == "reveal":
+        if game.phase == flow.RESULT:
             st = game.stats[game.index]
             d["question"]["correct"] = game.questions[game.index]["correct"]
             d.update(counts=st["counts"], answered=st["answered"], correctCount=st["correct"])
-        if game.phase in ("leaderboard", "podium"):
+        if game.phase in (flow.BOARD, flow.PODIUM):
             d["leaderboard"] = [self._row(p, i) for i, p in enumerate(standings[:5])]
-        if game.phase == "podium":
+        if game.phase == flow.PODIUM:
             d["ranking"] = [self._row(p, i) for i, p in enumerate(standings)]
             d["played"] = len(game.stats)
         return d
 
     def _row(self, p: Player, i: int) -> dict:
         gained = p.last["pts"] if p.last else 0
-        return {"id": p.id, "nick": p.nick, "score": p.score, "gained": gained, "rank": i + 1, "correct": p.correct, "online": p.conn is not None}
+        return {"id": p.id, "nick": p.nick, "av": p.avatar, "score": p.score, "gained": gained, "rank": i + 1, "correct": p.correct,
+                "online": p.conn is not None}
 
     def game_summary(self, game: Game) -> dict:
         return {

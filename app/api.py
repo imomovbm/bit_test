@@ -581,7 +581,7 @@ async def octagon_topics(request: web.Request):
         "limits": {
             "minTime": octagon.MIN_TIME, "maxTime": octagon.MAX_TIME, "defaultTime": octagon.DEFAULT_TIME,
             "maxQuestions": octagon.MAX_QUESTIONS, "defaultQuestions": octagon.DEFAULT_QUESTIONS,
-            "maxOptions": octagon.MAX_OPTIONS, "readySeconds": config.OCTAGON_READY,
+            "maxOptions": octagon.MAX_OPTIONS, "introSeconds": config.OCTAGON_INTRO, "readSeconds": config.OCTAGON_READ,
         },
     })
 

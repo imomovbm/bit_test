@@ -249,7 +249,7 @@ body {
 .pl-count span { position: relative; font-size: clamp(64px, 20vw, 100px); font-weight: 900; font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------- savol (shakllar) */
-#play.pl-phase-question .pl-stage { justify-content: stretch; max-width: 980px; }
+#play.pl-phase-question_active .pl-stage, #play.pl-phase-question_read .pl-stage { justify-content: stretch; max-width: 980px; }
 
 .pl-question, .pl-locked { flex: 1; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 
@@ -395,6 +395,61 @@ body {
 .pl-top3-nick { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
 .pl-top3 b { font-variant-numeric: tabular-nums; }
 
+/* ------------------------------------------------------------------ avatarlar (emoji — rasm fayllarisiz) */
+.pl-avatar { display: inline-grid; place-items: center; flex: none; line-height: 1; font-size: 1.15em; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.pl-avatar.xl { width: 112px; height: 112px; font-size: 64px; border-radius: 32px; background: var(--oc-surface); border: 1px solid var(--oc-line); box-shadow: var(--oc-shadow); }
+.pl-me .pl-avatar { font-size: 22px; }
+.pl-me-big { display: grid; place-items: center; animation: oc-pop 0.25s ease-out; }
+.pl-rank .pl-avatar, .pl-place .pl-avatar { margin-right: 4px; }
+.pl-top3 .pl-avatar { font-size: 22px; }
+
+.pl-join { gap: 10px; }
+.pl-field { display: flex; flex-direction: column; gap: 8px; }
+.pl-label { font-weight: 800; font-size: 15px; color: var(--oc-ink-2); }
+.pl-hint { margin-top: -4px; font-size: 13px; text-align: left; }
+.pl-nick-row { display: flex; align-items: center; gap: 10px; }
+.pl-nick-row .pl-input { flex: 1; min-width: 0; }
+.pl-av-preview { width: 52px; height: 52px; flex: none; display: grid; place-items: center; font-size: 30px; border-radius: 16px; background: var(--oc-surface-2); border: 1px solid var(--oc-line); }
+
+.pl-avatars { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 6px; }
+.pl-av {
+  min-width: 48px;
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 14px;
+  border: 2px solid transparent;
+  background: var(--oc-surface-2);
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.pl-av.on { border-color: var(--oc-focus); background: var(--oc-surface); box-shadow: 0 0 0 2px var(--oc-focus); }
+.pl-av:focus-visible { outline: 3px solid var(--oc-focus); outline-offset: 2px; }
+.pl-picker { max-width: 520px; }
+
+/* --------------------------------------------------- mavzu kirishi va savolni o'qish */
+.pl-intro {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  text-align: center;
+  animation: oc-rise 0.3s ease-out;
+}
+.pl-intro-label { margin: 0; font-weight: 900; font-size: 14px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--oc-ink-2); }
+.pl-intro-topic { margin: 0; max-width: 100%; font-size: clamp(30px, 9vw, 56px); line-height: 1.1; overflow-wrap: anywhere; }
+.pl-reading .pl-read-count .pl-count { width: 64px; }
+.pl-reading .pl-read-count .pl-count span { font-size: 28px; }
+.pl-read-count { margin-left: auto; }
+.pl-read-note { text-align: center; }
+.pl-read-note h1 { margin: 0 0 4px; font-size: clamp(22px, 6vw, 32px); }
+.pl-grid.wait .pl-answer { filter: saturate(0.55) brightness(0.8); cursor: default; animation: none; opacity: 0.75; }
+
 /* telefon yonboshlab ushlanganda (past balandlik) */
 @media (max-height: 480px) {
   :root { --top-h: 46px; }
@@ -403,11 +458,23 @@ body {
   .pl-answer { min-height: 64px; }
   .pl-count, .pl-badge, .pl-medal, .pl-shape.big { width: 96px; }
   .pl-count span, .pl-medal b { font-size: 44px; }
+  .pl-avatar.xl { width: 72px; height: 72px; font-size: 40px; }
 }
 
 @media (min-width: 700px) {
   .pl-grid { gap: 16px; }
   .pl-card { padding: 32px 28px; }
+}
+
+/* tor telefon: yuqori panelda ism ko'rinib tursin (avatar + ism + ball) */
+@media (max-width: 420px) {
+  .pl-top { gap: 6px; }
+  .pl-me { gap: 6px; }
+  .pl-pin { padding: 5px 9px 5px 8px; gap: 6px; }
+  .pl-pin b { font-size: 20px; }
+  .pl-score { padding: 5px 9px; }
+  .pl-score small { display: none; }
+  .pl-nick { max-width: 34vw; }
 }
 
 @media (prefers-reduced-motion: reduce) {
