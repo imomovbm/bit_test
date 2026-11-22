@@ -12,11 +12,13 @@ fix was made and the test passed. Checks for areas that turned out to be correct
 server-side tests are in `tests/test_octagon_v2_audit.py`. The browser checks for F8–F10 run in
 `e2e/octagon.e2e.js`. Line links point to the code as of this report.
 
-**Result: 11 findings, all fixed and covered by tests.**
+**Result: 12 findings, all fixed and covered by tests.**
 
 - **1 high.** F6 was introduced during the v2 work and caught by the browser smoke run before the commit.
-- **4 medium.** F1, F2, F4, F9.
-- **6 low.** F3, F5, F7, F8, F10, F11. F11 was found during the performance pass.
+- **5 medium.** F1, F2, F4, F9, F12.
+- **6 low.** F3, F5, F7, F8, F10, F11.
+
+F11 was found during the performance pass, and F12 by the observability tests in the production-readiness pass.
 
 Limitations that remain by design are listed at the end; no known bug is left unfixed.
 
@@ -34,6 +36,7 @@ Limitations that remain by design are listed at the end; no known bug is left un
 | F8 | Low (UX) | **The typed nickname was lost.** On the join screen, the name field was redrawn from the last saved nickname. The name the student had just typed vanished while the join was in flight, and after a "name taken" error they had to retype it. | The draft is kept in state; after an error the field is focused with the text selected for a quick correction [static/js/play.js:645](../static/js/play.js#L645). The chosen avatar was already kept. | Browser: field empty after "band" (taken) error before the fix, `ali` after; E2E check in `e2e/octagon.e2e.js` |
 | F9 | Medium | **Holding Space or Enter skipped the topic intro and the reading time.** The teacher shortcuts did not ignore keyboard auto-repeat. A slightly long press on Start went lobby → intro → reading → answers within about a second, which defeats the 5 s intro and 5 s reading this version adds. | Auto-repeated key events are ignored; one press is one action [static/js/views/octagon.js:872](../static/js/views/octagon.js#L872). | Browser: before, teacher and students were in `question_active` after one held key; after, still in `topic_intro`. E2E check in `e2e/octagon.e2e.js` |
 | F10 | Low (UI) | **Long topic names pushed the controls off-screen.** The intro always used the full display size. With a 120-character topic name (the maximum), on a phone-width teacher screen the countdown and Skip button ended up 250 px below the fold at 360 px (214 px at 375 px). | Topic names over 40 or 80 characters use a smaller size, on both screens [static/js/play.js:684](../static/js/play.js#L684), [static/css/app.css:1582](../static/css/app.css#L1582), [static/css/play.css:446](../static/css/play.css#L446). The big countdown ring is smaller on narrow teacher screens [static/css/app.css:1671](../static/css/app.css#L1671). | Browser, 360/375/768/1280 px: no horizontal scroll, nothing clipped, countdown and Skip visible without scrolling, PIN visible. Before: Skip 250 px below the fold; after: 46 px above it. E2E check in `e2e/octagon.e2e.js` |
+| F12 | Medium (privacy) | **Account logins and team names in the logs** (outside Octagon, found when the full-game log test was widened to every logger). Registration, superadmin setup, topic and bank edits, admin actions (role, block, new user) and Balloon Pop games logged logins, and Balloon Pop also logged team names. | Every one of those lines now logs user, topic and game ids [app/api.py](../app/api.py). Topic names are content, so they remain. Production runs with the access log off (`access_log=None`), so IPs and URLs are not logged | `tests/test_observability.py::test_full_game_is_measured_and_logs_hold_no_personal_data` (failed on `ustoz_karimova` in "Yangi foydalanuvchi" and "Yangi mavzu") |
 | F11 | Low (i18n) | **Raw phase codes in the Games panel.** The "games in progress" list still used the v1 phase names, so a running v2 game showed its internal phase code (`topic_intro`, `question_read`, …) instead of a label. | Labels for every v2 phase [static/js/views/games.js](../static/js/views/games.js) | `tests/test_i18n_strings.py::test_games_panel_names_every_octagon_phase` (failed with the 4 missing phases) |
 
 ## Checklist coverage (§2 of the v2 spec)

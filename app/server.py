@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import hashlib
 import html
@@ -10,6 +11,7 @@ import mimetypes
 import re
 import socket
 import sys
+import time
 from pathlib import Path
 
 from aiohttp import WSCloseCode, web
@@ -19,8 +21,10 @@ from .api import ensure_superadmin, error_middleware, guard_middleware, routes, 
 from .assets import REVALIDATE, AssetStore, accepts_gzip, not_modified, respond
 from .db import Database
 from .hub import DuelHub, LoopClock
-from .keys import ASSETS, CSP, DB, HUB, OCTAGON, SOCKETS
+from .keys import ASSETS, CSP, DB, HUB, LIFECYCLE, OCTAGON, SOCKETS
+from .observability import ERRORS, METRICS, install_loop_handler, setup_logging
 from .octagon import OctagonHub
+from .ops import Lifecycle, client_error, healthz, load_snapshot, metrics, register_gauges, save_snapshot, snapshot_path
 from .ws import octagon_ws_handler, ws_handler
 
 log = logging.getLogger("testduel")
@@ -143,6 +147,29 @@ GZIP_MIN = 1024  # bundan kichik javoblarni siqish foyda bermaydi
 
 
 @web.middleware
+async def metrics_middleware(request: web.Request, handler):
+    """So'rovlar soni (bo'lim va holat sinfi bo'yicha) va API javob vaqti (p50/p95 — /metrics)."""
+    if request.headers.get("Upgrade", "").lower() == "websocket":
+        return await handler(request)
+    t0 = time.perf_counter()
+    status = 500
+    try:
+        response = await handler(request)
+        status = response.status
+        return response
+    except web.HTTPException as e:
+        status = e.status
+        raise
+    finally:
+        path = request.path
+        area = ("api" if path.startswith("/api/") else "asset" if path.startswith(("/assets/", "/js/", "/css/", "/img/"))
+                else "page" if path == "/" or path.startswith("/play") else "other")
+        METRICS.inc("http_requests_total", area=area, status=f"{status // 100}xx")
+        if area == "api":
+            METRICS.observe("http_api_ms", (time.perf_counter() - t0) * 1000)
+
+
+@web.middleware
 async def http_cache_middleware(request: web.Request, handler):
     """API javoblari: kesh sarlavhasi, umumiy ro'yxatlar uchun ETag/304, katta javoblar uchun gzip."""
     response = await handler(request)
@@ -167,6 +194,8 @@ async def _response_headers(request: web.Request, response: web.StreamResponse) 
     headers = response.headers
     if request.path.startswith("/api/"):
         headers.setdefault("Cache-Control", API_PRIVATE)  # foydalanuvchiga xos javob hech qayerda saqlanmasin
+        # ilova versiyasi: eski ochiq sahifa (boshqa versiya) foydalanuvchiga «sahifani yangilang» deb ko'rsatadi
+        headers.setdefault("X-Release", request.app[ASSETS].release)
     headers.setdefault("X-Content-Type-Options", "nosniff")
     headers.setdefault("X-Frame-Options", "DENY")
     headers.setdefault("Referrer-Policy", "same-origin")
@@ -179,11 +208,29 @@ async def _response_headers(request: web.Request, response: web.StreamResponse) 
 
 
 async def _on_startup(app: web.Application) -> None:
+    install_loop_handler(asyncio.get_running_loop())
     app[DB].purge_sessions()
     ensure_superadmin(app[DB])
+    life = app[LIFECYCLE]
+    if life.snapshot_path is not None:
+        data = load_snapshot(life.snapshot_path, config.OCTAGON_RESTORE_MAX_AGE)
+        if data:
+            app[OCTAGON].restore(data)
 
 
 async def _on_shutdown(app: web.Application) -> None:
+    """To'xtash: yangi o'yinlar qabul qilinmaydi, Octagon o'yinlari diskka yoziladi, mijozlar qayta ulanadi (1012)."""
+    life = app[LIFECYCLE]
+    life.draining = True
+    try:
+        data = app[OCTAGON].shutdown()
+        if life.snapshot_path is not None and config.OCTAGON_RESTORE_MAX_AGE > 0:
+            saved = save_snapshot(life.snapshot_path, data)
+            if saved:
+                log.info("Octagon: %d ta o'yin saqlandi — qayta ishga tushganda davom etadi", saved)
+    except Exception:
+        ERRORS.report("shutdown", "Octagon o'yinlarini saqlab bo'lmadi", exc=True)
+    await asyncio.sleep(0.1)  # Octagon ulanishlariga 1012 yopilish kadrlari yetib borsin
     for ws in list(app[SOCKETS]):
         await ws.close(code=WSCloseCode.GOING_AWAY, message=b"server shutdown")
 
@@ -194,7 +241,7 @@ async def _on_cleanup(app: web.Application) -> None:
 
 def create_app(db_path: Path | str | None = None, lan_url: str | None = None, clock=None) -> web.Application:
     app = web.Application(
-        middlewares=[http_cache_middleware, error_middleware, guard_middleware, session_middleware],
+        middlewares=[metrics_middleware, http_cache_middleware, error_middleware, guard_middleware, session_middleware],
         client_max_size=config.MAX_UPLOAD_CHARS * 4 + 1024 * 1024,
     )
     db = Database(db_path or config.DB_PATH)
@@ -204,6 +251,9 @@ def create_app(db_path: Path | str | None = None, lan_url: str | None = None, cl
     app[OCTAGON] = OctagonHub(db, clock)
     app[SOCKETS] = set()
     app[ASSETS] = AssetStore(config.STATIC_DIR, dev=config.DEV)
+    app[LIFECYCLE] = Lifecycle(release=app[ASSETS].release, snapshot_path=snapshot_path(db_path or config.DB_PATH))
+    ERRORS.configure(url=config.ERROR_WEBHOOK, release=app[ASSETS].release)
+    register_gauges(app)
     app[CSP] = content_security_policy(*inline_scripts((config.STATIC_DIR / "index.html").read_text(encoding="utf-8")))
     app.on_startup.append(_on_startup)
     app.on_shutdown.append(_on_shutdown)
@@ -216,6 +266,9 @@ def create_app(db_path: Path | str | None = None, lan_url: str | None = None, cl
     app.router.add_get("/play", play_page)
     app.router.add_get("/play/{pin}", play_page)
     app.router.add_get("/d/{code}", invite_page)
+    app.router.add_get("/healthz", healthz)
+    app.router.add_get("/metrics", metrics)
+    app.router.add_post("/api/client-errors", client_error)
     app[ASSETS].add_routes(app)
     return app
 
@@ -225,16 +278,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default=config.HOST, help="tinglanadigan manzil (standart: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=config.PORT, help="port (standart: 8080)")
     parser.add_argument("--db", default=str(config.DB_PATH), help="SQLite baza fayli yo'li")
+    parser.add_argument("--check-config", action="store_true", help="sozlamalarni tekshirib, joriy qiymatlarni chiqarish")
     args = parser.parse_args(argv)
     try:
         sys.stdout.reconfigure(errors="replace")
     except Exception:
         pass
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    problems = config.validate()
+    if args.check_config:
+        for env, value, doc in config.describe():
+            print(f"  {env:36s} {value:28s} {doc}")
+        print("\n" + ("Sozlamalarda xato:\n  - " + "\n  - ".join(problems) if problems else "Sozlamalar to'g'ri."))
+        sys.exit(2 if problems else 0)
+    if problems:
+        print("Sozlamalarda xato — server ishga tushirilmadi:\n  - " + "\n  - ".join(problems), file=sys.stderr)
+        sys.exit(2)
+    setup_logging(config.LOG_FORMAT, config.LOG_LEVEL)
     lan_ip = detect_lan_ip()
     lan_url = f"http://{lan_ip}:{args.port}" if lan_ip else None
     app = create_app(db_path=args.db, lan_url=lan_url)
@@ -246,4 +305,5 @@ def main(argv: list[str] | None = None) -> None:
     print(f"  Ma'lumotlar bazasi:     {args.db}")
     print("  To'xtatish: Ctrl+C")
     print()
-    web.run_app(app, host=args.host, port=args.port, print=None, access_log=None)
+    # access_log=None: so'rovlar jurnali (IP, URL dagi PIN) yozilmaydi; ko'rsatkichlar — /metrics
+    web.run_app(app, host=args.host, port=args.port, print=None, access_log=None, shutdown_timeout=config.SHUTDOWN_GRACE)

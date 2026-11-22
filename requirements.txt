@@ -1,1 +1,2 @@
-aiohttp>=3.9,<4
+# 3.14.4 — pip-audit bo'yicha ma'lum zaifliklari yo'q birinchi versiya (eskilarida 17–50 ta ma'lum zaiflik bor).
+aiohttp>=3.14.4,<4

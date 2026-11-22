@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, types, tests, bundle budget, dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest pyflakes mypy pip-audit
+      - name: Lint (pyflakes, ESLint, node --check)
+        run: bash scripts/lint.sh
+      - name: Type-check (mypy, pure modules)
+        run: mypy
+      - name: Config check (defaults are valid)
+        run: python run.py --check-config
+      - name: Tests (pytest)
+        run: python -m pytest -q
+      - name: Bundle-size budget
+        run: python scripts/bundle_budget.py
+      - name: Dependency audit (pip-audit)
+        run: pip-audit -r requirements.txt
+
+  e2e:
+    name: Browser end-to-end (Playwright)
+    runs-on: ubuntu-latest
+    needs: checks
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Octagon E2E (every screen at 360/375/768/1280 px)
+        run: node e2e/octagon.e2e.js
+      - name: Duel lobby E2E
+        run: node e2e/lobby.e2e.js
+      - name: Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: e2e/screenshots/
+          if-no-files-found: ignore

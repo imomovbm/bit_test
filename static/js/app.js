@@ -1,6 +1,7 @@
 // Ilova: marshrutlar (router), umumiy qobiq (sarlavha, menyu) va global hodisalar.
 import { h, icon, logoMark, avatar, toast, confirmDialog, closeAllModals, beep, initAudio, isSoundOn, setSoundOn, fmtClock, confetti, spinner, emptyState } from './lib.js';
-import { api, setUnauthorizedHandler } from './api.js';
+import { api, setUnauthorizedHandler, setNewReleaseHandler } from './api.js';
+import { reportErrors } from './report.js';
 import { live } from './live.js';
 import { authView } from './views/auth.js';
 import { duelView } from './views/duel.js';
@@ -445,6 +446,17 @@ live.on('account', (d) => {
   if (current && !allowed(current.route)) navigate('/duel');
 });
 setUnauthorizedHandler(() => live.emit('unauthorized'));
+reportErrors('app');
+
+// Sayt yangilandi (server boshqa versiyani aytdi): pastda doimiy, xalaqit bermaydigan eslatma — foydalanuvchi o'zi
+// qulay paytda yangilaydi (o'qituvchi o'yin o'rtasida bo'lishi mumkin; yangilansa, o'yin ekrani qayta ulanadi).
+setNewReleaseHandler(() => {
+  if (document.querySelector('.update-banner')) return;
+  document.body.append(h('div.update-banner', { role: 'status' },
+    icon('zap', 18),
+    h('span', 'Sayt yangilandi — yangi versiyani yuklash uchun sahifani yangilang'),
+    h('button.btn.primary.sm', { type: 'button', onclick: () => location.reload() }, 'Yangilash')));
+});
 
 window.addEventListener('beforeunload', (e) => {
   if (inActiveDuel()) {

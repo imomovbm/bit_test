@@ -11,10 +11,13 @@ from aiohttp import WSMsgType, web
 from . import config
 from .api import client_ip
 from .keys import DB, HUB, OCTAGON, SOCKETS, USER
-from .octagon import HOST_ACTIONS
+from .observability import ERRORS, METRICS, timed
+from .octagon import HANDSHAKES, HOST_ACTIONS
 from .security import token_hash
 
 log = logging.getLogger("testduel.ws")
+# ko'rsatkichlarda xabar turlari (cheklangan to'plam — mijoz yuborgan ixtiyoriy satr yorliq bo'lib qolmasin)
+OCTAGON_TYPES = frozenset({*HANDSHAKES, *HOST_ACTIONS, "a", "av", "ping", "sync"})
 
 
 class Conn:
@@ -27,10 +30,12 @@ class Conn:
         self.ip = "?"
         self.session: str | None = None  # sessiya tokenining xeshi (o'qituvchi oynasi uchun)
         self._separators = (",", ":") if compact else None
+        self.kind = "octagon" if compact else "duel"
 
     def send(self, msg_type: str, data) -> None:
         if not self.closed:
             self.queue.put_nowait(json.dumps({"t": msg_type, "d": data}, ensure_ascii=False, separators=self._separators))
+            METRICS.inc("ws_out_total", ws=self.kind)
 
     def close(self, reason: str = "closed", code: int = 4401) -> None:
         """Ulanishni server tomonidan yopish (navbatdagi xabarlar yuborilgandan keyin).
@@ -70,9 +75,9 @@ async def _finish(request: web.Request, ws, conn: Conn, writer: asyncio.Task) ->
         writer.cancel()
 
 
-FLOOD_WINDOW = 10.0     # soniya
-FLOOD_LIMIT = 60        # /ws/octagon: shu oraliqda ko'pi bilan shuncha xabar (javoblar, ping, qo'shilish urinishlari)
-DUEL_FLOOD_LIMIT = 120  # /ws: shu oraliqda ko'pi bilan shuncha xabar (javoblar, lobbi, ping)
+FLOOD_WINDOW = config.WS_FLOOD_WINDOW     # soniya
+FLOOD_LIMIT = config.WS_OCTAGON_FLOOD_LIMIT        # /ws/octagon: shu oraliqda ko'pi bilan shuncha xabar (javoblar, ping, qo'shilish urinishlari)
+DUEL_FLOOD_LIMIT = config.WS_DUEL_FLOOD_LIMIT  # /ws: shu oraliqda ko'pi bilan shuncha xabar (javoblar, lobbi, ping)
 
 
 async def ws_handler(request: web.Request) -> web.StreamResponse:
@@ -111,7 +116,7 @@ async def ws_handler(request: web.Request) -> web.StreamResponse:
                 try:
                     hub.handle(user["id"], conn, data.get("t"), payload if isinstance(payload, dict) else {})
                 except Exception:
-                    log.exception("Xabarni qayta ishlashda xato: %r", data.get("t"))
+                    ERRORS.report("duel_ws", "Duel xabarini qayta ishlashda xato", exc=True)
             elif msg.type == WSMsgType.ERROR:
                 break
     finally:
@@ -129,7 +134,7 @@ async def octagon_ws_handler(request: web.Request) -> web.StreamResponse:
     ip = client_ip(request)
     if not hub.socket_opened(ip):
         return web.json_response({"error": "Bu tarmoqdan juda ko'p ulanish"}, status=429)
-    ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=4096)
+    ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=config.WS_OCTAGON_MAX_MESSAGE)
     try:
         await ws.prepare(request)
     except Exception:
@@ -163,10 +168,13 @@ async def octagon_ws_handler(request: web.Request) -> web.StreamResponse:
                 msg_type, payload = data.get("t"), data.get("d")
                 # o'qituvchi amallari: sessiya har safar bazadan qayta tekshiriladi (chiqilgan/parol tiklangan bo'lishi mumkin)
                 user = db.session_user(conn.session) if conn.session and msg_type in ("host", *HOST_ACTIONS) else None
+                known = msg_type if msg_type in OCTAGON_TYPES else "other"
+                METRICS.inc("ws_in_total", ws="octagon", t=known)
                 try:
-                    hub.handle(conn, msg_type, payload if isinstance(payload, dict) else {}, user)
+                    with timed("octagon_handle_ms"):
+                        hub.handle(conn, msg_type, payload if isinstance(payload, dict) else {}, user)
                 except Exception:
-                    log.exception("Octagon xabarida xato: %r", data.get("t"))
+                    ERRORS.report("octagon_ws", f"Octagon xabarida xato: {known}", exc=True, t=known)
             elif msg.type == WSMsgType.ERROR:
                 break
     finally:

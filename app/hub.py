@@ -45,6 +45,7 @@ from typing import Any
 from . import config
 from .catalog import TopicCatalog
 from .roles import is_admin
+from .observability import ERRORS
 from .security import RateLimiter
 
 log = logging.getLogger("testduel.hub")
@@ -355,7 +356,7 @@ class DuelHub:
         try:
             self.db.touch_user(uid)
         except Exception:  # statistika uchun — xato o'yinni to'xtatmasin
-            log.exception("last_seen yozilmadi")
+            ERRORS.report("duel", "last_seen yozilmadi", exc=True)
 
     def handle(self, user_id: int, conn, msg_type, data: dict) -> None:
         try:
@@ -511,7 +512,7 @@ class DuelHub:
         try:
             return self.db.recent_topics(uid, limit)
         except Exception:
-            log.exception("Oxirgi mavzularni o'qib bo'lmadi")
+            ERRORS.report("duel", "Oxirgi mavzularni o'qib bo'lmadi", exc=True)
             return []
 
     def _open_seek(self, uid: int, topic_id: int | None) -> Seek:
@@ -791,7 +792,7 @@ class DuelHub:
             if self._sweeps % MAINTENANCE_EVERY == 0:
                 self.maintenance()
         except Exception:
-            log.exception("Lobbini tozalashda xato")
+            ERRORS.report("duel", "Lobbini tozalashda xato", exc=True)
         finally:
             if self.conns or self.seeks or self.duels:
                 self._ensure_sweep()
@@ -808,7 +809,7 @@ class DuelHub:
                 if changed:
                     self.topics_changed()
         except Exception:
-            log.exception("Xizmat ishlarida xato")
+            ERRORS.report("duel", "Xizmat ishlarida xato", exc=True)
 
     # =============================================================== duels
     def _start_duel(self, a: int, b: int, topic_id: int) -> None:
@@ -853,7 +854,7 @@ class DuelHub:
             self.db.record_duel_start(duel.topic_id, duel.order, now_ms())
             self.catalog.activity_changed()
         except Exception:
-            log.exception("Mavzu faolligini yozishda xato")
+            ERRORS.report("duel", "Mavzu faolligini yozishda xato", exc=True)
         for p in duel.players.values():
             self._ask(duel, p)
 
@@ -1032,7 +1033,7 @@ class DuelHub:
                 finished_at=now_ms(),
             )
         except Exception:  # natijani saqlab bo'lmasa ham o'yinchilar natijani ko'rsin
-            log.exception("Duel natijasini saqlashda xato")
+            ERRORS.report("duel", "Duel natijasini saqlashda xato", exc=True)
         log.info("Duel %s tugadi: #%d %d:%d #%d, sabab=%s", duel.id, a.user_id, a.correct, b.correct, b.user_id, reason)
         for p in (a, b):
             payload = self._result_payload(duel, p, duel.other(p.user_id), winner, reason)

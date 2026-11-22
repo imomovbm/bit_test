@@ -16,7 +16,7 @@ from app import config, octagon
 from app import ws as ws_mod
 from app.keys import DB, OCTAGON
 from app.server import create_app
-from test_octagon_api import QUESTIONS, call, recv
+from test_octagon_api import QUESTIONS, call, recv, recv_state
 
 EVIL = "https://evil.example"
 
@@ -325,46 +325,98 @@ def test_concurrent_join_same_nick_and_concurrent_resume(tmp_path):
     asyncio.run(body())
 
 
-def test_server_restart_loses_running_games_cleanly(tmp_path):
-    async def body():
-        server = TestServer(create_app(db_path=tmp_path / "restart.db"))
-        await server.start_server()
-        owner, phone_client = TestClient(server), TestClient(server)
+async def _restart_scenario(tmp_path, keep):
+    """Server ishlayotgan o'yin paytida to'xtaydi va qayta ishga tushadi (o'sha baza)."""
+    server = TestServer(create_app(db_path=tmp_path / "restart.db"))
+    await server.start_server()
+    owner, phone_client = TestClient(server), TestClient(server)
+    for c in (owner, phone_client):
+        await c.start_server()
+    await call(owner, "POST", "/api/auth/register", {"login": "admin", "password": "1234"})
+    tid = (await call(owner, "POST", "/api/admin/topics", {"name": "Informatika", "content": QUESTIONS}))[1]["topic"]["id"]
+    body = {"topicId": tid, "timeLimit": 20, "shuffleQuestions": False, "shuffleAnswers": False}  # 1-savol: to'g'risi A
+    pin = (await call(owner, "POST", "/api/octagon/games", body))[1]["game"]["pin"]
+    phone = await phone_client.ws_connect("/ws/octagon")
+    await phone.send_json({"t": "join", "d": {"v": 2, "av": 7, "pin": pin, "nick": "Ali"}})
+    me = await recv(phone, "w")
+    host = await owner.ws_connect("/ws/octagon")
+    await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
+    await recv(host, "h")
+    await host.send_json({"t": "start", "d": {}})
+    s = await recv_state(phone, "question_active")
+    await phone.send_json({"t": "a", "d": {"q": s["q"], "o": 0}})
+    res = await recv_state(phone, "question_result")
+    assert res["sc"] > 0
+    closing = asyncio.ensure_future(drain(phone, 5))
+    await server.close()
+    code = await closing
+    await owner.close()
+    await phone_client.close()
+    snapshot = tmp_path / "restart.octagon.json"
+    assert snapshot.exists() == keep and (not keep or oct(snapshot.stat().st_mode & 0o777) == "0o600")
+
+    server = TestServer(create_app(db_path=tmp_path / "restart.db"))
+    await server.start_server()
+    owner, phone_client = TestClient(server), TestClient(server)
+    try:
         for c in (owner, phone_client):
             await c.start_server()
-        await call(owner, "POST", "/api/auth/register", {"login": "admin", "password": "1234"})
-        tid = (await call(owner, "POST", "/api/admin/topics", {"name": "Informatika", "content": QUESTIONS}))[1]["topic"]["id"]
-        pin = (await call(owner, "POST", "/api/octagon/games", {"topicId": tid, "timeLimit": 20}))[1]["game"]["pin"]
+        assert not snapshot.exists()  # bir marta tiklanadi — fayl o'chiriladi
+        assert (await call(owner, "POST", "/api/auth/login", {"login": "admin", "password": "1234"}))[0] == 200
+        games = (await call(owner, "GET", "/api/octagon/games"))[1]["games"]
+        host = await owner.ws_connect("/ws/octagon")
+        await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
         phone = await phone_client.ws_connect("/ws/octagon")
-        await phone.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": "Ali"}})
-        me = await recv(phone, "w")
-        closing = asyncio.ensure_future(drain(phone, 5))
-        await server.close()  # server to'xtadi: ulanishlar "1001 going away" bilan yopiladi
-        assert await closing == 1001
+        await phone.send_json({"t": "resume", "d": {"v": 2, "pin": pin, "id": me["id"], "tok": me["tok"]}})
+        return code, games, host, phone, me, res["sc"]
+    except Exception:
         await owner.close()
         await phone_client.close()
+        await server.close()
+        raise
 
-        server = TestServer(create_app(db_path=tmp_path / "restart.db"))
-        await server.start_server()
-        owner, phone_client = TestClient(server), TestClient(server)
+
+@pytest.fixture
+def quick_phases(monkeypatch):
+    monkeypatch.setattr(config, "OCTAGON_INTRO", 0.05)
+    monkeypatch.setattr(config, "OCTAGON_READ", 0.05)
+
+
+def test_server_restart_keeps_running_games(tmp_path, quick_phases):
+    """To'xtashda o'yinlar diskka yoziladi va qayta ishga tushganda tiklanadi: o'qituvchi va o'quvchi avtomatik qayta
+    ulanib, o'sha bosqich, ism, avatar va ball bilan davom etadi (docs/runbook.md)."""
+    async def body():
+        code, games, host, phone, me, score = await _restart_scenario(tmp_path, keep=True)
         try:
-            for c in (owner, phone_client):
-                await c.start_server()
-            assert (await call(owner, "POST", "/api/auth/login", {"login": "admin", "password": "1234"}))[0] == 200
-            assert (await call(owner, "GET", "/api/octagon/games"))[1]["games"] == []  # o'yinlar xotirada edi — yo'qoldi
-            host = await owner.ws_connect("/ws/octagon")
-            await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
-            assert (await recv(host, "e"))["c"] == "notfound"  # o'qituvchi ekrani: «O'yin topilmadi»
-            phone = await phone_client.ws_connect("/ws/octagon")
-            await phone.send_json({"t": "resume", "d": {"v": 2, "pin": pin, "id": me["id"], "tok": me["tok"]}})
-            assert (await recv(phone, "e"))["c"] == "gone"  # o'quvchi: joy topilmadi -> PIN ni qayta tekshiradi
-            await phone.send_json({"t": "check", "d": {"v": 2, "pin": pin}})
-            assert (await recv(phone, "e"))["c"] == "pin"
+            assert code == 1012  # "xizmat qayta ishga tushmoqda" — mijozlar qayta ulanadi
+            assert [g["phase"] for g in games] == ["question_result"]
+            h = await recv(host, "h")
+            assert h["phase"] == "question_result" and h["playerCount"] == 1 and h["qr"]
+            w = await recv(phone, "w")
+            s = await recv(phone, "s")
+            assert (w["id"], w["nick"], w["av"]) == (me["id"], "Ali", 7) and s["sc"] == score
+            await host.send_json({"t": "next", "d": {}})   # o'yin davom etadi
+            assert (await recv_state(phone, "leaderboard"))["sc"] == score
         finally:
-            await owner.close()
-            await phone_client.close()
-            await server.close()
+            await host.close()
+            await phone.close()
+    asyncio.run(body())
 
+
+def test_server_restart_without_saved_state_loses_games_cleanly(tmp_path, monkeypatch, quick_phases):
+    """Tiklash o'chirilgan (TD_OCTAGON_RESTORE_MAX_AGE=0) yoki fayl eskirgan: o'yinlar yo'qoladi, lekin hamma tushunarli
+    xabar oladi (o'qituvchi — «o'yin topilmadi», o'quvchi — PIN ni qayta tekshiradi)."""
+    monkeypatch.setattr(config, "OCTAGON_RESTORE_MAX_AGE", 0.0)
+
+    async def body():
+        code, games, host, phone, _, _ = await _restart_scenario(tmp_path, keep=False)
+        try:
+            assert code == 1012 and games == []
+            assert (await recv(host, "e"))["c"] == "notfound"
+            assert (await recv(phone, "e"))["c"] == "gone"
+        finally:
+            await host.close()
+            await phone.close()
     asyncio.run(body())
 
 

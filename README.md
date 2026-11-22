@@ -50,22 +50,34 @@ ichki nomlar — `/api/octagon`, `app/octagon.py` — o'zgarmaydi).
   bilan qaytishi mumkin). **«Qo'shilish ochiq / yopiq»** tugmasi yangi o'quvchilar qo'shilishini to'xtatadi (o'yindagilar
   qayta ulana oladi). Savol vaqtini lobbida o'zgartirish mumkin, o'yin boshlangach u qulflanadi (server ham
   tekshiradi).
-- O'yin faqat **Boshlash** bosilganda boshlanadi. Har bir savol: «tayyorlaning» (3 s) → savol (savol matni va
-  variantlar rang + shakl bilan) → natija (javoblar taqsimoti, to'g'ri javob) → eng yaxshi 5 talik → keyingi savol →
-  yakunda podium. Hamma javob bersa, savol vaqt tugashini kutmasdan yopiladi. «Savolni yakunlash» va «Tugatish»
-  (muddatidan oldin yakuniy natijalar) tugmalari bor. Probel/Enter — keyingi bosqich, F — to'liq ekran.
+- O'yin faqat **Boshlash** bosilganda boshlanadi. Bosqichlar (server boshqaradi, vaqtlar — `app/config.py`):
+  `lobby → topic_intro (5 s) → question_read (5 s) → question_active (savol vaqti) → question_result → leaderboard →
+  (keyingi savolni o'qish …) → podium`.
+  - **Mavzu** (`topic_intro`, bir marta): mavzu nomi o'qituvchi va barcha o'quvchilar ekranida, sanoq bilan.
+  - **O'qish** (`question_read`, har savol oldidan 5 s): savol matni **faqat o'qituvchi ekranida**; o'quvchilarda —
+    rangli shakllar va sanoq, tugmalar hali bosilmaydi.
+  - **Javoblar** (`question_active`): tugmalar ochiladi, taymer shu paytdan boshlanadi (ball ham shu paytdan o'lchanadi).
+  - Natija (javoblar taqsimoti, to'g'ri javob) → eng yaxshi 5 talik → keyingi savol → yakunda podium.
+  Hamma javob bersa, savol vaqt tugashini kutmasdan yopiladi. «O'tkazib yuborish» (mavzu va o'qish bosqichlari),
+  «Savolni yakunlash» va «Tugatish» (muddatidan oldin yakuniy natijalar) tugmalari bor. Probel/Enter — keyingi bosqich
+  (bosib turilsa ham bitta amal), F — to'liq ekran. Bosqich boshlanishi va tugashi server vaqtida (Unix ms) yuboriladi;
+  ekranlar soatlar farqini bir marta o'lchab, sanoqni shundan ko'rsatadi — qarorlar faqat serverda.
 - PIN o'qituvchi va o'quvchi ekranining tepasida doim ko'rinib turadi. O'qituvchi sahifani yangilasa yoki aloqa uzilsa,
   o'sha o'yinni boshqarishda davom etadi.
 
-**O'quvchi** (ro'yxatdan o'tmasdan): QR kodni skanerlaydi yoki `sayt/play` ni ochib PIN kiritadi, so'ng faqat ism
-yozadi.
+**O'quvchi** (ro'yxatdan o'tmasdan): QR kodni skanerlaydi yoki `sayt/play` ni ochib PIN kiritadi, so'ng ism yozadi va
+**avatar** tanlaydi (30 ta oddiy emoji: hayvonlar, mevalar, sport, buyumlar; bittasi tasodifiy tanlangan bo'ladi).
+- Avatar lobbida almashtirilishi mumkin (o'yin boshlangach — yo'q), ism yonida hamma joyda ko'rinadi (lobbi, o'quvchi
+  ekrani, natija, reyting, podium, o'qituvchi ekranlari), qayta ulanganda saqlanadi. Server faqat ro'yxatdagi
+  indeksni qabul qiladi (simda emoji emas, raqam); bir xil avatar bir nechta o'quvchida bo'lishi mumkin.
 - Ism: 1–20 belgi, o'yinda yagona (katta-kichik harf va o'xshash harflar hisobga olinmaydi); HTML, ko'rinmas belgilar,
   emoji va oddiy so'kinishlar filtrlanadi.
 - Kech qo'shilish mumkin (o'yin o'rtasida ham) — 0 ball bilan joriy savoldan davom etadi.
 - Telefonda **faqat rangli shakllar** (qizil sakkizburchak, ko'k tomchi, sariq yulduz, yashil plyus) — savol va javob
-  matni yuborilmaydi. Serverdan faqat savol raqami, variantlar soni, qolgan vaqt va shaxsiy natija keladi (xabarlar
-  ~100 bayt); to'g'ri javob savol yopilgandan keyingina yuboriladi. O'quvchi sahifasi asosiy ilovani yuklamaydi
-  (jami ~49 KB, gzip bilan ~16 KB; rasm, shrift va kutubxonalarsiz).
+  matni yuborilmaydi. Serverdan faqat bosqich, savol raqami, variantlar soni, server vaqtlari va shaxsiy natija keladi
+  (o'rtacha ~85 bayt); to'g'ri javob savol yopilgandan keyingina yuboriladi. O'quvchi sahifasi asosiy ilovani
+  yuklamaydi: JS ~13 KB, CSS ~7 KB (gzip); sekin 4G va o'rta telefonda ~0,7 s da, takroriy ochilishda ~0,45 s da
+  tayyor ([docs/performance.md](docs/performance.md)).
 - Har savoldan keyin: to'g'ri/noto'g'ri, olingan ball, umumiy ball va o'rin.
 - Birinchi qo'shilishda server o'yinchi ID va maxfiy token beradi — ular brauzerda (localStorage, bo'lmasa cookie)
   PIN bo'yicha saqlanadi. Sahifa yangilansa, aloqa uzilsa yoki oyna yopilib qayta ochilsa — o'sha o'yinchi (ism, ball,
@@ -97,17 +109,26 @@ oddiy signal tovushlari).
 (standart: to'g'ri javob + tasodifiy 3 ta noto'g'ri variant) yoki **o'yinga olmaslik**. 2 variantli (ha/yo'q) savollar
 2 ta katta tugma bilan ko'rsatiladi.
 
-**Cheklovlar:** o'yin holati server xotirasida (bitta server nusxasi uchun; Railway'da `numReplicas: 1`), ~2 soat
-faolsiz qolgan o'yinlar o'chiriladi. Bitta o'yinda 300 tagacha o'quvchi; bitta o'qituvchida 5 tagacha tugallanmagan
-va 5 tagacha tugagan (natijasi ko'rinadigan) o'yin — eskilari avtomatik yopiladi. Noto'g'ri PIN/token urinishlari
-IP bo'yicha cheklangan (5 daqiqada 20 ta); bir daqiqada barcha IP lardan 300 tadan ko'p noto'g'ri urinish bo'lsa
-(PIN taxmin qilish hujumi), har bir IP ga 5 ta qoladi. Bitta IP dan qo'shilish — 10 daqiqada 200 ta (maktab
-tarmog'i uchun); ochiq ulanishlar — bitta IP dan 500 ta, jami 5000 ta (`TD_OCTAGON_MAX_SOCKETS`). WebSocket xabari
-4 KB gacha, 10 soniyada 60 tagacha.
+**Cheklovlar** (hammasi `TD_OCTAGON_*` o'zgaruvchilari bilan o'zgartiriladi, pastdagi jadval): o'yin holati server
+xotirasida (bitta server nusxasi; Railway'da `numReplicas: 1`), ~2 soat faolsiz qolgan o'yinlar o'chiriladi. Bitta
+o'yinda 300 tagacha o'quvchi; bitta o'qituvchida 5 tagacha tugallanmagan va 5 tagacha tugagan o'yin. Noto'g'ri
+PIN/token urinishlari — IP bo'yicha 5 daqiqada 60 ta (bitta maktab tarmog'idagi sinf xatolari uchun); bir daqiqada
+barcha IP lardan 300 tadan ko'p noto'g'ri urinish bo'lsa (PIN taxmin qilish hujumi), har bir IP ga 5 ta qoladi. Bitta
+IP dan qo'shilish — 10 daqiqada 1000 ta (bir nechta to'liq sinf bitta NAT ortida); ochiq ulanishlar — bitta IP dan
+500 ta, jami 5000 ta. WebSocket xabari 4 KB gacha, 10 soniyada 60 tagacha. Sig'im (bitta jarayon):
+[docs/architecture.md](docs/architecture.md#capacity).
 
-**Server qayta ishga tushsa** davom etayotgan Octagon o'yinlari yo'qoladi (ular faqat xotirada). Ulanishlar «server
-to'xtadi» bilan yopiladi; o'quvchi telefoni qayta ulanib, «oldingi o'yindagi joyingiz topilmadi» va PIN topilmadi
-degan xabarni ko'radi, o'qituvchi ekrani — «O'yin topilmadi» va «Yangi o'yin» tugmasi. O'qituvchi yangi o'yin ochadi.
+**Server qayta ishga tushsa** (yangi versiya joylashtirilganda) davom etayotgan Octagon o'yinlari **saqlanadi**:
+to'xtashda ular diskka (bazaning yonida, faqat egasi o'qiy oladi) yoziladi, ekranlar «Server yangilanmoqda — o'yin
+davom etadi» xabarini ko'rsatadi va avtomatik qayta ulanadi. Yangi jarayon o'yinlarni tiklaydi: o'sha bosqich, ballar,
+avatarlar; server to'xtab turgan vaqt savol vaqtidan olinmaydi (pauza). Fayl 10 daqiqadan eski bo'lsa
+(`TD_OCTAGON_RESTORE_MAX_AGE`) yoki server to'satdan o'chsa (SIGKILL, elektr) — o'yinlar yo'qoladi va hamma tushunarli
+xabar oladi. Batafsil: [docs/runbook.md](docs/runbook.md).
+
+**Versiyalar:** WebSocket qo'l berishida protokol versiyasi (`v: 2`) bor — joylashtirishdan oldin ochilgan eski sahifa
+«Sayt yangilandi — sahifani yangilang» xabarini oladi (jim buzilmaydi); asosiy ilovada server javobidagi
+`X-Release` boshqa bo'lsa, pastda «yangilash» eslatmasi chiqadi. Xabarlar formati:
+[docs/architecture.md](docs/architecture.md#protocol).
 
 **Xavfsizlik** (batafsil — [docs/octagon-audit.md](docs/octagon-audit.md)): o'yinni faqat egasi boshqaradi va har bir
 boshqaruv amalida sessiya qayta tekshiriladi (tizimdan chiqilsa yoki parol tiklansa ochiq oynalar uziladi); javob
@@ -234,42 +255,93 @@ Keyingi savol
 
 ## Sozlamalar (muhit o'zgaruvchilari)
 
+Barcha vaqtlar, chegaralar va bo'sag'alar bitta joyda — `app/config.py`. Ishga tushishda tekshiriladi: noto'g'ri
+tur, ruxsat etilgan oraliqdan tashqari qiymat yoki bir-biriga zid sozlamalar (masalan, `TD_OCTAGON_JOIN_LIMIT` <
+`TD_OCTAGON_MAX_PLAYERS`) bo'lsa — server ishga tushmaydi va **hamma** xatolar ro'yxatini chiqaradi. Joriy qiymatlarni
+ko'rish (maxfiylari yashiriladi): `python run.py --check-config`.
+
 | O'zgaruvchi | Standart | Tavsif |
 |---|---|---|
+| **Server** | | |
+| `TD_DATA_DIR` | `./data` | Ma'lumotlar papkasi (baza, o'yinlar holati) |
+| `TD_DB_PATH` | `$TD_DATA_DIR/testduel.db` | SQLite baza fayli |
 | `TD_HOST` | `0.0.0.0` | Tinglanadigan manzil |
-| `TD_PORT` (yoki `PORT`) | `8080` | Port |
-| `TD_DATA_DIR` | `./data` | Ma'lumotlar papkasi |
-| `TD_DB_PATH` | `$TD_DATA_DIR/testduel.db` | SQLite fayli |
-| `TD_ADMINS` | — | Vergul bilan ajratilgan loginlar; ro'yxatdan o'tganda admin bo'ladi |
-| `TD_SUPERADMIN` | `admin` | Bosh administrator (tizim egasi) logini |
-| `TD_SUPERADMIN_PASSWORD` | — | Berilsa: bosh administrator akkauntini yaratadi yoki parolini shu qiymatga tiklaydi |
-| `TD_TRUST_PROXY` | — | `1` — teskari proksi (Nginx) ortida: mijoz IP manzili `X-Forwarded-For` dan olinadi (Railway'da avtomatik) |
-| `TD_DUEL_QUESTIONS` | `15` | Dueldagi savollar soni |
-| `TD_QUESTION_TIME` | `15` | Bitta savol uchun vaqt (soniya) |
-| `TD_AFK_LIMIT` | `30` | Javobsiz qolish chegarasi (soniya) |
-| `TD_DISCONNECT_GRACE` | `10` | Aloqa uzilganda qaytish uchun vaqt (soniya) |
-| `TD_OCTAGON_READY` | `3` | Octagon: har bir savol oldidan «tayyorlaning» sanog'i (soniya) |
-| `TD_OCTAGON_TTL` | `7200` | Octagon: faolsiz o'yin xotiradan o'chiriladigan vaqt (soniya) |
-| `TD_OCTAGON_MAX_SOCKETS` | `5000` | Octagon: jami ochiq ulanishlar chegarasi |
-| `TD_PUBLIC_URL` | — | Saytning ommaviy manzili (masalan, `https://quiz.maktab.uz`). Berilsa, QR kod va qo'shilish havolasi doim shu manzilga ishora qiladi |
-| `TD_TZ_OFFSET_HOURS` | `5` | «Bugun» va kunlik hisoblar uchun vaqt mintaqasi (UTC+5 — Toshkent) |
-| `TD_HOT_WINDOW_DAYS` | `14` | «Qizg'in» reyting: hisobga olinadigan kunlar |
-| `TD_HOT_HALF_LIFE_DAYS` | `2` | «Qizg'in» reyting: faollik vazni har shuncha kunda ikki baravar kamayadi |
-| `TD_HOT_LIVE_WEIGHT` | `3` | «Qizg'in» reyting: hozir kutayotgan/o'ynayotganlar uchun qo'shimcha vazn |
-| `TD_RANKING_TTL` | `30` | Mavzular reytingi keshi eng ko'pi bilan shuncha soniya eskiradi |
-| `TD_RANKING_REFRESH` | `5` | Yangi duel boshlangach reyting eng tez shuncha soniyada yangilanadi |
-| `TD_SEEK_TTL` | `120` | Raqib kutish (seek) muddati, soniya |
-| `TD_SUGGEST_IDLE_DAYS` | `90` | Shuncha kun o'ynalmagan mavzular o'chirishga tavsiya qilinadi (panelda o'zgartirish mumkin) |
+| `TD_PORT` (yoki `PORT`) | `8080` | Port (Railway: PORT) |
+| `TD_ADMINS` | — | Ro'yxatdan o'tganda admin bo'ladigan loginlar (vergul bilan) |
+| `TD_SUPERADMIN` | `admin` | Bosh administrator logini |
+| `TD_SUPERADMIN_PASSWORD` | — | Bosh administrator paroli (yaratish/tiklash) |
+| `TD_TRUST_PROXY` | `0` | X-Forwarded-* sarlavhalariga ishonish (proksi ortida) |
+| `TD_DEV` | `0` | Ishlab chiquvchi rejimi: statik fayllar diskdan, keshsiz |
+| `TD_SESSION_DAYS` | `30` | Kirish sessiyasi muddati (kun) |
+| `TD_PUBLIC_URL` | — | Saytning ommaviy manzili (QR va qo'shilish havolasi uchun) |
+| **Kuzatuv va ishlatish** | | |
+| `TD_LOG_FORMAT` | `text` | Jurnal formati: text | json (har qator — bitta JSON obyekt) |
+| `TD_LOG_LEVEL` | `INFO` | Jurnal darajasi |
+| `TD_METRICS_TOKEN` | — | /metrics uchun Bearer token (bo'lmasa — faqat administratorlar) |
+| `TD_ERROR_WEBHOOK` | — | Xatolar yuboriladigan webhook (JSON POST); bo'sh — faqat jurnal |
+| `TD_SHUTDOWN_GRACE` | `5` | To'xtashda ochiq so'rovlarni kutish (soniya) |
+| `TD_CLIENT_ERROR_LIMIT` | `30` | Brauzer xatosi hisobotlari: IP bo'yicha 10 daqiqada |
+| **HTTP chegaralari** | | |
+| `TD_LOGIN_FAIL_LIMIT` | `10` | Noto'g'ri parol: IP+login bo'yicha urinishlar |
+| `TD_LOGIN_FAIL_WINDOW` | `600` | … shuncha soniyada |
+| `TD_REGISTER_LIMIT` | `100` | Ro'yxatdan o'tish: IP bo'yicha |
+| `TD_REGISTER_WINDOW` | `600` | … shuncha soniyada |
+| **Duel** | | |
+| `TD_DUEL_QUESTIONS` | `15` | Duelda har bir ishtirokchiga savollar soni |
+| `TD_QUESTION_TIME` | `15` | Duel: bitta savol uchun vaqt (soniya) |
+| `TD_AFK_LIMIT` | `30` | Duel: shuncha soniya javob bermasa — mag'lub |
+| `TD_DISCONNECT_GRACE` | `10` | Duel: aloqa uzilsa, qaytish uchun vaqt (soniya) |
+| **Mavzular faolligi, reyting, lobbi** | | |
+| `TD_TZ_OFFSET_HOURS` | `5` | Kunlik hisoblar vaqt mintaqasi (Toshkent: UTC+5) |
+| `TD_HOT_WINDOW_DAYS` | `14` | «Qizg'in» reyting oynasi (kun) |
+| `TD_HOT_HALF_LIFE_DAYS` | `2` | «Qizg'in» reyting yarim yemirilishi (kun) |
+| `TD_HOT_LIVE_WEIGHT` | `3` | Hozir o'ynayotganlar og'irligi |
+| `TD_RANKING_TTL` | `30` | Reyting ro'yxatlari keshi (soniya) |
+| `TD_RANKING_REFRESH` | `5` | Yangi duel boshlangach reyting eng tez yangilanishi (soniya) |
+| `TD_SEEK_TTL` | `120` | Raqib kutish muddati (soniya) |
+| `TD_SUGGEST_IDLE_DAYS` | `90` | Shuncha kun o'ynalmagan mavzular o'chirishga tavsiya qilinadi |
+| **Octagon** | | |
+| `TD_OCTAGON_INTRO` | `5` | «Boshlash»dan keyin mavzu nomi hamma ekranda (soniya) |
+| `TD_OCTAGON_READ` (eski nomi: `TD_OCTAGON_READY`) | `5` | Savolni o'qish vaqti: matn faqat o'qituvchida, tugmalar yopiq (soniya) |
+| `TD_OCTAGON_TIME_MIN` | `5` | Savol vaqti: eng kami (soniya) |
+| `TD_OCTAGON_TIME_MAX` | `120` | Savol vaqti: eng ko'pi (soniya) |
+| `TD_OCTAGON_TIME_DEFAULT` | `20` | Savol vaqti: standart (soniya) |
+| `TD_OCTAGON_MAX_QUESTIONS` | `100` | Bitta o'yindagi eng ko'p savollar |
+| `TD_OCTAGON_DEFAULT_QUESTIONS` | `10` | Savollar soni: standart |
+| `TD_OCTAGON_MAX_PLAYERS` | `300` | Bitta o'yindagi eng ko'p o'quvchilar |
+| `TD_OCTAGON_MAX_GAMES_PER_TEACHER` | `5` | O'qituvchining bir vaqtdagi o'yinlari |
+| `TD_OCTAGON_MAX_FINISHED_PER_TEACHER` | `5` | Xotirada saqlanadigan tugagan o'yinlar (o'qituvchiga) |
+| `TD_OCTAGON_MAX_GAMES` | `500` | Serverdagi jami o'yinlar |
+| `TD_OCTAGON_MAX_SOCKETS` | `5000` | Jami ochiq o'quvchi/o'qituvchi ulanishlari |
+| `TD_OCTAGON_MAX_SOCKETS_PER_IP` | `500` | Bitta IP dan ulanishlar (maktab NAT) |
+| `TD_OCTAGON_FAIL_LIMIT` | `60` | Noto'g'ri PIN/token urinishlari: IP bo'yicha |
+| `TD_OCTAGON_FAIL_WINDOW` | `300` | … shuncha soniyada |
+| `TD_OCTAGON_GLOBAL_FAIL_LIMIT` | `300` | Barcha IP lardan noto'g'ri urinishlar — PIN taxmin hujumi belgisi |
+| `TD_OCTAGON_GLOBAL_FAIL_WINDOW` | `60` | … shuncha soniyada |
+| `TD_OCTAGON_SURGE_FAIL_LIMIT` | `5` | Hujum paytida bitta IP ga ruxsat etilgan noto'g'ri urinishlar |
+| `TD_OCTAGON_JOIN_LIMIT` | `1000` | Yangi o'yinchilar: IP bo'yicha (≥ o'yindagi eng ko'p o'quvchilar) |
+| `TD_OCTAGON_JOIN_WINDOW` | `600` | … shuncha soniyada |
+| `TD_OCTAGON_HOST_FLUSH` | `0.25` | O'qituvchi ekrani yangilanishi: kichik o'yinlar (soniya) |
+| `TD_OCTAGON_HOST_FLUSH_BIG` | `1` | … katta o'yinlar (soniya) |
+| `TD_OCTAGON_HOST_FLUSH_BIG_FROM` | `40` | Katta o'yin: o'quvchilar soni shundan ko'p |
+| `TD_OCTAGON_TTL` | `7200` | Faolsiz o'yin xotiradan o'chiriladi (soniya) |
+| `TD_OCTAGON_SWEEP_EVERY` | `60` | Eskirgan o'yinlarni tozalash oralig'i (soniya) |
+| `TD_OCTAGON_RESTORE_MAX_AGE` | `600` | Qayta ishga tushishda saqlangan o'yinlar tiklanadi, agar shundan yangi bo'lsa (soniya; 0 — tiklanmaydi) |
+| **WebSocket** | | |
+| `TD_WS_OCTAGON_MAX_MESSAGE` | `4096` | /ws/octagon: bitta xabarning eng katta hajmi (bayt) |
+| `TD_WS_OCTAGON_FLOOD_LIMIT` | `60` | /ws/octagon: 10 soniyada eng ko'p xabar |
+| `TD_WS_DUEL_FLOOD_LIMIT` | `120` | /ws: 10 soniyada eng ko'p xabar |
 
-Misol: `TD_PORT=9000 TD_ADMINS=bekzod python run.py`
+Misol: `TD_PORT=9000 TD_ADMINS=bekzod TD_OCTAGON_READ=7 python run.py`
 
 ## Railway'ga joylashtirish
 
-Repozitoriyda `railway.json` (ishga tushirish buyrug'i, holat tekshiruvi) va `.python-version` bor.
+Repozitoriyda `railway.json` (ishga tushirish buyrug'i, holat tekshiruvi — `/healthz`) va `.python-version` bor.
 
 1. [railway.com](https://railway.com) da GitHub orqali kiring → **New Project → Deploy from GitHub repo** → `bit_test`.
 2. Servis sozlamalarida **Volume** qo'shing, mount path: `/data`.
-3. **Variables** bo'limiga qo'shing: `TD_DATA_DIR=/data` (baza volume'da saqlanadi, qayta deploy qilinganda o'chmaydi).
+3. **Variables** bo'limiga qo'shing: `TD_DATA_DIR=/data` (baza va qayta ishga tushishda saqlanadigan Octagon o'yinlari
+   volume'da — qayta deploy qilinganda o'chmaydi).
    Ixtiyoriy: `TD_ADMINS=admin` — shu login bilan ro'yxatdan o'tgan foydalanuvchi admin bo'ladi.
 4. **Settings → Networking → Generate Domain** — sayt manzili (`https://….up.railway.app`).
 5. Saytni ochib birinchi bo'lib **`admin`** loginini ro'yxatdan o'tkazing — bu bosh administrator (tizim egasi).
@@ -302,12 +374,32 @@ xesh ko'rinishida; boshqa saytlardan yuborilgan so'rovlar (CSRF) va WebSocket ul
 JSON qabul qiladi; boshqaruvdan tashqaridagi so'rovlar hajmi cheklangan; `admin` loginiga o'xshatib yozilgan
 loginlar (masalan, kirillcha «а» bilan) ro'yxatdan o'tkazilmaydi.
 
+## Ishlatish (production)
+
+- **Holat tekshiruvi:** `GET /healthz` → `{"status":"ok","release":"…","uptimeS":…}` (baza ham tekshiriladi; to'xtash
+  paytida — 503).
+- **Ko'rsatkichlar:** `GET /metrics` (Prometheus matni, `Authorization: Bearer $TD_METRICS_TOKEN`) yoki administrator
+  uchun `GET /api/admin/metrics` (JSON): faol o'yinlar, ulangan o'quvchilar, xabarlar soni, xatolar, p50/p95 kechikishlar.
+- **Jurnal:** `TD_LOG_FORMAT=json` — har qator bitta JSON obyekt. Jurnalda ism, login, token, IP va savol matni
+  yo'q — faqat identifikatorlar va sonlar. Xatolar `TD_ERROR_WEBHOOK` ga ham yuborilishi mumkin (brauzerdagi xatolar ham).
+- **To'xtash:** SIGTERM/Ctrl+C — Octagon o'yinlari saqlanadi va qayta ishga tushganda davom etadi (yuqorida).
+- **Zaxira:** `python3 scripts/db_tool.py backup data/testduel.db zaxira.db` (ishlab turgan server bilan ham xavfsiz);
+  yangi versiyadan oldin nusxada tekshirish: `python3 scripts/db_tool.py check zaxira.db`.
+- **Qo'llanma** (joylashtirish, orqaga qaytarish, nosozliklar): [docs/runbook.md](docs/runbook.md); arxitektura,
+  protokol va saqlash qoidalari: [docs/architecture.md](docs/architecture.md), [docs/performance.md](docs/performance.md).
+
 ## Testlar
 
 ```bash
-pip install pytest
-python -m pytest
+pip install pytest pyflakes mypy
+python -m pytest            # birlik, API, WebSocket, xavfsizlik, kesh, tamper, qayta ishga tushish testlari
+bash scripts/lint.sh        # pyflakes + ESLint (npx orqali) + node --check
+mypy                        # sof modullar: bosqichlar mashinasi, ball, sozlamalar, statik fayllar, kuzatuv
+python scripts/bundle_budget.py   # JS/CSS hajmi byudjeti (o'quvchi sahifasi JS ≤ 20 KB gzip, qat'iy chegara 100 KB)
 ```
+
+CI (`.github/workflows/ci.yml`) har bir push va PR da: lint, tur tekshiruvi, `--check-config`, pytest, hajm byudjeti,
+`pip-audit` (zaifliklar) va brauzer E2E testlari.
 
 - `tests/test_octagon.py` — ball hisoblash (0,5 s, yarim/to'liq vaqt, 1 ms chegaralari, turli vaqtlar), ismlar, o'yin
   dvigateli (soxta soat bilan: lobbi, vaqt, kech qo'shilish, qayta ulanish, ikkinchi oyna, band ism, o'quvchi
@@ -315,6 +407,12 @@ python -m pytest
 - `tests/test_octagon_api.py` — rollar va 403/401 (REST va WebSocket), `/play`, haqiqiy WebSocket orqali to'liq o'yin;
 - `tests/test_octagon_security.py` va `tests/test_octagon.py` oxiridagi testlar — xavfsizlik auditi regressiyalari
   (IDOR, sessiya, CSRF/CORS, sarlavhalar, cheklovlar, poyga holatlari, server qayta ishga tushishi);
+- `tests/test_octagon_flow.py`, `tests/test_octagon_avatars.py`, `tests/test_octagon_v2_audit.py` — v2: bosqichlar
+  mashinasi (har bir o'tish, vaqtlar, noqonuniy o'tishlar), avatarlar, protokol versiyasi, chegaralar, audit topilmalari
+  ([docs/octagon-v2-audit.md](docs/octagon-v2-audit.md));
+- `tests/test_octagon_restart.py`, `tests/test_tamper.py`, `tests/test_http_cache.py`, `tests/test_config.py`,
+  `tests/test_observability.py`, `tests/test_i18n_strings.py` — qayta ishga tushishda saqlash, qurilmadagi
+  ma'lumotlarni o'zgartirish, kesh/siqish, sozlamalar tekshiruvi, ko'rsatkichlar va jurnal, matnlar jadvali;
 - `tests/test_qr.py` — QR kod kodlovchisi;
 - `tests/test_activity.py`, `tests/test_catalog.py`, `tests/test_lobby.py`, `tests/test_admin_topics.py`,
   `tests/test_leaderboard_stats.py` — mavzular faolligi (parallel yozish, backfill, migratsiya), reyting va «qizg'in»
@@ -335,6 +433,8 @@ qo'shilishni yopish), o'quvchi xabarlarini, XSS (savol/variant/ism/mavzu nomidag
 ```bash
 node e2e/lobby.e2e.js          # duel bosh sahifasi: jonli lobbi -> qo'shilish -> duel -> «Bugun» reytingi, poyga, boshqaruv
 python3 scripts/loadtest.py    # yuklama sinovi: 5 000 mavzu, 20 000 foydalanuvchi, bir yillik duellar, 500 o'yinchi
+python3 scripts/octagon_load.py    # Octagon: 20 ta o'yin bir vaqtda, eng kattasida 300 o'quvchi (p95, xotira, xatolar)
+node scripts/perf-routes.js        # sahifalar: sekin 4G + 4x sekin protsessor, birinchi va takroriy ochilish
 python3 scripts/loadtest.py --explain   # asosiy so'rovlarning EXPLAIN QUERY PLAN natijalari
 ```
 
@@ -359,13 +459,14 @@ Natijalar va cheklovlar: [docs/scaling.md](docs/scaling.md).
 ## Loyiha tuzilishi
 
 ```
-app/        backend (aiohttp): server, REST API, WebSocket, duel mexanizmi, Balloon Pop qoidalari, Octagon (app/octagon.py),
-            QR kod (app/qr.py), rollar (app/roles.py), fayl parseri, SQLite
+app/        backend (aiohttp): server, REST API, WebSocket, duel mexanizmi, Balloon Pop qoidalari, Octagon (app/octagon.py;
+            bosqichlar — app/octagon_flow.py, ball — app/octagon_scoring.py), sozlamalar (app/config.py), statik
+            fayllar va kesh (app/assets.py), kuzatuv (app/observability.py), ishlatish (app/ops.py), QR kod, rollar, SQLite
 static/     frontend (HTML/CSS/JS; Balloon Pop sahnasi — static/js/balloon-scene.js;
             o'quvchilar sahifasi — static/play.html + static/js/play.js + static/css/play.css)
 tests/      testlar (pytest)
 e2e/        brauzer testlari (Playwright)
-scripts/    yuklama sinovi (scripts/loadtest.py)
-docs/       hujjatlar (docs/scaling.md — faollik, reyting, lobbi, yuklama natijalari)
+scripts/    yuklama va tezlik sinovlari, lint, hajm byudjeti, baza zaxirasi (db_tool.py)
+docs/       hujjatlar: architecture.md, runbook.md, performance.md, octagon-v2-audit.md, octagon-audit.md, scaling.md
 run.py      ishga tushirish nuqtasi
 ```

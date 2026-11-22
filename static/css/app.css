@@ -1691,3 +1691,13 @@ body.oct-immersive .oct-bar { top: 8px; }
   .brand-text { display: none; }
   .header-right { gap: 4px; }
 }
+
+/* Sayt yangilanganda: pastdagi doimiy eslatma (app.js — setNewReleaseHandler) */
+.update-banner {
+  position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 90;
+  display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 10px 12px 10px 14px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow-lg);
+  font-weight: 600; font-size: 14px;
+}
+.update-banner span { min-width: 0; }
+@media (max-width: 760px) { .update-banner { bottom: calc(76px + env(safe-area-inset-bottom)); } }

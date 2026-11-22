@@ -43,6 +43,7 @@ from typing import Any
 
 from . import config
 from . import octagon_flow as flow
+from .observability import ERRORS, METRICS, timed
 from .octagon_scoring import calculate_score, standing_key
 from .qr import qr_path
 from .roles import is_teacher
@@ -51,28 +52,31 @@ from .security import RateLimiter
 log = logging.getLogger("testduel.octagon")
 
 PROTOCOL_VERSION = 2            # o'zgarsa, eski ochiq oynalar "sahifani yangilang" xabarini oladi
-MIN_TIME, MAX_TIME, DEFAULT_TIME = 5, 120, 20   # savol vaqti (soniya)
-MAX_OPTIONS = 4                 # shakllar: sakkizburchak, tomchi, yulduz, plyus (static/js/octagon/common.js)
-MAX_QUESTIONS = 100
-DEFAULT_QUESTIONS = 10
-NICK_MAX = 20
-MAX_PLAYERS = 300
-MAX_GAMES_PER_OWNER = 5
-MAX_GAMES = 500
-MAX_SOCKETS_PER_IP = 500        # bitta IP ortida butun maktab bo'lishi mumkin
-MAX_SOCKETS = config.OCTAGON_MAX_SOCKETS     # barcha IP lardan jami ochiq ulanishlar (xotira himoyasi)
-FAIL_LIMIT, FAIL_WINDOW = 60, 300            # noto'g'ri PIN/token urinishlari: IP bo'yicha, 5 daqiqada (maktab NAT: sinfdagi xatolar)
-GLOBAL_FAIL_LIMIT, GLOBAL_FAIL_WINDOW = 300, 60   # barcha IP lardan: shundan oshsa — PIN taxmin qilish hujumi
-SURGE_FAIL_LIMIT = 5                          # hujum paytida bitta IP ga ruxsat etilgan noto'g'ri urinishlar
-JOIN_LIMIT, JOIN_WINDOW = 1000, 600          # yangi o'yinchilar: IP bo'yicha, 10 daqiqada (≥ bir necha to'liq sinf bitta NAT ortida)
-MAX_FINISHED_PER_OWNER = 5                    # tugagan (podium) o'yinlar: o'qituvchi uchun xotirada saqlanadigan eng ko'p soni
-HOST_FLUSH = 0.25               # o'qituvchi ekranini yangilash oralig'i (o'quvchilar qo'shilganda, javob berganda)
-HOST_FLUSH_BIG = 1.0            # katta o'yinlarda (HOST_FLUSH_BIG_FROM dan ko'p o'yinchi) — sekundiga ko'pi bilan bir marta
-HOST_FLUSH_BIG_FROM = 40
+SNAPSHOT_VERSION = 1            # qayta ishga tushishda saqlanadigan o'yinlar formati (o'zgarsa — eski fayl e'tiborsiz)
+# Vaqtlar va chegaralar — app/config.py da (muhit o'zgaruvchilari bilan o'zgartiriladi, ishga tushishda tekshiriladi);
+# bu yerdagi nomlar — qisqa taxalluslar.
+MIN_TIME, MAX_TIME, DEFAULT_TIME = config.OCTAGON_TIME_MIN, config.OCTAGON_TIME_MAX, config.OCTAGON_TIME_DEFAULT
+MAX_OPTIONS = 4                 # shakllar: sakkizburchak, tomchi, yulduz, plyus (static/js/octagon/common.js) — mahsulot qoidasi
+MAX_QUESTIONS = config.OCTAGON_MAX_QUESTIONS
+DEFAULT_QUESTIONS = config.OCTAGON_DEFAULT_QUESTIONS
+NICK_MAX = 20                   # mijozdagi maxlength bilan bir xil — mahsulot qoidasi
+MAX_PLAYERS = config.OCTAGON_MAX_PLAYERS
+MAX_GAMES_PER_OWNER = config.OCTAGON_MAX_GAMES_PER_TEACHER
+MAX_GAMES = config.OCTAGON_MAX_GAMES
+MAX_SOCKETS_PER_IP = config.OCTAGON_MAX_SOCKETS_PER_IP   # bitta IP ortida butun maktab bo'lishi mumkin
+MAX_SOCKETS = config.OCTAGON_MAX_SOCKETS                 # barcha IP lardan jami ochiq ulanishlar (xotira himoyasi)
+FAIL_LIMIT, FAIL_WINDOW = config.OCTAGON_FAIL_LIMIT, config.OCTAGON_FAIL_WINDOW     # noto'g'ri PIN/token: IP bo'yicha
+GLOBAL_FAIL_LIMIT, GLOBAL_FAIL_WINDOW = config.OCTAGON_GLOBAL_FAIL_LIMIT, config.OCTAGON_GLOBAL_FAIL_WINDOW  # PIN taxmin hujumi
+SURGE_FAIL_LIMIT = config.OCTAGON_SURGE_FAIL_LIMIT       # hujum paytida bitta IP ga ruxsat etilgan noto'g'ri urinishlar
+JOIN_LIMIT, JOIN_WINDOW = config.OCTAGON_JOIN_LIMIT, config.OCTAGON_JOIN_WINDOW     # yangi o'yinchilar: IP bo'yicha
+MAX_FINISHED_PER_OWNER = config.OCTAGON_MAX_FINISHED_PER_TEACHER   # tugagan (podium) o'yinlar: o'qituvchi uchun
+HOST_FLUSH = config.OCTAGON_HOST_FLUSH          # o'qituvchi ekranini yangilash oralig'i (qo'shilish, javoblar)
+HOST_FLUSH_BIG = config.OCTAGON_HOST_FLUSH_BIG  # katta o'yinlarda (HOST_FLUSH_BIG_FROM dan ko'p o'yinchi)
+HOST_FLUSH_BIG_FROM = config.OCTAGON_HOST_FLUSH_BIG_FROM
 # O'yin davomida o'zgarmaydigan maydonlar: o'qituvchi oynasi ulanganda bir marta yuboriladi, keyingi yangilanishlarda
 # takrorlanmaydi (QR kodning o'zi ~3 KB).
 HOST_STATIC = ("qr", "joinUrl", "joinBase", "topicName", "createdAt")
-SWEEP_EVERY = 60.0
+SWEEP_EVERY = config.OCTAGON_SWEEP_EVERY
 PIN_RE = re.compile(r"^[1-9][0-9]{5}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 LONG_OPTIONS = ("trim", "skip")  # 4 tadan ko'p variantli savollar: qisqartirish yoki o'tkazib yuborish
@@ -342,7 +346,7 @@ class OctagonHub:
         try:
             fn(*args)
         except Exception:
-            log.exception("Octagon taymerida xato: %s", getattr(fn, "__name__", fn))
+            ERRORS.report("octagon_timer", f"Octagon taymerida xato: {getattr(fn, '__name__', fn)}", exc=True)
 
     # ============================================================ ulanishlar
     def socket_opened(self, ip: str) -> bool:
@@ -391,6 +395,7 @@ class OctagonHub:
         game.qr = qr_path(game.join_url)
         self.games[pin] = game
         self._ensure_sweep()
+        METRICS.inc("octagon_games_created_total")
         log.info("Octagon %s yaratildi: mavzu #%s, %d savol, %d s, o'qituvchi #%s", pin, topic["id"], len(questions),
                  settings["timeLimit"], owner["id"])  # jurnalda ism va loginlar yo'q — faqat identifikatorlar
         return game
@@ -590,6 +595,7 @@ class OctagonHub:
     def _finish(self, game: Game) -> None:
         self._set_phase(game, flow.PODIUM)
         self._broadcast(game)
+        METRICS.inc("octagon_games_finished_total")
         log.info("Octagon %s yakunlandi: %d o'yinchi, %d savol o'ynaldi%s", game.pin, len(game.players), len(game.stats),
                  " (muddatidan oldin)" if game.ended_early else "")
         self._finished += 1
@@ -720,6 +726,7 @@ class OctagonHub:
         self.conn_info[conn] = ("player", game.pin, pid)
         self.joins.hit(ip)
         self._touch(game)
+        METRICS.inc("octagon_joins_total")
         conn.send("w", {**self._welcome(game, p), "tok": token})
         conn.send("s", self.student_state(game, p))
         self._host_changed(game)
@@ -795,6 +802,7 @@ class OctagonHub:
         if elapsed > game.time_limit_ms:  # aynan chegaradagi (== taymer) javob qabul qilinadi
             raise OctagonError("late", "Vaqt tugadi — javob qabul qilinmadi", 409)
         p.answers[q] = (choice, max(0, elapsed))
+        METRICS.inc("octagon_answers_total")
         self._touch(game)
         conn.send("s", self.student_state(game, p))
         if not self._close_if_all_answered(game):
@@ -967,11 +975,12 @@ class OctagonHub:
     # ========================================================= xabarlar
     def _broadcast(self, game: Game) -> None:
         """Bosqich o'zgardi: har bir o'quvchiga shaxsiy holat, o'qituvchi ekranlariga to'liq holat."""
-        ranks = self._ranks(game)
-        for p in game.players.values():
-            if p.conn is not None:
-                p.conn.send("s", self.student_state(game, p, ranks))
-        self._host_changed(game, now=True)
+        with timed("octagon_broadcast_ms"):  # xabarlarni tayyorlab navbatga qo'yish (yuborish — har ulanish o'z navbatida)
+            ranks = self._ranks(game)
+            for p in game.players.values():
+                if p.conn is not None:
+                    p.conn.send("s", self.student_state(game, p, ranks))
+            self._host_changed(game, now=True)
 
     def _host_changed(self, game: Game, now: bool = False) -> None:
         if not game.hosts:
@@ -993,6 +1002,103 @@ class OctagonHub:
         for c in list(game.hosts):
             c.send("h", state)
 
+    # ============================================== qayta ishga tushish (o'yinlar saqlanadi)
+    def snapshot(self) -> dict:
+        """Xotiradagi barcha o'yinlar — to'xtashdan oldin diskka yoziladi (app/ops.py). Vaqtlar mutlaq emas: bosqich
+        boshidan o'tgan va oxirigacha qolgan soniyalar saqlanadi, ya'ni server to'xtab turgan vaqt o'yinga pauza bo'ladi
+        (savol vaqti yeyilmaydi). Tokenlarning o'zi emas, faqat xeshi saqlanadi."""
+        now = self.clock.now()
+        return {"v": SNAPSHOT_VERSION, "savedAt": self.wall_ms(), "games": [self._dump(g, now) for g in self.games.values()]}
+
+    @staticmethod
+    def _dump(g: Game, now: float) -> dict:
+        return {
+            "pin": g.pin, "ownerId": g.owner_id, "ownerLogin": g.owner_login, "topicId": g.topic_id, "topicName": g.topic_name,
+            "questions": g.questions, "timeLimitMs": g.time_limit_ms, "settings": g.settings, "joinBase": g.join_base,
+            "createdMs": g.created_ms, "trimmed": g.trimmed, "phase": g.phase, "index": g.index,
+            "elapsed": max(0.0, now - g.phase_start),
+            "remaining": None if g.phase_end is None else max(0.0, g.phase_end - now),
+            "qElapsed": max(0.0, now - g.q_open_at) if g.phase == flow.ACTIVE else None,
+            "idle": max(0.0, now - g.activity),
+            "players": [{"id": p.id, "tokenHash": p.token_hash, "nick": p.nick, "key": p.key, "score": p.score,
+                         "timeMs": p.time_ms, "correct": p.correct, "answers": [[q, o, ms] for q, (o, ms) in p.answers.items()],
+                         "last": p.last, "avatar": p.avatar} for p in g.players.values()],
+            "stats": g.stats, "endedEarly": g.ended_early, "finishedSeq": g.finished_seq, "locked": g.locked,
+            "banned": sorted(g.banned), "qr": g.qr,
+        }
+
+    def restore(self, data: dict) -> int:
+        """Saqlangan o'yinlarni tiklaydi (ishga tushishda). Taymerlar qolgan vaqt bilan qayta qo'yiladi; o'quvchilar va
+        o'qituvchi oynalari avtomatik qayta ulanadi (resume/host) va o'sha joydan davom etadi."""
+        if not isinstance(data, dict) or data.get("v") != SNAPSHOT_VERSION:
+            return 0
+        saved = data.get("savedAt")
+        down = max(0.0, (self.wall_ms() - saved) / 1000) if isinstance(saved, (int, float)) else 0.0
+        restored = 0
+        for d in data.get("games") or []:
+            try:
+                game = self._load(d, down)
+            except Exception:
+                ERRORS.report("octagon_restore", "Saqlangan o'yinni tiklab bo'lmadi", exc=True)
+                continue
+            if game.pin in self.games:
+                continue
+            self.games[game.pin] = game
+            self._finished = max(self._finished, game.finished_seq)
+            remaining = max(0.0, game.phase_end - self.clock.now()) if game.phase_end is not None else 0.0
+            if game.phase == flow.INTRO:
+                game.timer = self._later(remaining, self._after_intro, game.pin)
+            elif game.phase == flow.READ:
+                game.timer = self._later(remaining, self._open_question, game.pin, game.index)
+            elif game.phase == flow.ACTIVE:
+                game.timer = self._later(remaining, self._timeout, game.pin, game.index)
+            restored += 1
+        if restored:
+            self._ensure_sweep()
+            log.info("Octagon: %d ta o'yin tiklandi (server %.1f s to'xtab turdi)", restored, down)
+        return restored
+
+    def _load(self, d: dict, down: float) -> Game:
+        now = self.clock.now()
+        if d["phase"] not in flow.PHASES or not PIN_RE.match(str(d["pin"])):
+            raise ValueError("noto'g'ri o'yin yozuvi")
+        g = Game(pin=d["pin"], owner_id=int(d["ownerId"]), owner_login=d["ownerLogin"], topic_id=int(d["topicId"]),
+                 topic_name=d["topicName"], questions=d["questions"], time_limit_ms=int(d["timeLimitMs"]),
+                 settings=d["settings"], join_base=d["joinBase"], created_ms=int(d["createdMs"]), trimmed=int(d["trimmed"]))
+        g.phase, g.index = d["phase"], int(d["index"])
+        g.phase_start = now - float(d["elapsed"])
+        g.phase_end = None if d["remaining"] is None else now + float(d["remaining"])
+        if g.phase == flow.ACTIVE:
+            g.q_open_at = now - float(d["qElapsed"])
+            g.deadline = g.q_open_at + g.time_limit_ms / 1000
+        g.activity = now - float(d["idle"]) - down
+        for pd in d["players"]:
+            p = Player(id=pd["id"], token_hash=pd["tokenHash"], nick=pd["nick"], key=pd["key"], score=int(pd["score"]),
+                       time_ms=int(pd["timeMs"]), correct=int(pd["correct"]), last=pd["last"], avatar=clean_avatar(pd["avatar"]))
+            p.answers = {int(q): (int(o), int(ms)) for q, o, ms in pd["answers"]}
+            g.players[p.id] = p
+            g.keys[p.key] = p.id
+        g.stats, g.ended_early, g.finished_seq = d["stats"], bool(d["endedEarly"]), int(d["finishedSeq"])
+        g.locked, g.banned, g.qr = bool(d["locked"]), set(d["banned"]), d["qr"]
+        return g
+
+    def shutdown(self, code: int = 1012) -> dict:
+        """Server to'xtamoqda: holat olinadi, taymerlar to'xtatiladi (keyin hech narsa o'zgarmaydi), ulangan o'quvchi va
+        o'qituvchilarga 1012 (xizmat qayta ishga tushmoqda) bilan yopiladi — ular avtomatik qayta ulanadi."""
+        data = self.snapshot()
+        for g in self.games.values():
+            _cancel(g.timer)
+            _cancel(g.host_timer)
+            g.timer = g.host_timer = None
+            for p in g.players.values():
+                if p.conn is not None:
+                    p.conn.close("restart", code)
+            for c in list(g.hosts):
+                c.close("restart", code)
+        _cancel(self._sweep_timer)
+        self._sweep_timer = None
+        return data
+
     # ============================================================ tozalash
     def _ensure_sweep(self) -> None:
         if self._sweep_timer is None:
@@ -1008,7 +1114,7 @@ class OctagonHub:
                     try:
                         self.close_game(pin, "expired")
                     except Exception:
-                        log.exception("Octagon %s: tozalashda xato", pin)
+                        ERRORS.report("octagon_sweep", "Octagon tozalashda xato", exc=True, pin=pin)
         finally:
             if self.games:
                 self._ensure_sweep()

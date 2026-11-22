@@ -12,6 +12,23 @@ export function setUnauthorizedHandler(fn) {
   onUnauthorized = fn;
 }
 
+// Ilova versiyasi: sahifa yuklangan versiya (modul manzilidagi /assets/<release>/). Server boshqasini aytsa — sayt
+// yangilangan: foydalanuvchiga bir marta «sahifani yangilang» deyiladi (eski kod yangi server bilan jim buzilmasin).
+const LOADED_RELEASE = (import.meta.url.match(/\/assets\/([0-9a-f]{12})\//) || [])[1] || null;
+let onNewRelease = null;
+let announced = false;
+export function setNewReleaseHandler(fn) {
+  onNewRelease = fn;
+}
+
+function checkRelease(res) {
+  const release = res.headers.get('X-Release');
+  if (LOADED_RELEASE && release && release !== LOADED_RELEASE && !announced && onNewRelease) {
+    announced = true;
+    onNewRelease(release);
+  }
+}
+
 export async function api(path, { method = 'GET', body } = {}) {
   const opts = { method, headers: { Accept: 'application/json' }, credentials: 'same-origin' };
   if (body !== undefined) {
@@ -24,6 +41,7 @@ export async function api(path, { method = 'GET', body } = {}) {
   } catch {
     throw new ApiError("Server bilan aloqa yo'q. Internet yoki serverni tekshiring", 0);
   }
+  checkRelease(res);
   let data = null;
   try {
     data = await res.json();

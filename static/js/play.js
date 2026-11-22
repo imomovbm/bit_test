@@ -9,6 +9,7 @@ import {
   AVATARS, GAME_NAME, OCTAGON_RING, PHASES, PROTOCOL_VERSION, SHAPES, avatarEmoji, formatPin, octagonLoader, octagonMark,
   serverClock, shapeClass, shapeIcon,
 } from './octagon/common.js';
+import { reportErrors } from './report.js';
 
 const T = {
   pageTitle: `${GAME_NAME} — oʻyinga qoʻshilish`,
@@ -33,6 +34,7 @@ const T = {
   nickEmpty: 'Ismingizni kiriting',
   checking: 'Tekshirilmoqda…',
   reconnecting: 'Aloqa uzildi — qayta ulanmoqda…',
+  restarting: 'Server yangilanmoqda — oʻyin shu joydan davom etadi…',
   lobbyTitle: 'Siz oʻyindasiz!',
   lobbyText: 'Ismingizni oʻqituvchi ekranida koʻryapsizmi? Oʻyin boshlanishini kuting…',
   topic: 'Mavzu',
@@ -102,6 +104,7 @@ const st = {
   error: '',
   closed: null,         // replaced | kicked | ended | reload
   status: 'connecting', // connecting | online | offline
+  restarting: false,    // server qayta ishga tushmoqda (1012) — o'yin saqlangan
 };
 const clock = serverClock();
 
@@ -259,6 +262,7 @@ function connect() {
       showClosed({ 4001: 'replaced', 4002: 'kicked', 4003: 'ended' }[ev.code]);
       return;
     }
+    st.restarting = ev.code === 1012; // server qayta ishga tushmoqda (o'yinlar saqlanadi)
     setStatus('offline');
     schedule();
   };
@@ -302,8 +306,12 @@ window.addEventListener('online', reconnectNow);
 
 function setStatus(s) {
   st.status = s;
+  if (s === 'online') st.restarting = false;
   const bar = root.querySelector('.pl-conn');
-  if (bar) bar.hidden = s === 'online' || st.view === 'closed';
+  if (bar) {
+    bar.hidden = s === 'online' || st.view === 'closed';
+    bar.lastChild.textContent = st.restarting ? T.restarting : T.reconnecting;
+  }
 }
 
 // ------------------------------------------------------------------ xabarlar
@@ -602,7 +610,7 @@ function topBar() {
   const me = st.me && st.view === 'game'
     ? el('div.pl-me', avatar(st.me.av), el('span.pl-nick', st.me.nick), s ? el('span.pl-score', fmt(s.sc), el('small', ` ${T.score}`)) : null)
     : null;
-  const conn = el('div.pl-conn', { role: 'status' }, octagonLoader(true), T.reconnecting);
+  const conn = el('div.pl-conn', { role: 'status' }, octagonLoader(true), el('span', st.restarting ? T.restarting : T.reconnecting));
   conn.hidden = st.status === 'online' || st.view === 'closed' || st.view === 'pin';
   return [el('header.pl-top', left, me), conn];
 }
@@ -874,4 +882,5 @@ function boot() {
   connect();
 }
 
+reportErrors('play');
 boot();

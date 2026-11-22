@@ -96,6 +96,7 @@ const T = {
   endOk: 'Tugatish',
   fullscreen: 'Toʻliq ekran (F)',
   reconnecting: 'Aloqa uzildi — qayta ulanmoqda…',
+  restarting: 'Server yangilanmoqda — oʻyin davom etadi…',
   closedTitle: 'Oʻyin yopildi',
   closedText: 'Bu oʻyin endi mavjud emas.',
   notFound: 'Oʻyin topilmadi',
@@ -399,11 +400,11 @@ function hostSocket(pin, clock, { onMessage, onStatus }) {
       }
       if (msg && typeof msg.t === 'string') onMessage(msg.t, msg.d || {});
     };
-    sock.onclose = () => {
+    sock.onclose = (ev) => {
       if (ws !== sock) return;
       ws = null;
       if (stopped) return;
-      onStatus('offline');
+      onStatus(ev.code === 1012 ? 'restarting' : 'offline'); // 1012: server qayta ishga tushmoqda — o'yin saqlangan
       timer = setTimeout(open, Math.min(5000, 400 * 2 ** retry) + Math.random() * 300);
       retry = Math.min(retry + 1, 6);
     };
@@ -530,6 +531,7 @@ function hostView(root, pinParam) {
   const sock = hostSocket(pin, clock, {
     onStatus(s) {
       connPill.hidden = s === 'online';
+      connPill.lastChild.textContent = s === 'restarting' ? T.restarting : T.reconnecting;
     },
     onMessage(t, d) {
       if (!alive) return;

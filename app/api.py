@@ -15,7 +15,8 @@ from aiohttp import web
 from . import balloon, catalog, config, octagon
 from .db import now_ms
 from .hub import prepare_question
-from .keys import DB, HUB, OCTAGON, USER
+from .keys import DB, HUB, LIFECYCLE, OCTAGON, USER
+from .observability import ERRORS, METRICS
 from .parser import QuestionError, format_questions, parse_questions, validate_question
 from .roles import is_superadmin, is_teacher
 from .security import RateLimiter, hash_password, new_token, token_hash, verify_password
@@ -24,8 +25,8 @@ log = logging.getLogger("testduel.api")
 routes = web.RouteTableDef()
 
 LOGIN_RE = re.compile(r"^[\w.\-]{3,32}$")
-login_failures = RateLimiter(limit=10, window=600)
-registrations = RateLimiter(limit=100, window=600)
+login_failures = RateLimiter(limit=config.LOGIN_FAIL_LIMIT, window=config.LOGIN_FAIL_WINDOW)
+registrations = RateLimiter(limit=config.REGISTER_LIMIT, window=config.REGISTER_WINDOW)
 
 
 class ApiError(Exception):
@@ -54,7 +55,9 @@ async def error_middleware(request: web.Request, handler):
     except OverflowError:  # SQLite 64-bit chegarasidan katta son — noto'g'ri so'rov
         return web.json_response({"error": "Noto'g'ri raqam"}, status=400, dumps=_dumps)
     except Exception:
-        log.exception("Kutilmagan xato: %s %s", request.method, request.path)
+        # jurnalda URL emas, marshrut namunasi (/api/octagon/games/{pin}) — identifikatorlar va PIN lar tushmaydi
+        route = request.match_info.route.resource.canonical if request.match_info.route.resource else "?"
+        ERRORS.report("http", f"{request.method} {route}", exc=True, route=route)
         return web.json_response({"error": "Serverda kutilmagan xatolik yuz berdi"}, status=500, dumps=_dumps)
 
 
@@ -204,15 +207,15 @@ def ensure_superadmin(db) -> None:
     user = db.user_by_login(login)
     if not user:
         if password:
-            db.create_user(login, hash_password(password), True)
-            log.info("Bosh administrator akkaunti yaratildi: %s", login)
+            uid = db.create_user(login, hash_password(password), True)
+            log.info("Bosh administrator akkaunti yaratildi (#%s)", uid)
         return
     if not user["is_admin"] or user["blocked"]:
         db.set_admin(user["id"], True)
         db.set_blocked(user["id"], False)
     if password and not verify_password(password, user["pass_hash"]):
         db.set_password(user["id"], hash_password(password))
-        log.info("Bosh administrator (%s) paroli TD_SUPERADMIN_PASSWORD bo'yicha yangilandi", user["login"])
+        log.info("Bosh administrator (#%d) paroli TD_SUPERADMIN_PASSWORD bo'yicha yangilandi", user["id"])
 
 
 def registration_open(db) -> bool:
@@ -297,7 +300,7 @@ async def register(request: web.Request):
     except sqlite3.IntegrityError:
         raise ApiError("Bu login band. Boshqa login tanlang", 409)
     registrations.hit(ip)
-    log.info("Yangi foydalanuvchi: %s%s", login, " (admin)" if is_admin else "")
+    log.info("Yangi foydalanuvchi #%d%s", user_id, " (admin)" if is_admin else "")  # login jurnalga yozilmaydi
     return await start_session(request, db.user_by_id(user_id))
 
 
@@ -490,7 +493,7 @@ async def balloon_create(request: web.Request):
         raise ApiError(f"O'yinlar soni {MAX_BALLOON_GAMES} taga yetdi. Tarixdan eskilarini o'chiring")
     state = balloon.new_game(topic_id=topic["id"], topic_name=topic["name"], now_ms=now_ms(), **settings)
     game_id = db.create_balloon_game(user["id"], topic["id"], topic["name"], state)
-    log.info("Balloon Pop #%d: %s vs %s (%s) — %s", game_id, *(t["name"] for t in settings["teams"]), topic["name"], user["login"])
+    log.info("Balloon Pop #%d: mavzu #%d — o'qituvchi #%d", game_id, topic["id"], user["id"])  # jamoa nomlari va loginlar yozilmaydi
     return ok({"game": balloon_json(game_id, state)}, status=201)
 
 
@@ -589,6 +592,8 @@ async def octagon_topics(request: web.Request):
 @routes.post("/api/octagon/games")
 async def octagon_create(request: web.Request):
     user = require_teacher(request)
+    if request.app[LIFECYCLE].draining:
+        raise ApiError("Server yangilanmoqda — bir daqiqadan keyin qayta urinib koʻring", 503)
     data = await read_json(request)
     settings = octagon_call(octagon.clean_settings, data)
     db = request.app[DB]
@@ -702,7 +707,7 @@ async def admin_create_topic(request: web.Request):
         topic_id = db.create_topic(name, parsed["questions"], bool(data.get("shuffle", True)), source, user["id"])
     except sqlite3.IntegrityError:
         raise ApiError("Bunday nomli mavzu allaqachon bor. Boshqa nom kiriting", 409)
-    log.info("Yangi mavzu: %s (%d savol) — %s", name, len(parsed["questions"]), user["login"])
+    log.info("Yangi mavzu #%d: %s (%d savol) — foydalanuvchi #%d", topic_id, name, len(parsed["questions"]), user["id"])
     request.app[HUB].topics_changed()
     return ok({"topic": topic_json(db.get_topic(topic_id)), "skipped": len(parsed["errors"])}, status=201)
 
@@ -738,7 +743,7 @@ async def admin_replace_topic(request: web.Request):
         raise ApiError("Faylda yaroqli savol topilmadi. Fayl formatini tekshiring")
     source = str(data.get("fileName") or "")[:255] or None
     db.replace_topic_questions(tid, parsed["questions"], source, user["id"])
-    log.info("Mavzu yangilandi: %s (%d savol) — %s", topic["name"], len(parsed["questions"]), user["login"])
+    log.info("Mavzu #%d yangilandi (%d savol) — foydalanuvchi #%d", tid, len(parsed["questions"]), user["id"])
     request.app[HUB].topics_changed()
     return ok({"topic": topic_json(db.get_topic(tid)), "skipped": len(parsed["errors"])})
 
@@ -1001,7 +1006,7 @@ async def admin_append_questions(request: web.Request):
     before = topic["question_count"]
     res = db.add_questions(parsed["questions"], [topic["id"]], source, user["id"])
     topic = db.get_topic(topic["id"])
-    log.info("Mavzuga savollar qo'shildi: %s (+%d) — %s", topic["name"], topic["question_count"] - before, user["login"])
+    log.info("Mavzu #%d ga savollar qo'shildi (+%d) — foydalanuvchi #%d", topic["id"], topic["question_count"] - before, user["id"])
     request.app[HUB].topics_changed()
     return ok({
         "topic": topic_json(topic),
@@ -1107,7 +1112,7 @@ async def admin_bank_upload(request: web.Request):
         raise ApiError("Faylda yaroqli savol topilmadi. Fayl formatini tekshiring")
     source = str(data.get("fileName") or "")[:255] or None
     res = db.add_questions(parsed["questions"], topics, source, user["id"])
-    log.info("Bankka %d ta yangi savol yuklandi (%d tasi bor edi) — %s", res["created"], res["reused"], user["login"])
+    log.info("Bankka %d ta yangi savol yuklandi (%d tasi bor edi) — foydalanuvchi #%d", res["created"], res["reused"], user["id"])
     if topics:
         request.app[HUB].topics_changed()
     return ok({"created": res["created"], "reused": res["reused"], "skipped": len(parsed["errors"])})
@@ -1143,7 +1148,7 @@ async def admin_bank_delete_many(request: web.Request):
     user = require_admin(request)
     data = await read_json(request)
     deleted, topics = request.app[DB].delete_bank_questions(question_ids_param(data.get("questionIds")))
-    log.info("Bankdan %d ta savol o'chirildi — %s", deleted, user["login"])
+    log.info("Bankdan %d ta savol o'chirildi — foydalanuvchi #%d", deleted, user["id"])
     if topics:
         request.app[HUB].topics_changed()
     return ok({"deleted": deleted, "topics": topics})
@@ -1182,6 +1187,13 @@ def admin_user_json(u: dict, hub) -> dict:
 
 def settings_json(db) -> dict:
     return {"registrationOpen": registration_open(db)}
+
+
+@routes.get("/api/admin/metrics")
+async def admin_metrics(request: web.Request):
+    """Ko'rsatkichlar JSON da (docs/runbook.md): o'yinlar, ulanishlar, xabarlar, xatolar, p50/p95 kechikishlar."""
+    require_admin(request)
+    return ok(METRICS.snapshot())
 
 
 @routes.get("/api/admin/overview")
@@ -1228,7 +1240,7 @@ async def admin_update_settings(request: web.Request):
     db = request.app[DB]
     if "registrationOpen" in data:
         db.set_setting("registration_open", "1" if data["registrationOpen"] else "0")
-        log.info("Ro'yxatdan o'tish %s — %s", "ochildi" if data["registrationOpen"] else "yopildi", user["login"])
+        log.info("Ro'yxatdan o'tish %s — foydalanuvchi #%d", "ochildi" if data["registrationOpen"] else "yopildi", user["id"])
     return ok({"settings": settings_json(db)})
 
 
@@ -1256,7 +1268,7 @@ async def admin_create_user(request: web.Request):
         user_id = db.create_user(login, pass_hash, bool(data.get("isAdmin")), bool(data.get("isTeacher")))
     except sqlite3.IntegrityError:
         raise ApiError("Bu login band. Boshqa login tanlang", 409)
-    log.info("Administrator %s yangi foydalanuvchi yaratdi: %s", me_user["login"], login)
+    log.info("Administrator #%d yangi foydalanuvchi yaratdi: #%d", me_user["id"], user_id)
     return ok({"user": admin_user_json(db.user_by_id(user_id), request.app[HUB])}, status=201)
 
 
@@ -1285,7 +1297,7 @@ async def admin_update_user(request: web.Request):
         db.set_admin(uid, bool(data["isAdmin"]))
     if "isTeacher" in data:
         db.set_teacher(uid, bool(data["isTeacher"]))
-        log.info("%s: o'qituvchi roli %s — %s", target["login"], "berildi" if data["isTeacher"] else "olindi", me_user["login"])
+        log.info("Foydalanuvchi #%d: o'qituvchi roli %s — #%d", uid, "berildi" if data["isTeacher"] else "olindi", me_user["id"])
     if "isAdmin" in data or "isTeacher" in data:
         fresh = db.user_by_id(uid)
         # foydalanuvchining ochiq oynalarida menyu darhol yangilanadi
@@ -1300,7 +1312,7 @@ async def admin_update_user(request: web.Request):
             hub.kick_user(uid, "blocked")
             end_teacher_games(request.app, uid, "O'yin yakunlandi")
             request.app[OCTAGON].drop_hosts(uid)
-        log.info("%s %s — %s", target["login"], "bloklandi" if data["blocked"] else "blokdan chiqarildi", me_user["login"])
+        log.info("Foydalanuvchi #%d %s — #%d", uid, "bloklandi" if data["blocked"] else "blokdan chiqarildi", me_user["id"])
     if password_hash is not None:
         # o'z parolini o'zgartirgan administrator joriy qurilmada tizimda qoladi
         current = request.cookies.get(config.SESSION_COOKIE)

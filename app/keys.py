@@ -5,12 +5,14 @@ from .assets import AssetStore
 from .db import Database
 from .hub import DuelHub
 from .octagon import OctagonHub
+from .ops import Lifecycle
 
 DB = web.AppKey("db", Database)
 HUB = web.AppKey("hub", DuelHub)
 OCTAGON = web.AppKey("octagon", OctagonHub)
 SOCKETS = web.AppKey("sockets", set)
 ASSETS = web.AppKey("assets", AssetStore)
+LIFECYCLE = web.AppKey("lifecycle", Lifecycle)
 CSP = web.AppKey("csp", str)  # index.html uchun Content-Security-Policy (ichki skript xeshi bilan)
 
 # aiohttp 3.14+ so'rov ma'lumotlari uchun RequestKey'ni tavsiya qiladi; eski versiyalarda oddiy satr.
