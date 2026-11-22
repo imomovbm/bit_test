@@ -16,8 +16,9 @@ from . import config
 from .api import ensure_superadmin, error_middleware, guard_middleware, routes, session_middleware
 from .db import Database
 from .hub import DuelHub, LoopClock
-from .keys import DB, HUB, SOCKETS
-from .ws import ws_handler
+from .keys import DB, HUB, OCTAGON, SOCKETS
+from .octagon import OctagonHub
+from .ws import octagon_ws_handler, ws_handler
 
 log = logging.getLogger("testduel")
 
@@ -75,6 +76,11 @@ async def index(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(config.STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
+async def play_page(request: web.Request) -> web.StreamResponse:
+    """O'quvchilar sahifasi (/play, /play/PIN): ro'yxatdan o'tmasdan, alohida yengil sahifa (asosiy ilova yuklanmaydi)."""
+    return web.FileResponse(config.STATIC_DIR / "play.html", headers={"Cache-Control": "no-cache"})
+
+
 async def invite_page(request: web.Request) -> web.Response:
     """Taklif havolasi (/d/KOD): ijtimoiy tarmoqlarda chiroyli ko'rinishi uchun og: teglari bilan."""
     code = re.sub(r"[^A-Za-z0-9]", "", request.match_info["code"])[:16].upper()
@@ -118,7 +124,9 @@ def create_app(db_path: Path | str | None = None, lan_url: str | None = None, cl
     )
     db = Database(db_path or config.DB_PATH)
     app[DB] = db
-    app[HUB] = DuelHub(db, clock or LoopClock(), lan_url=lan_url)
+    clock = clock or LoopClock()
+    app[HUB] = DuelHub(db, clock, lan_url=lan_url)
+    app[OCTAGON] = OctagonHub(db, clock)
     app[SOCKETS] = set()
     app.on_startup.append(_on_startup)
     app.on_shutdown.append(_on_shutdown)
@@ -126,7 +134,10 @@ def create_app(db_path: Path | str | None = None, lan_url: str | None = None, cl
     app.on_response_prepare.append(_cache_headers)
     app.add_routes(routes)
     app.router.add_get("/ws", ws_handler)
+    app.router.add_get("/ws/octagon", octagon_ws_handler)
     app.router.add_get("/", index)
+    app.router.add_get("/play", play_page)
+    app.router.add_get("/play/{pin}", play_page)
     app.router.add_get("/d/{code}", invite_page)
     for sub in ("js", "css", "img"):
         app.router.add_static(f"/{sub}", config.STATIC_DIR / sub)

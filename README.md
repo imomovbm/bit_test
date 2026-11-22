@@ -9,7 +9,10 @@ Foydalanuvchilar o'rtasida test bo'yicha bellashuv (duel) va mustaqil mashq qili
   - Raqib aloqasi uzilsa yoki 30 soniya davomida javob bermasa — ikkinchi ishtirokchi g'olib.
 - **Taklif havolasi** — onlayn bo'lmagan do'stni duelga havola orqali chaqirish.
 - **Mashq rejimi** — vaqt cheklovisiz 10 / 30 / 50 yoki barcha savollar.
-- **Balloon Pop** — sinfda bitta ekranda (proyektor/doska) o'ynaladigan jamoaviy o'yin (pastda batafsil).
+- **O'yinlar paneli** (faqat o'qituvchilar va administratorlar uchun):
+  - **Octagon** — jonli viktorina: savollar proyektorda, o'quvchilar telefonda PIN bilan qo'shilib (ro'yxatdan
+    o'tmasdan) rangli shakllarni bosib javob beradi (pastda batafsil);
+  - **Balloon Pop** — sinfda bitta ekranda (proyektor/doska) o'ynaladigan jamoaviy o'yin (pastda batafsil).
 - **Reyting** va shaxsiy statistika.
 - **Boshqaruv paneli** (faqat administratorlar uchun) — test mavzularini yuklash va foydalanuvchilarni boshqarish (pastda batafsil).
 - Oddiy ro'yxatdan o'tish (login + parol), yorug'/qorong'i rejim, mobil qurilmalarga moslashgan.
@@ -29,6 +32,60 @@ Brauzerda oching: <http://localhost:8080>
 
 **Birinchi ro'yxatdan o'tgan foydalanuvchi avtomatik ravishda administrator bo'ladi.**
 Ma'lumotlar bazasi (SQLite) `data/testduel.db` faylida saqlanadi.
+
+## Octagon — jonli viktorina
+
+O'yin nomi bitta joyda — `static/js/octagon/common.js` dagi `GAME_NAME` (masalan, `'Blitz'` ga almashtirish mumkin;
+ichki nomlar — `/api/octagon`, `app/octagon.py` — o'zgarmaydi).
+
+**O'qituvchi:** «O'yinlar» → Octagon → mavzu, savollar soni va **har bir savol uchun vaqt** (10 / 20 / 30 / 60 s yoki
+5–120 s oralig'ida istalgan son, standart 20 s), savollar/variantlarni aralashtirish → **Lobbini ochish**.
+- Lobbida katta **PIN** (6 xonali) va **QR kod** (havola: `sayt/play/PIN`), qo'shilgan o'quvchilar (onlayn/oflayn) va
+  ularning soni. Nomaqbul ismli o'quvchini chiqarish mumkin. Savol vaqtini lobbida o'zgartirish mumkin, o'yin
+  boshlangach u qulflanadi (server ham tekshiradi).
+- O'yin faqat **Boshlash** bosilganda boshlanadi. Har bir savol: «tayyorlaning» (3 s) → savol (savol matni va
+  variantlar rang + shakl bilan) → natija (javoblar taqsimoti, to'g'ri javob) → eng yaxshi 5 talik → keyingi savol →
+  yakunda podium. Hamma javob bersa, savol vaqt tugashini kutmasdan yopiladi. «Savolni yakunlash» va «Tugatish»
+  (muddatidan oldin yakuniy natijalar) tugmalari bor. Probel/Enter — keyingi bosqich, F — to'liq ekran.
+- PIN o'qituvchi va o'quvchi ekranining tepasida doim ko'rinib turadi. O'qituvchi sahifani yangilasa yoki aloqa uzilsa,
+  o'sha o'yinni boshqarishda davom etadi.
+
+**O'quvchi** (ro'yxatdan o'tmasdan): QR kodni skanerlaydi yoki `sayt/play` ni ochib PIN kiritadi, so'ng faqat ism
+yozadi.
+- Ism: 1–20 belgi, o'yinda yagona (katta-kichik harf va o'xshash harflar hisobga olinmaydi); HTML, ko'rinmas belgilar,
+  emoji va oddiy so'kinishlar filtrlanadi.
+- Kech qo'shilish mumkin (o'yin o'rtasida ham) — 0 ball bilan joriy savoldan davom etadi.
+- Telefonda **faqat rangli shakllar** (qizil uchburchak, ko'k romb, sariq doira, yashil kvadrat) — savol va javob
+  matni yuborilmaydi. Serverdan faqat savol raqami, variantlar soni, qolgan vaqt va shaxsiy natija keladi (xabarlar
+  ~100 bayt); to'g'ri javob savol yopilgandan keyingina yuboriladi. O'quvchi sahifasi asosiy ilovani yuklamaydi
+  (jami ~34 KB).
+- Har savoldan keyin: to'g'ri/noto'g'ri, olingan ball, umumiy ball va o'rin.
+- Birinchi qo'shilishda server o'yinchi ID va maxfiy token beradi — ular brauzerda (localStorage, bo'lmasa cookie)
+  PIN bo'yicha saqlanadi. Sahifa yangilansa, aloqa uzilsa yoki oyna yopilib qayta ochilsa — o'sha o'yinchi (ism, ball,
+  javoblar) davom etadi, dublikat yaratilmaydi. Shu token ikkinchi oynada ochilsa, yangi oyna egallaydi, eskisi
+  xabar bilan yopiladi. Tokensiz kishi band ismni (hatto aloqasi uzilgan o'yinchinikini) ololmaydi.
+- Aloqa uzilsa — avtomatik qayta ulanish (oraliq 0,4 s dan 5 s gacha oshib boradi), server joriy holatni (savol,
+  qolgan vaqt, ball) qayta yuboradi. Aloqasiz bosilgan javob ulanish tiklanganda yuboriladi.
+
+**Ball (har bir savol uchun, butun son):** to'g'ri javob — 500 + tezlik uchun 500 gacha, noto'g'ri yoki javobsiz — 0.
+`ball = round((1 − (t / vaqt) / 2) × 1000)` — `t` javob vaqti (ms) **serverda** o'lchanadi: savol ochilgan paytdan
+javob serverga yetib kelgan paytgacha (mijoz yuborgan vaqtga ishonilmaydi).
+- 0,5 s gacha (shu jumladan aynan 0,5 s) javob — to'liq **1000** ball; vaqt oxirida — 500; yarmida — 750.
+- Hisob aniq kasrlar bilan, faqat oxirida bir marta yaxlitlanadi (0,5 — yuqoriga). Funksiya: `app/octagon.py` →
+  `calculate_score(is_correct, response_time_ms, timer_ms, max_points=1000)`.
+- Har savolga bitta javob (birinchisi hisoblanadi). Server vaqti tugagach kelgan javob qabul qilinmaydi — tarmoq
+  kechikishi o'quvchi hisobiga ketadi; shuning uchun telefondagi taymer o'lchangan kechikish (ping) bo'yicha biroz
+  oldinroq tugaydi.
+- Reytingda teng ball: kam umumiy javob vaqti (javobsiz savol — to'liq vaqt hisoblanadi), so'ng ism bo'yicha.
+
+**4 tadan ko'p variantli savollar** (o'yinda ko'pi bilan 4 ta shakl): o'qituvchi tanlaydi — **qisqartirish**
+(standart: to'g'ri javob + tasodifiy 3 ta noto'g'ri variant) yoki **o'yinga olmaslik**. 2 variantli (ha/yo'q) savollar
+2 ta katta tugma bilan ko'rsatiladi.
+
+**Cheklovlar:** o'yin holati server xotirasida (bitta server nusxasi uchun; Railway'da `numReplicas: 1`), ~2 soat
+faolsiz qolgan o'yinlar o'chiriladi, server qayta ishga tushsa davom etayotgan o'yinlar yo'qoladi. Bitta o'yinda
+300 tagacha o'quvchi, bitta o'qituvchida 5 tagacha tugallanmagan o'yin. Noto'g'ri PIN urinishlari IP bo'yicha
+cheklangan (5 daqiqada 20 ta), bitta IP dan qo'shilish — 10 daqiqada 200 ta (maktab tarmog'i uchun).
 
 ## Balloon Pop — jamoaviy sinf o'yini
 
@@ -71,8 +128,17 @@ Menyudagi **Boshqaruv** bo'limi faqat administratorlarga ko'rinadi (server ham b
 | Rol | Kim | Huquqlar |
 |---|---|---|
 | **Bosh administrator** (tizim egasi) | login `admin` (`TD_SUPERADMIN` bilan o'zgartirish mumkin) | hammasi: test mavzulari va **foydalanuvchilarni boshqarish** — yaratish, bloklash, parolni tiklash, admin qilish, o'chirish, ro'yxatdan o'tishni yopish |
-| **Administrator** | bosh administrator tayinlagan foydalanuvchilar (birinchi ro'yxatdan o'tgan foydalanuvchi ham) | test mavzularini yuklash va boshqarish; foydalanuvchilar ro'yxatini **faqat ko'rish** |
-| Foydalanuvchi | qolganlar | duel, o'rganish, Balloon Pop, reyting |
+| **Administrator** | bosh administrator tayinlagan foydalanuvchilar (birinchi ro'yxatdan o'tgan foydalanuvchi ham) | test mavzularini yuklash va boshqarish; o'qituvchi huquqlari; foydalanuvchilar ro'yxatini **faqat ko'rish** |
+| **O'qituvchi** | bosh administrator tayinlagan foydalanuvchilar | «O'yinlar» paneli: Balloon Pop va Octagon o'yinlarini yaratish va o'tkazish |
+| Foydalanuvchi | qolganlar | duel, o'rganish, reyting |
+
+- **O'qituvchi rolini berish:** bosh administrator — «Boshqaruv» → «Foydalanuvchilar» → qatordagi «O'qituvchi qilish»
+  tugmasi (yoki yangi akkaunt yaratishda «Rol: O'qituvchi»). Rol olib qo'yilsa, foydalanuvchining menyusi darhol
+  yangilanadi va uning Octagon o'yinlari yopiladi. Eski bazalarga `users.is_teacher` ustuni ishga tushishda
+  avtomatik qo'shiladi.
+- «O'yinlar» bo'limi o'qituvchi bo'lmaganlarga menyuda ko'rinmaydi, to'g'ridan-to'g'ri havola (`#/games…`,
+  eski `#/balloon`) bosh sahifaga qaytaradi, server esa o'yin yaratish/boshqarish so'rovlariga (REST va WebSocket)
+  403 qaytaradi. O'quvchilarning qo'shilish sahifasi (`/play`) — ommaviy, menyuda yo'q.
 
 - `admin` logini band qilingan: uni faqat **birinchi** foydalanuvchi sifatida ro'yxatdan o'tkazish mumkin. Yangi
   serverda birinchi bo'lib `admin` loginini ro'yxatdan o'tkazing.
@@ -147,6 +213,8 @@ Keyingi savol
 | `TD_QUESTION_TIME` | `15` | Bitta savol uchun vaqt (soniya) |
 | `TD_AFK_LIMIT` | `30` | Javobsiz qolish chegarasi (soniya) |
 | `TD_DISCONNECT_GRACE` | `10` | Aloqa uzilganda qaytish uchun vaqt (soniya) |
+| `TD_OCTAGON_READY` | `3` | Octagon: har bir savol oldidan «tayyorlaning» sanog'i (soniya) |
+| `TD_OCTAGON_TTL` | `7200` | Octagon: faolsiz o'yin xotiradan o'chiriladigan vaqt (soniya) |
 
 Misol: `TD_PORT=9000 TD_ADMINS=bekzod python run.py`
 
@@ -196,11 +264,30 @@ pip install pytest
 python -m pytest
 ```
 
+- `tests/test_octagon.py` — ball hisoblash (0,5 s, yarim/to'liq vaqt, 1 ms chegaralari, turli vaqtlar), ismlar, o'yin
+  dvigateli (soxta soat bilan: lobbi, vaqt, kech qo'shilish, qayta ulanish, ikkinchi oyna, band ism, o'quvchi
+  xabarlarida matn yo'qligi, tozalash);
+- `tests/test_octagon_api.py` — rollar va 403/401 (REST va WebSocket), `/play`, haqiqiy WebSocket orqali to'liq o'yin;
+- `tests/test_qr.py` — QR kod kodlovchisi.
+
+Brauzerdagi to'liq tekshiruv (Playwright; ilovaning o'ziga kerak emas):
+
+```bash
+npm i -D playwright && npx playwright install chromium
+node e2e/octagon.e2e.js        # o'zi vaqtinchalik server ishga tushiradi; skrinshotlar: e2e/screenshots/
+```
+
+U rollarni, to'liq o'yinni (PIN/QR, kech qo'shilish, qayta ulanish, ikkinchi oyna, band ism, tarmoq uzilishi),
+o'quvchi xabarlarini va 360 / 375 / 768 / 1280 px kengliklarni (gorizontal siljish yo'q, tugmalar ≥ 48 px) tekshiradi.
+
 ## Loyiha tuzilishi
 
 ```
-app/        backend (aiohttp): server, REST API, WebSocket, duel mexanizmi, Balloon Pop qoidalari, fayl parseri, SQLite
-static/     frontend (HTML/CSS/JS; Balloon Pop sahnasi — static/js/balloon-scene.js)
-tests/      testlar
+app/        backend (aiohttp): server, REST API, WebSocket, duel mexanizmi, Balloon Pop qoidalari, Octagon (app/octagon.py),
+            QR kod (app/qr.py), rollar (app/roles.py), fayl parseri, SQLite
+static/     frontend (HTML/CSS/JS; Balloon Pop sahnasi — static/js/balloon-scene.js;
+            o'quvchilar sahifasi — static/play.html + static/js/play.js + static/css/play.css)
+tests/      testlar (pytest)
+e2e/        brauzer testlari (Playwright)
 run.py      ishga tushirish nuqtasi
 ```

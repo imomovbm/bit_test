@@ -122,7 +122,7 @@ async def _flow(tmp_path):
             msg = await ws.receive_json(timeout=3)
             if msg["t"] == "account":
                 break
-        assert msg["d"] == {"isAdmin": True}
+        assert msg["d"] == {"isAdmin": True, "isTeacher": True}
         await ws.close()
         assert (await call(student, "GET", "/api/admin/overview"))[0] == 200
         # oddiy administrator: mavzularni boshqaradi, foydalanuvchilarni faqat ko'radi

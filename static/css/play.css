@@ -1,0 +1,367 @@
+/* O'quvchilar sahifasi (/play): telefon uchun, mustaqil (asosiy app.css yuklanmaydi), tashqi shriftlarsiz. */
+:root {
+  --bg1: #2c2391;
+  --bg2: #4a3fe0;
+  --card: #ffffff;
+  --text: #17153a;
+  --muted: #625f86;
+  --good: #1d8a3b;
+  --bad: #c9283a;
+  --none: #5b5f73;
+  --radius: 18px;
+  --top-h: 52px;
+  color-scheme: light;
+  -webkit-text-size-adjust: 100%;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; min-height: 100%; }
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif;
+  background: linear-gradient(160deg, var(--bg1), var(--bg2));
+  background-attachment: fixed;
+  color: #fff;
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#play {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  transition: background-color 0.25s;
+}
+
+#play.pl-res-good { background: var(--good); }
+#play.pl-res-bad { background: var(--bad); }
+#play.pl-res-none { background: var(--none); }
+
+.pl-boot { flex: 1; }
+
+/* ------------------------------------------------------------- yuqori panel */
+.pl-top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: calc(var(--top-h) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left));
+  background: rgba(10, 8, 40, 0.32);
+  backdrop-filter: blur(6px);
+}
+
+.pl-brand { font-weight: 800; font-size: 19px; letter-spacing: 0.02em; }
+
+.pl-pin { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.pl-pin span { font-size: 12px; font-weight: 700; opacity: 0.75; letter-spacing: 0.08em; }
+.pl-pin b { font-size: 22px; font-weight: 800; letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+
+.pl-me { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pl-nick { font-weight: 700; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-score {
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.18);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pl-score small { font-weight: 600; opacity: 0.8; }
+
+.pl-conn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #ffd25a;
+  color: #2b2000;
+  font-weight: 700;
+  font-size: 14px;
+  text-align: center;
+}
+.pl-conn[hidden] { display: none; }
+
+/* -------------------------------------------------------------------- sahna */
+.pl-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 16px max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.pl-card {
+  background: var(--card);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 24px 20px;
+  box-shadow: 0 18px 50px rgba(10, 8, 40, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
+}
+.pl-card h1 { margin: 0; font-size: 24px; text-align: center; }
+.pl-center { align-items: center; text-align: center; }
+
+.pl-muted { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; text-align: center; }
+.pl-wait .pl-muted, .pl-result .pl-muted, .pl-final .pl-muted { color: rgba(255, 255, 255, 0.82); }
+
+.pl-input {
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 16px;
+  border: 2px solid #cfcde6;
+  border-radius: 14px;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--text);
+  background: #fff;
+}
+.pl-input:focus { outline: none; border-color: var(--bg2); box-shadow: 0 0 0 4px rgba(74, 63, 224, 0.22); }
+.pl-pin-input { font-size: 30px; letter-spacing: 0.12em; font-variant-numeric: tabular-nums; }
+
+.pl-error { margin: 0; color: var(--bad); font-weight: 700; text-align: center; font-size: 15px; }
+.pl-error[hidden] { display: none; }
+
+.pl-btn {
+  min-height: 56px;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 14px;
+  background: #17153a;
+  color: #fff;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.pl-btn:disabled { opacity: 0.6; cursor: default; }
+.pl-btn.ghost { background: rgba(255, 255, 255, 0.16); border: 2px solid rgba(255, 255, 255, 0.5); }
+.pl-btn:focus-visible, .pl-link:focus-visible, .pl-answer:focus-visible { outline: 3px solid #ffd25a; outline-offset: 3px; }
+
+.pl-link {
+  min-height: 48px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* -------------------------------------------------------------- kutish ekranlari */
+.pl-wait, .pl-result, .pl-final {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+}
+.pl-wait h1, .pl-result h1, .pl-final h1 { margin: 0; font-size: clamp(26px, 7vw, 40px); line-height: 1.15; }
+
+.pl-big-nick {
+  margin: 0;
+  max-width: 100%;
+  padding: 8px 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: clamp(22px, 6vw, 32px);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.pl-qlabel { margin: 0; font-weight: 800; font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.85; }
+
+.pl-pulse {
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  font-size: 42px;
+  font-weight: 800;
+  animation: pl-pulse 1.6s ease-in-out infinite;
+}
+
+.pl-count {
+  width: clamp(120px, 38vw, 180px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--bg1);
+  font-size: clamp(64px, 20vw, 104px);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 14px 40px rgba(10, 8, 40, 0.35);
+}
+
+/* ------------------------------------------------------------- savol (shakllar) */
+#play.pl-phase-question .pl-stage { justify-content: stretch; max-width: 960px; }
+
+.pl-question {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.pl-qhead { display: flex; align-items: center; gap: 12px; }
+.pl-qhead .pl-qlabel { white-space: nowrap; }
+
+.pl-timer { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 120px; width: 100%; }
+.pl-wait .pl-timer { max-width: 360px; }
+.pl-timer-bar {
+  flex: 1;
+  height: 10px;
+  border-radius: 99px;
+  background: #ffd25a;
+  transform-origin: left center;
+  transition: transform 0.2s linear;
+  box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0);
+}
+.pl-timer-num { min-width: 2.2em; text-align: right; font-weight: 900; font-size: 22px; font-variant-numeric: tabular-nums; }
+
+.pl-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  min-height: 260px;
+}
+.pl-grid.n2 { grid-template-rows: 1fr; }
+.pl-grid.n3 > :last-child { grid-column: 1 / -1; }
+
+.pl-answer {
+  display: grid;
+  place-items: center;
+  min-height: 96px;
+  border: 0;
+  border-radius: 18px;
+  cursor: pointer;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.22), 0 10px 24px rgba(0, 0, 0, 0.2);
+  transition: transform 0.08s, box-shadow 0.08s;
+  touch-action: manipulation;
+}
+.pl-answer svg { width: clamp(56px, 20vmin, 132px); height: auto; filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.2)); }
+.pl-answer:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.22), 0 6px 14px rgba(0, 0, 0, 0.2); }
+
+.pl-shape {
+  display: inline-grid;
+  place-items: center;
+  padding: 14px;
+  border-radius: 18px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25);
+}
+
+/* ------------------------------------------------------------------ natijalar */
+.pl-res-ic {
+  width: 104px;
+  height: 104px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  font-size: 56px;
+  font-weight: 900;
+  color: var(--good);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.25);
+}
+.pl-result.bad .pl-res-ic, .pl-res-ic.bad { color: var(--bad); }
+.pl-result.none .pl-res-ic, .pl-res-ic.none { color: var(--none); }
+
+.pl-points { margin: 0; font-size: clamp(28px, 8vw, 40px); font-weight: 900; font-variant-numeric: tabular-nums; }
+
+.pl-correct-was { display: flex; align-items: center; gap: 12px; font-weight: 700; }
+.pl-correct-was .pl-shape { padding: 8px; border-radius: 12px; }
+
+.pl-rank {
+  margin: 0;
+  padding: 10px 18px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------- podium */
+.pl-medal { font-size: 76px; line-height: 1; }
+.pl-place { margin: 0; font-size: clamp(34px, 10vw, 52px); font-weight: 900; }
+
+.pl-top3 {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pl-top3 li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 17px;
+}
+.pl-top3 li.me { background: rgba(255, 210, 90, 0.35); }
+.pl-top3-n { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #fff; color: var(--bg1); font-weight: 900; flex: none; }
+.pl-top3-nick { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.pl-top3 b { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- spinner */
+.pl-spin {
+  width: 18px;
+  height: 18px;
+  border: 3px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pl-spin 0.8s linear infinite;
+  flex: none;
+}
+.pl-spin.lg { width: 44px; height: 44px; border-width: 4px; color: var(--bg2); }
+
+@keyframes pl-spin { to { transform: rotate(360deg); } }
+@keyframes pl-pulse { 50% { transform: scale(1.08); background: rgba(255, 255, 255, 0.28); } }
+
+/* telefon yonboshlab ushlanganda (past balandlik) */
+@media (max-height: 480px) {
+  :root { --top-h: 44px; }
+  .pl-stage { padding-top: 8px; padding-bottom: 8px; }
+  .pl-grid { min-height: 0; }
+  .pl-answer { min-height: 64px; }
+  .pl-count, .pl-res-ic, .pl-pulse { width: 84px; height: 84px; font-size: 44px; }
+  .pl-medal { font-size: 48px; }
+}
+
+@media (min-width: 700px) {
+  .pl-grid { gap: 16px; }
+  .pl-card { padding: 32px 28px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/
-.claude
+.claudee2e/screenshots/
+node_modules/

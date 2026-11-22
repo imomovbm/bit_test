@@ -12,11 +12,12 @@ from urllib.parse import quote, urlsplit
 
 from aiohttp import web
 
-from . import balloon, config
+from . import balloon, config, octagon
 from .db import now_ms
 from .hub import prepare_question
-from .keys import DB, HUB, USER
+from .keys import DB, HUB, OCTAGON, USER
 from .parser import QuestionError, format_questions, parse_questions, validate_question
+from .roles import is_superadmin, is_teacher
 from .security import RateLimiter, hash_password, new_token, token_hash, verify_password
 
 log = logging.getLogger("testduel.api")
@@ -76,7 +77,7 @@ MAX_BODY = 256 * 1024  # oddiy so'rovlar uchun; katta fayllar faqat /api/admin/ 
 async def guard_middleware(request: web.Request, handler):
     """Boshqa saytdan yuborilgan so'rovlarni va boshqaruvdan tashqaridagi katta so'rovlarni rad etadi."""
     writes = request.path.startswith("/api/") and request.method not in ("GET", "HEAD", "OPTIONS")
-    if (writes or request.path == "/ws") and not same_origin(request):
+    if (writes or request.path.startswith("/ws")) and not same_origin(request):
         return web.json_response({"error": "So'rov boshqa saytdan yuborilgan"}, status=403, dumps=_dumps)
     if writes and not request.path.startswith("/api/admin/"):
         size = request.content_length
@@ -117,15 +118,17 @@ def require_user(request: web.Request) -> dict:
     return user
 
 
-def is_superadmin(user: dict | None) -> bool:
-    """Bosh administrator (tizim egasi) — login config.SUPERADMIN_LOGIN bo'lgan foydalanuvchi."""
-    return bool(user) and user["login"].casefold() == config.SUPERADMIN_LOGIN.casefold()
-
-
 def require_admin(request: web.Request) -> dict:
     user = require_user(request)
     if not (user["is_admin"] or is_superadmin(user)):
         raise ApiError("Bu amal faqat administrator uchun", 403)
+    return user
+
+
+def require_teacher(request: web.Request) -> dict:
+    user = require_user(request)
+    if not is_teacher(user):
+        raise ApiError("Bu amal faqat o'qituvchi yoki administrator uchun", 403)
     return user
 
 
@@ -155,7 +158,13 @@ def int_param(request: web.Request, name: str) -> int:
 
 def public_user(user: dict) -> dict:
     owner = is_superadmin(user)
-    return {"id": user["id"], "login": user["login"], "isAdmin": bool(user["is_admin"]) or owner, "isSuperadmin": owner}
+    return {
+        "id": user["id"],
+        "login": user["login"],
+        "isAdmin": bool(user["is_admin"]) or owner,
+        "isSuperadmin": owner,
+        "isTeacher": is_teacher(user),  # o'yinlar paneli (administratorlarda ham bor)
+    }
 
 
 # Lotin harflariga o'xshash kirill/yunon harflari: "аdmin" (kirillcha "а") kabi soxta loginlarni aniqlash uchun.
@@ -426,7 +435,7 @@ def balloon_json(game_id: int, state: dict) -> dict:
 
 
 def own_balloon_game(request: web.Request) -> dict:
-    user = require_user(request)
+    user = require_teacher(request)
     game = request.app[DB].balloon_game(int_param(request, "gid"))
     if not game or game["owner_id"] != user["id"]:
         raise ApiError("O'yin topilmadi", 404)
@@ -435,14 +444,14 @@ def own_balloon_game(request: web.Request) -> dict:
 
 @routes.get("/api/balloon/games")
 async def balloon_list(request: web.Request):
-    user = require_user(request)
+    user = require_teacher(request)
     games = [{"id": g["id"], **balloon.summary(g["state"])} for g in request.app[DB].balloon_games(user["id"])]
     return ok({"games": games})
 
 
 @routes.post("/api/balloon/games")
 async def balloon_create(request: web.Request):
-    user = require_user(request)
+    user = require_teacher(request)
     data = await read_json(request)
     try:
         settings = balloon.clean_settings(data)
@@ -498,6 +507,116 @@ async def balloon_action(request: web.Request):
 async def balloon_delete(request: web.Request):
     game = own_balloon_game(request)
     request.app[DB].delete_balloon_game(game["id"])
+    return ok()
+
+
+# ------------------------------------------------------------------ octagon
+HOST_RE = re.compile(r"^[A-Za-z0-9.\-]+(:[0-9]{1,5})?$|^\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?$")
+
+
+def octagon_call(fn, *args):
+    try:
+        return fn(*args)
+    except octagon.OctagonError as e:
+        raise ApiError(e.message, e.status)
+
+
+def public_base_url(request: web.Request) -> str:
+    """O'quvchilar qo'shiladigan sayt manzili (QR kod uchun). Kompyuterning o'zida (localhost) ochilgan bo'lsa —
+    tarmoqdagi manzil (LAN IP), aks holda telefonlar localhost'ga ulana olmaydi."""
+    secure = request.secure or (config.TRUST_PROXY and request.headers.get("X-Forwarded-Proto", "").startswith("https"))
+    host = request.host
+    if config.TRUST_PROXY and request.headers.get("X-Forwarded-Host"):
+        host = request.headers["X-Forwarded-Host"].split(",")[0].strip()
+    lan = request.app[HUB].lan_url
+    if not HOST_RE.fullmatch(host or ""):
+        return lan or "http://localhost"
+    hostname = urlsplit(f"//{host}").hostname or ""
+    if lan and (hostname in ("localhost", "::1", "0.0.0.0") or hostname.startswith("127.")):
+        return lan
+    return f"{'https' if secure else 'http'}://{host}"
+
+
+def end_teacher_games(app: web.Application, user_id: int, reason: str = "ended") -> None:
+    """O'qituvchi huquqi olib qo'yilsa, bloklansa yoki o'chirilsa — uning Octagon o'yinlari yopiladi."""
+    app[OCTAGON].end_games_of(user_id, reason)
+
+
+@routes.get("/api/octagon/topics")
+async def octagon_topics(request: web.Request):
+    """O'yin uchun mavzular: savollar soni va 4 tadan ko'p variantli savollar soni."""
+    require_teacher(request)
+    db = request.app[DB]
+    long_counts = db.long_option_counts(octagon.MAX_OPTIONS)
+    topics = [
+        {**topic_json(t), "longCount": long_counts.get(t["id"], 0)}
+        for t in db.list_topics()
+        if t["question_count"] > 0 and t["active"]
+    ]
+    return ok({
+        "topics": topics,
+        "limits": {
+            "minTime": octagon.MIN_TIME, "maxTime": octagon.MAX_TIME, "defaultTime": octagon.DEFAULT_TIME,
+            "maxQuestions": octagon.MAX_QUESTIONS, "defaultQuestions": octagon.DEFAULT_QUESTIONS,
+            "maxOptions": octagon.MAX_OPTIONS, "readySeconds": config.OCTAGON_READY,
+        },
+    })
+
+
+@routes.post("/api/octagon/games")
+async def octagon_create(request: web.Request):
+    user = require_teacher(request)
+    data = await read_json(request)
+    settings = octagon_call(octagon.clean_settings, data)
+    db = request.app[DB]
+    topic_id = data.get("topicId")
+    topic = db.get_topic(topic_id) if valid_id(topic_id) else None
+    if not topic or not topic["active"]:
+        if topic_id is None:
+            raise ApiError("Mavzuni tanlang")
+        raise ApiError("Mavzu topilmadi — u o'chirilgan yoki yopilgan bo'lishi mumkin", 404)
+    if topic["question_count"] < 1:
+        raise ApiError("Bu mavzuda savollar yo'q")
+    hub = request.app[OCTAGON]
+    rows = db.topic_questions(topic["id"])
+    game = octagon_call(hub.create_game, user, topic, rows, settings, public_base_url(request))
+    return ok({"game": hub.host_state(game)}, status=201)
+
+
+@routes.get("/api/octagon/games")
+async def octagon_list(request: web.Request):
+    user = require_teacher(request)
+    hub = request.app[OCTAGON]
+    return ok({"games": [hub.game_summary(g) for g in hub.games_of(user["id"])]})
+
+
+@routes.get("/api/octagon/games/{pin}")
+async def octagon_get(request: web.Request):
+    user = require_teacher(request)
+    hub = request.app[OCTAGON]
+    game = octagon_call(hub.owned_game, user, request.match_info["pin"])
+    return ok({"game": hub.host_state(game)})
+
+
+@routes.post("/api/octagon/games/{pin}/action")
+async def octagon_action(request: web.Request):
+    """O'qituvchi amallari: start | next | skip | end | kick {id} | settings {timeLimit} | close."""
+    user = require_teacher(request)
+    data = await read_json(request)
+    action = data.get("action")
+    if not isinstance(action, str):
+        raise ApiError("Amalni ko'rsating")
+    hub = request.app[OCTAGON]
+    game = octagon_call(hub.host_action, user, request.match_info["pin"], action, data)
+    return ok({"game": hub.host_state(game) if game else None})
+
+
+@routes.delete("/api/octagon/games/{pin}")
+async def octagon_delete(request: web.Request):
+    user = require_teacher(request)
+    hub = request.app[OCTAGON]
+    game = octagon_call(hub.owned_game, user, request.match_info["pin"])
+    hub.close_game(game.pin, "closed")
     return ok()
 
 
@@ -881,6 +1000,7 @@ def admin_user_json(u: dict, hub) -> dict:
         "login": u["login"],
         "isAdmin": bool(u["is_admin"]) or owner,
         "isSuperadmin": owner,
+        "isTeacher": bool(u.get("is_teacher")),  # o'qituvchi roli (administratorlarda bu huquq baribir bor)
         "blocked": bool(u["blocked"]),
         "createdAt": u["created_at"],
         "lastSeenAt": u.get("last_seen_at"),
@@ -919,7 +1039,7 @@ async def admin_overview(request: web.Request):
     users = [
         {
             "id": u["id"], "login": u["login"], "isAdmin": bool(u["is_admin"]) or is_superadmin(u), "isSuperadmin": is_superadmin(u),
-            "blocked": bool(u["blocked"]), "createdAt": u["created_at"], "online": hub.is_online(u["id"]),
+            "isTeacher": bool(u["is_teacher"]), "blocked": bool(u["blocked"]), "createdAt": u["created_at"], "online": hub.is_online(u["id"]),
         }
         for u in db.recent_users()
     ]
@@ -964,7 +1084,7 @@ async def admin_create_user(request: web.Request):
         raise ApiError("Bu login band. Boshqa login tanlang", 409)
     pass_hash = await in_thread(hash_password, password)
     try:
-        user_id = db.create_user(login, pass_hash, bool(data.get("isAdmin")))
+        user_id = db.create_user(login, pass_hash, bool(data.get("isAdmin")), bool(data.get("isTeacher")))
     except sqlite3.IntegrityError:
         raise ApiError("Bu login band. Boshqa login tanlang", 409)
     log.info("Administrator %s yangi foydalanuvchi yaratdi: %s", me_user["login"], login)
@@ -982,7 +1102,7 @@ async def admin_update_user(request: web.Request):
     data = await read_json(request)
     hub = request.app[HUB]
     is_self = uid == me_user["id"]
-    if ("isAdmin" in data or "blocked" in data) and is_self:
+    if ("isAdmin" in data or "isTeacher" in data or "blocked" in data) and is_self:
         raise ApiError("O'zingizning huquqlaringizni o'zgartira olmaysiz")
     password_hash = None
     if "password" in data:
@@ -991,13 +1111,23 @@ async def admin_update_user(request: web.Request):
         password_hash = await in_thread(hash_password, password)
     if not db.user_by_id(uid):  # kutish vaqtida o'chirilgan bo'lishi mumkin
         raise ApiError("Foydalanuvchi topilmadi", 404)
+    could_teach = is_teacher(target)
     if "isAdmin" in data:
         db.set_admin(uid, bool(data["isAdmin"]))
-        hub.send_user(uid, "account", {"isAdmin": bool(data["isAdmin"])})
+    if "isTeacher" in data:
+        db.set_teacher(uid, bool(data["isTeacher"]))
+        log.info("%s: o'qituvchi roli %s — %s", target["login"], "berildi" if data["isTeacher"] else "olindi", me_user["login"])
+    if "isAdmin" in data or "isTeacher" in data:
+        fresh = db.user_by_id(uid)
+        # foydalanuvchining ochiq oynalarida menyu darhol yangilanadi
+        hub.send_user(uid, "account", {"isAdmin": bool(fresh["is_admin"]) or is_superadmin(fresh), "isTeacher": is_teacher(fresh)})
+        if could_teach and not is_teacher(fresh):
+            end_teacher_games(request.app, uid, "O'qituvchi huquqi olib qo'yildi — o'yin yakunlandi")
     if "blocked" in data:
         db.set_blocked(uid, bool(data["blocked"]))
         if data["blocked"]:
             hub.kick_user(uid, "blocked")
+            end_teacher_games(request.app, uid, "O'yin yakunlandi")
         log.info("%s %s — %s", target["login"], "bloklandi" if data["blocked"] else "blokdan chiqarildi", me_user["login"])
     if password_hash is not None:
         # o'z parolini o'zgartirgan administrator joriy qurilmada tizimda qoladi
@@ -1018,5 +1148,6 @@ async def admin_delete_user(request: web.Request):
     if not db.user_by_id(uid):
         raise ApiError("Foydalanuvchi topilmadi", 404)
     request.app[HUB].purge_user(uid)
+    end_teacher_games(request.app, uid, "O'yin yakunlandi")
     db.delete_user(uid)
     return ok()

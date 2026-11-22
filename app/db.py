@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
     login_key   TEXT NOT NULL UNIQUE,
     pass_hash   TEXT NOT NULL,
     is_admin    INTEGER NOT NULL DEFAULT 0,
+    is_teacher  INTEGER NOT NULL DEFAULT 0,   -- o'qituvchi: o'yinlar (Balloon Pop, Octagon) yarata oladi
     blocked     INTEGER NOT NULL DEFAULT 0,
     created_at  INTEGER NOT NULL,
     last_seen_at INTEGER
@@ -116,6 +117,7 @@ MIGRATIONS = (
     ("users", "blocked", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "last_seen_at", "INTEGER"),
     ("topics", "active", "INTEGER NOT NULL DEFAULT 1"),
+    ("users", "is_teacher", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -214,10 +216,10 @@ class Database:
     def count_users(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
-    def create_user(self, login: str, pass_hash: str, is_admin: bool) -> int:
+    def create_user(self, login: str, pass_hash: str, is_admin: bool, is_teacher: bool = False) -> int:
         cur = self.conn.execute(
-            "INSERT INTO users (login, login_key, pass_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
-            (login, login.casefold(), pass_hash, int(is_admin), now_ms()),
+            "INSERT INTO users (login, login_key, pass_hash, is_admin, is_teacher, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (login, login.casefold(), pass_hash, int(is_admin), int(is_teacher), now_ms()),
         )
         return cur.lastrowid
 
@@ -233,7 +235,7 @@ class Database:
     def list_users(self) -> list[dict]:
         return self._all(
             """
-            SELECT u.id, u.login, u.is_admin, u.blocked, u.created_at, u.last_seen_at,
+            SELECT u.id, u.login, u.is_admin, u.is_teacher, u.blocked, u.created_at, u.last_seen_at,
                    (SELECT COUNT(*) FROM duels d WHERE d.p1_id = u.id OR d.p2_id = u.id) AS duels,
                    (SELECT COUNT(*) FROM practice_results p WHERE p.user_id = u.id) AS practices,
                    (SELECT COUNT(*) FROM balloon_games b WHERE b.owner_id = u.id) AS balloon_games
@@ -243,6 +245,9 @@ class Database:
 
     def set_admin(self, user_id: int, flag: bool) -> None:
         self.conn.execute("UPDATE users SET is_admin = ? WHERE id = ?", (int(flag), user_id))
+
+    def set_teacher(self, user_id: int, flag: bool) -> None:
+        self.conn.execute("UPDATE users SET is_teacher = ? WHERE id = ?", (int(flag), user_id))
 
     def set_blocked(self, user_id: int, flag: bool) -> None:
         """Bloklangan foydalanuvchi tizimga kira olmaydi; uning barcha sessiyalari o'chiriladi."""
@@ -274,7 +279,7 @@ class Database:
     def session_user(self, token_hash: str) -> dict | None:
         return self._one(
             """
-            SELECT u.id, u.login, u.is_admin FROM sessions s JOIN users u ON u.id = s.user_id
+            SELECT u.id, u.login, u.is_admin, u.is_teacher FROM sessions s JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = ? AND s.expires_at > ? AND u.blocked = 0
             """,
             (token_hash, now_ms()),
@@ -477,6 +482,15 @@ class Database:
             by_q.setdefault(r[0], []).append({"id": r[1], "name": r[2]})
         for i in items:
             i["topics"] = by_q.get(i["id"], [])
+
+    def long_option_counts(self, limit: int = 4) -> dict[int, int]:
+        """Har bir mavzuda nechta savolda `limit` tadan ko'p variant bor (Octagon'da ko'pi bilan 4 ta shakl)."""
+        rows = self.conn.execute(
+            """SELECT tq.topic_id, COUNT(*) FROM topic_questions tq JOIN questions q ON q.id = tq.question_id
+               WHERE json_array_length(q.options) > ? GROUP BY tq.topic_id""",
+            (limit,),
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
 
     def update_topic(self, topic_id: int, name: str | None = None, shuffle: bool | None = None, active: bool | None = None) -> None:
         if active is not None:
@@ -696,6 +710,7 @@ class Database:
             "users": {
                 "total": one("SELECT COUNT(*) FROM users"),
                 "admins": one("SELECT COUNT(*) FROM users WHERE is_admin = 1"),
+                "teachers": one("SELECT COUNT(*) FROM users WHERE is_teacher = 1 AND is_admin = 0"),
                 "blocked": one("SELECT COUNT(*) FROM users WHERE blocked = 1"),
                 "newWeek": one("SELECT COUNT(*) FROM users WHERE created_at >= ?", (since_ms,)),
             },
@@ -720,7 +735,7 @@ class Database:
 
     def recent_users(self, limit: int = 6) -> list[dict]:
         return self._all(
-            "SELECT id, login, is_admin, blocked, created_at FROM users ORDER BY created_at DESC, id DESC LIMIT ?",
+            "SELECT id, login, is_admin, is_teacher, blocked, created_at FROM users ORDER BY created_at DESC, id DESC LIMIT ?",
             (limit,),
         )
 

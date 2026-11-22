@@ -153,7 +153,8 @@ function gameRow(g) {
 function roleBadge(u) {
   if (u.blocked) return h('span.badge.bad', icon('lock', 11), 'bloklangan');
   if (u.isSuperadmin) return h('span.badge.owner', icon('crown', 11), 'bosh admin');
-  return u.isAdmin ? h('span.badge.admin', 'admin') : null;
+  if (u.isAdmin) return h('span.badge.admin', 'admin');
+  return u.isTeacher ? h('span.badge.teacher', 'oʻqituvchi') : null;
 }
 
 /** Ro'yxatdan o'tish holati: bosh administrator uchun almashtirgich, boshqalar uchun faqat ma'lumot. */
@@ -1134,6 +1135,7 @@ function bankSection(body, ctx, state, query) {
 const FILTERS = [
   ['all', 'Hammasi'],
   ['admins', 'Adminlar'],
+  ['teachers', 'Oʻqituvchilar'],
   ['members', 'Foydalanuvchilar'],
   ['online', 'Onlayn'],
   ['blocked', 'Bloklangan'],
@@ -1158,7 +1160,7 @@ function usersSection(body, ctx, state, query) {
         regBox)
       : h('div.card.adm-quick',
         h('div.alert.info.adm-readonly-note', icon('shield', 18), h('span',
-          'Foydalanuvchilarni (bloklash, parolni tiklash, admin qilish) faqat bosh administrator boshqaradi. Siz roʻyxatni koʻrishingiz mumkin.')),
+          'Foydalanuvchilarni (bloklash, parolni tiklash, admin yoki oʻqituvchi qilish) faqat bosh administrator boshqaradi. Siz roʻyxatni koʻrishingiz mumkin.')),
         regBox),
     h('div.adm-toolbar', search.el, filters),
     list);
@@ -1171,7 +1173,8 @@ function usersSection(body, ctx, state, query) {
   const match = {
     all: () => true,
     admins: (u) => u.isAdmin,
-    members: (u) => !u.isAdmin,
+    teachers: (u) => u.isTeacher && !u.isAdmin,
+    members: (u) => !u.isAdmin && !u.isTeacher,
     online: isOnline,
     blocked: (u) => u.blocked,
   };
@@ -1226,12 +1229,14 @@ function usersSection(body, ctx, state, query) {
       h('td.adm-td-role', h('div.adm-badges',
         u.isSuperadmin
           ? h('span.badge.owner', icon('crown', 11), 'bosh admin')
-          : u.isAdmin ? h('span.badge.admin', icon('shield', 11), 'admin') : h('span.badge.neutral', 'foydalanuvchi'),
+          : u.isAdmin ? h('span.badge.admin', icon('shield', 11), 'admin')
+            : u.isTeacher ? h('span.badge.teacher', icon('teacher', 11), 'oʻqituvchi') : h('span.badge.neutral', 'foydalanuvchi'),
         u.blocked ? h('span.badge.bad', icon('lock', 11), 'bloklangan') : null)),
       h('td.hide-sm.small', h('span.adm-activity', { title: 'duel · mashgʻulot · Balloon Pop' },
         h('span', icon('swords', 13), String(u.duels)), h('span', icon('book', 13), String(u.practices)), h('span', icon('balloon', 13), String(u.balloonGames)))),
       h('td.hide-sm.small.nowrap', online ? h('span.adm-online', 'hozir onlayn') : fmtAgo(u.lastSeenAt)),
       manage ? h('td.right.nowrap',
+        self || u.isAdmin ? null : btn('teacher', u.isTeacher ? 'Oʻqituvchi huquqini olish' : 'Oʻqituvchi qilish', () => toggleTeacher(u), u.isTeacher ? '.on' : ''),
         self ? null : btn('shield', u.isAdmin ? 'Admin huquqini olish' : 'Admin qilish', () => toggleAdmin(u), u.isAdmin ? '.on' : ''),
         btn('key', 'Parolni yangilash', () => resetPassword(u)),
         self ? null : btn(u.blocked ? 'unlock' : 'lock', u.blocked ? 'Blokdan chiqarish' : 'Bloklash', () => toggleBlock(u), u.blocked ? '.on' : ''),
@@ -1260,6 +1265,17 @@ function usersSection(body, ctx, state, query) {
       okText: u.isAdmin ? 'Huquqni olish' : 'Admin qilish',
     });
     if (ok) patch(u, { isAdmin: !u.isAdmin }, u.isAdmin ? `${u.login} endi oddiy foydalanuvchi` : `${u.login} endi administrator`);
+  }
+
+  async function toggleTeacher(u) {
+    const ok = await confirmDialog({
+      title: u.isTeacher ? 'Oʻqituvchi huquqini olish' : 'Oʻqituvchi qilish',
+      message: u.isTeacher
+        ? `${u.login} endi «Oʻyinlar» boʻlimini koʻrmaydi; uning davom etayotgan Octagon oʻyinlari yopiladi.`
+        : `${u.login} «Oʻyinlar» boʻlimida Balloon Pop va Octagon oʻyinlarini yaratib, boshqara oladi.`,
+      okText: u.isTeacher ? 'Huquqni olish' : 'Oʻqituvchi qilish',
+    });
+    if (ok) patch(u, { isTeacher: !u.isTeacher }, u.isTeacher ? `${u.login} endi oddiy foydalanuvchi` : `${u.login} endi oʻqituvchi`);
   }
 
   async function toggleBlock(u) {
@@ -1326,11 +1342,18 @@ function usersSection(body, ctx, state, query) {
   function createUser() {
     const login = h('input', { type: 'text', maxlength: 32, autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', placeholder: 'masalan: ali_valiyev' });
     const pass = passwordField(genPassword());
-    const admin = h('input', { type: 'checkbox' });
+    const group = `role-${Math.random().toString(36).slice(2)}`;
+    const roles = [
+      ['user', 'Foydalanuvchi', 'duel, oʻrganish, reyting'],
+      ['teacher', 'Oʻqituvchi', '+ «Oʻyinlar»: Balloon Pop va Octagon oʻyinlarini oʻtkazish'],
+      ['admin', 'Administrator', '+ test mavzulari va savollar banki (oʻqituvchi huquqlari bilan)'],
+    ].map(([value, title, hint]) => ({ value, input: h('input', { type: 'radio', name: group, value, checked: value === 'user' }), title, hint }));
+    const roleOf = () => roles.find((r) => r.input.checked).value;
     const err = h('div.field-error');
     const submit = async (m) => {
       err.textContent = '';
-      const body = { login: login.value.trim(), password: pass.input.value.trim(), isAdmin: admin.checked };
+      const role = roleOf();
+      const body = { login: login.value.trim(), password: pass.input.value.trim(), isAdmin: role === 'admin', isTeacher: role === 'teacher' };
       if (!/^[\p{L}\p{N}_.-]{3,32}$/u.test(body.login)) {
         err.textContent = 'Login 3–32 ta harf, raqam yoki . _ - belgilaridan iborat boʻlishi kerak';
         login.focus();
@@ -1357,7 +1380,7 @@ function usersSection(body, ctx, state, query) {
       body: [
         h('label.field', h('span.field-label', 'Login'), login),
         h('label.field', h('span.field-label', 'Parol'), pass.el, h('span.field-hint', 'Tasodifiy parol tayyorlab qoʻyildi — xohlasangiz oʻzgartiring.')),
-        h('label.check', admin, h('span', 'Administrator (test yuklash va foydalanuvchilarni boshqarish huquqi)')),
+        h('div.field', h('span.field-label', 'Rol'), ...roles.map((r) => h('label.check.adm-role', r.input, h('span', h('b', r.title), h('span.muted', ` — ${r.hint}`))))),
         err,
       ],
       actions: [{ text: 'Bekor qilish' }, { text: 'Yaratish', kind: 'primary', icon: 'userPlus', onClick: submit }],

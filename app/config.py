@@ -62,6 +62,10 @@ COUNTDOWN = 3.0         # duel boshlanishidan oldingi sanoq
 WAITING_TTL = 120.0     # kutayotgan foydalanuvchi aloqasi uzilsa, navbatda saqlanish vaqti
 RESULT_TTL = 600.0      # aloqasiz qolgan ishtirokchi uchun natijani saqlab turish vaqti
 
+# ---- Octagon (jonli viktorina) ----
+OCTAGON_READY = _float("TD_OCTAGON_READY", 3.0)    # har bir savol oldidan "tayyorlaning" sanog'i (soniya)
+OCTAGON_TTL = _float("TD_OCTAGON_TTL", 7200.0)     # shuncha soniya faolsiz qolgan o'yin xotiradan o'chiriladi
+
 # ---- Yuklash cheklovlari ----
 MAX_UPLOAD_CHARS = 10_000_000
 MAX_TOPIC_NAME = 120

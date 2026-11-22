@@ -1,14 +1,49 @@
 // Ilova: marshrutlar (router), umumiy qobiq (sarlavha, menyu) va global hodisalar.
-import { h, icon, logoMark, avatar, toast, confirmDialog, closeAllModals, beep, initAudio, isSoundOn, setSoundOn, fmtClock, confetti } from './lib.js';
+import { h, icon, logoMark, avatar, toast, confirmDialog, closeAllModals, beep, initAudio, isSoundOn, setSoundOn, fmtClock, confetti, spinner, emptyState } from './lib.js';
 import { api, setUnauthorizedHandler } from './api.js';
 import { live } from './live.js';
 import { authView } from './views/auth.js';
 import { duelView } from './views/duel.js';
 import { inviteView } from './views/invite.js';
 import { practiceView } from './views/practice.js';
-import { balloonView } from './views/balloon.js';
 import { statsView } from './views/stats.js';
-import { adminView } from './views/admin.js';
+
+/**
+ * Sahifa modulini faqat kerak bo'lganda yuklaydi (o'yinlar va boshqaruv paneli oddiy foydalanuvchilarga yuklanmaydi).
+ */
+function lazyView(load, name) {
+  let mod = null;
+  return (root, params, ctx, query) => {
+    let cleanup = null;
+    let dead = false;
+    const run = (m) => {
+      if (!dead) cleanup = m[name](root, params, ctx, query);
+    };
+    if (mod) {
+      run(mod);
+    } else {
+      root.append(h('div.card', spinner()));
+      load().then((m) => {
+        mod = m;
+        if (dead) return;
+        root.replaceChildren();
+        run(m);
+      }).catch((e) => {
+        console.error(e);
+        if (!dead) root.replaceChildren(emptyState('wifiOff', 'Sahifani yuklab boʻlmadi', 'Internet aloqasini tekshirib, sahifani yangilang.'));
+      });
+    }
+    return () => {
+      dead = true;
+      if (typeof cleanup === 'function') cleanup();
+    };
+  };
+}
+
+const gamesView = lazyView(() => import('./views/games.js'), 'gamesView');
+const balloonView = lazyView(() => import('./views/balloon.js'), 'balloonView');
+const octagonView = lazyView(() => import('./views/octagon.js'), 'octagonView');
+const adminView = lazyView(() => import('./views/admin.js'), 'adminView');
 
 const ROUTES = [
   { path: '/login', view: authView('login'), public: true },
@@ -17,8 +52,14 @@ const ROUTES = [
   { path: '/invite/:code', view: inviteView, nav: 'duel' },
   { path: '/practice', view: practiceView, nav: 'practice' },
   { path: '/practice/:id', view: practiceView, nav: 'practice' },
-  { path: '/balloon', view: balloonView, nav: 'balloon' },
-  { path: '/balloon/:id', view: balloonView, nav: 'balloon' },
+  // O'yinlar paneli — faqat o'qituvchilar va administratorlar (server ham 403 qaytaradi)
+  { path: '/games', view: gamesView, nav: 'games', teacher: true },
+  { path: '/games/balloon', view: balloonView, nav: 'games', teacher: true },
+  { path: '/games/balloon/:id', view: balloonView, nav: 'games', teacher: true },
+  { path: '/games/octagon', view: octagonView, nav: 'games', teacher: true },
+  { path: '/games/octagon/:pin', view: octagonView, nav: 'games', teacher: true },
+  { path: '/balloon', redirect: () => '/games/balloon' }, // eski havolalar
+  { path: '/balloon/:id', redirect: (p) => `/games/balloon/${encodeURIComponent(p.id)}` },
   { path: '/stats', view: statsView, nav: 'stats' },
   { path: '/admin', view: adminView, nav: 'admin', admin: true },
   { path: '/admin/:section', view: adminView, nav: 'admin', admin: true },
@@ -28,7 +69,7 @@ const ROUTES = [
 const NAV = [
   { id: 'duel', href: '#/duel', icon: 'swords', label: 'Duel' },
   { id: 'practice', href: '#/practice', icon: 'book', label: 'Oʻrganish' },
-  { id: 'balloon', href: '#/balloon', icon: 'balloon', label: 'Balloon Pop' },
+  { id: 'games', href: '#/games', icon: 'gamepad', label: 'Oʻyinlar', teacher: true },
   { id: 'stats', href: '#/stats', icon: 'trophy', label: 'Reyting' },
   { id: 'admin', href: '#/admin', icon: 'sliders', label: 'Boshqaruv', admin: true },
 ];
@@ -99,10 +140,16 @@ function render() {
       if (m && m.route.path === '/invite/:code') sessionStorage.setItem('td-invite', m.params.code);
       return redirect('/login');
     }
-  } else if (!m || m.route.public || (m.route.admin && !state.user.isAdmin)) {
+  } else if (m && m.route.redirect) {
+    return redirect(m.route.redirect(m.params));
+  } else if (!m || m.route.public || !allowed(m.route)) {
     return redirect('/duel');
   }
   mount(m, path, query);
+}
+
+function allowed(route) {
+  return !((route.admin && !state.user.isAdmin) || (route.teacher && !state.user.isTeacher));
 }
 
 function mount(m, path, query) {
@@ -186,7 +233,7 @@ function buildShell() {
 /** Sarlavha va pastki menyu (foydalanuvchi huquqlari o'zgarganda sahifani qayta yuklamasdan yangilanadi). */
 function buildNav(s) {
   const user = state.user;
-  const items = NAV.filter((n) => !n.admin || user.isAdmin);
+  const items = NAV.filter((n) => (!n.admin || user.isAdmin) && (!n.teacher || user.isTeacher));
   const topLinks = items.map((n) => h('a.nav-link', { href: n.href, title: n.label, 'aria-label': n.label, dataset: { nav: n.id } }, icon(n.icon, 18), h('span', n.label)));
   const bottomLinks = items.map((n) => h('a.bnav-link', { href: n.href, dataset: { nav: n.id } }, icon(n.icon, 22), h('span', n.label)));
   const onlineCount = h('b', '0');
@@ -194,7 +241,9 @@ function buildNav(s) {
   const connPill = h('span.pill.conn-pill', { hidden: true }, icon('wifiOff', 14), h('span.hide-sm', 'Ulanmoqda…'));
   const soundBtn = h('button.icon-btn', { type: 'button', title: 'Ovozni yoqish/oʻchirish', 'aria-label': 'Ovoz', onclick: toggleSound });
   const themeBtn = h('button.icon-btn', { type: 'button', title: 'Yorugʻ/qorongʻi rejim', 'aria-label': 'Mavzu rangi', onclick: toggleTheme });
-  const role = user.isSuperadmin ? h('span.badge.owner.hide-sm', 'bosh admin') : user.isAdmin ? h('span.badge.admin.hide-sm', 'admin') : null;
+  const role = user.isSuperadmin ? h('span.badge.owner.hide-sm', 'bosh admin')
+    : user.isAdmin ? h('span.badge.admin.hide-sm', 'admin')
+      : user.isTeacher ? h('span.badge.teacher.hide-sm', 'oʻqituvchi') : null;
   const userBox = h('div.user-box', { title: user.login }, avatar(user.login, 'sm'), h('span.user-name.hide-sm', user.login), role);
   const logoutBtn = h('button.icon-btn', { type: 'button', title: 'Chiqish', 'aria-label': 'Chiqish', onclick: logout }, icon('logout', 18));
   const header = h('header.app-header',
@@ -367,11 +416,21 @@ live.on('unauthorized', (reason) => {
 
 // Administrator foydalanuvchi huquqlarini o'zgartirdi — menyuni darhol yangilaymiz.
 live.on('account', (d) => {
-  if (!state.user || !d || typeof d.isAdmin !== 'boolean' || d.isAdmin === state.user.isAdmin) return;
-  state.user = { ...state.user, isAdmin: d.isAdmin };
+  if (!state.user || !d) return;
+  const next = { ...state.user };
+  if (typeof d.isAdmin === 'boolean') next.isAdmin = d.isAdmin;
+  if (typeof d.isTeacher === 'boolean') next.isTeacher = d.isTeacher;
+  const adminChanged = next.isAdmin !== state.user.isAdmin;
+  const teacherChanged = next.isTeacher !== state.user.isTeacher;
+  if (!adminChanged && !teacherChanged) return;
+  state.user = next;
   refreshNav();
-  toast(d.isAdmin ? 'Sizga administrator huquqi berildi — «Boshqaruv» boʻlimi ochildi' : 'Administrator huquqingiz olib qoʻyildi', 'info', 6000);
-  if (!d.isAdmin && current && current.route.admin) navigate('/duel');
+  if (adminChanged) {
+    toast(next.isAdmin ? 'Sizga administrator huquqi berildi — «Boshqaruv» boʻlimi ochildi' : 'Administrator huquqingiz olib qoʻyildi', 'info', 6000);
+  } else {
+    toast(next.isTeacher ? 'Sizga oʻqituvchi huquqi berildi — «Oʻyinlar» boʻlimi ochildi' : 'Oʻqituvchi huquqingiz olib qoʻyildi', 'info', 6000);
+  }
+  if (current && !allowed(current.route)) navigate('/duel');
 });
 setUnauthorizedHandler(() => live.emit('unauthorized'));
 

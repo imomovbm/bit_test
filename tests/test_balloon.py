@@ -312,13 +312,17 @@ async def _api_flow(tmp_path):
     app = create_app(db_path=tmp_path / "bp.db")
     server = TestServer(app)
     await server.start_server()
-    teacher, other = TestClient(server), TestClient(server)
+    teacher, other, student = TestClient(server), TestClient(server), TestClient(server)
     try:
-        for c in (teacher, other):
+        for c in (teacher, other, student):
             await c.start_server()
         assert (await teacher.get("/api/balloon/games")).status == 401
-        await teacher.post("/api/auth/register", json={"login": "ustoz", "password": "1234"})
+        await teacher.post("/api/auth/register", json={"login": "admin", "password": "1234"})  # birinchi — bosh admin
         await other.post("/api/auth/register", json={"login": "begona", "password": "1234"})
+        await student.post("/api/auth/register", json={"login": "talaba", "password": "1234"})
+        # Balloon Pop faqat o'qituvchilar uchun: oddiy foydalanuvchi — 403
+        assert (await student.get("/api/balloon/games")).status == 403
+        assert (await other.get("/api/balloon/games")).status == 403
         r = await teacher.post("/api/admin/topics", json={"name": "Sinov", "content": SAMPLE, "shuffle": True})
         topic = (await r.json())["topic"]
 
@@ -333,7 +337,12 @@ async def _api_flow(tmp_path):
         gid = game["id"]
         assert game["phase"] == "rps" and game["teams"][0]["left"] == 10 and "deck" not in game
 
-        # boshqa foydalanuvchi o'yinni ko'ra olmaydi
+        # oddiy foydalanuvchi — 403; boshqa o'qituvchi esa birovning o'yinini ko'ra olmaydi — 404
+        assert (await student.get(f"/api/balloon/games/{gid}")).status == 403
+        assert (await student.post("/api/balloon/games", json=body)).status == 403
+        assert (await student.post(f"/api/balloon/games/{gid}/action", json={"type": "end"})).status == 403
+        assert (await teacher.patch("/api/admin/users/2", json={"isTeacher": True})).status == 200
+        assert (await other.get("/api/balloon/games")).status == 200
         assert (await other.get(f"/api/balloon/games/{gid}")).status == 404
         assert (await other.post(f"/api/balloon/games/{gid}/action", json={"type": "end"})).status == 404
 
@@ -389,4 +398,5 @@ async def _api_flow(tmp_path):
     finally:
         await teacher.close()
         await other.close()
+        await student.close()
         await server.close()

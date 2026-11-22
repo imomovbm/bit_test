@@ -222,6 +222,7 @@ function lobbyView(root, ctx) {
     h('p.small.muted.bp-tip', icon('maximize', 14), 'Maslahat: oʻyinni proyektor yoki interaktiv doskada toʻliq ekran rejimida oʻtkazing. Sharlarni sichqoncha yoki barmoq bilan bosib portlatish mumkin.'));
 
   root.append(h('section.screen.bp-lobby',
+    h('a.back-link.games-back', { href: '#/games' }, icon('left', 16), 'Oʻyinlar'),
     h('div.page-head', h('div',
       h('h1.bp-title', 'Balloon Pop'),
       h('p.muted', 'Jamoaviy sinf oʻyini: savollarga javob bering, zar tashlang va raqib sharlarini portlating. Sharlari tugagan jamoa akulalarga yem boʻladi!'))),
@@ -272,7 +273,7 @@ function lobbyView(root, ctx) {
       h('div.resume-text',
         h('b', 'Tugallanmagan oʻyin'),
         h('span.muted', `${active.topicName} · ${active.round}-raund · `, ...vsLine(active))),
-      h('a.btn.primary.sm', { href: `#/balloon/${active.id}` }, icon('play', 14), 'Davom ettirish')) : '');
+      h('a.btn.primary.sm', { href: `#/games/balloon/${active.id}` }, icon('play', 14), 'Davom ettirish')) : '');
     if (!games.length) {
       historyBox.replaceChildren(h('div.card.muted.center', 'Hali oʻyin oʻtkazilmagan. Birinchi oʻyinni boshlang!'));
       return;
@@ -283,7 +284,7 @@ function lobbyView(root, ctx) {
         h('div.small.muted', `${g.topicName} · ${g.round}-raund · ${g.balloons} tadan shar · ${fmtDate(g.updatedAt)}`)),
       h('div.bp-hrow-side',
         resultBadge(g),
-        h('a.btn.ghost.sm', { href: `#/balloon/${g.id}` }, g.phase === 'finished' ? 'Koʻrish' : 'Davom ettirish'),
+        h('a.btn.ghost.sm', { href: `#/games/balloon/${g.id}` }, g.phase === 'finished' ? 'Koʻrish' : 'Davom ettirish'),
         h('button.icon-btn.danger', { type: 'button', title: 'Oʻchirish', 'aria-label': 'Oʻyinni oʻchirish', onclick: () => remove(g) }, icon('trash', 16)))))));
   }
 
@@ -334,7 +335,7 @@ function lobbyView(root, ctx) {
     startBtn.disabled = true;
     try {
       const res = await api('/api/balloon/games', { method: 'POST', body: { topicId, teams, balloons: prefs.balloons, answerTime: prefs.answerTime } });
-      ctx.navigate(`/balloon/${res.game.id}`);
+      ctx.navigate(`/games/balloon/${res.game.id}`);
     } catch (e) {
       err.textContent = e.message;
       startBtn.disabled = false;
@@ -384,7 +385,7 @@ function gameView(root, gameId, ctx) {
   const endBtn = h('button.btn.ghost.sm', { type: 'button', onclick: endGame }, icon('flag', 14), h('span.hide-sm', 'Yakunlash'));
   const title = h('div.practice-title.bp-topic-title');
   const top = h('div.practice-top.bp-top',
-    h('a.back-link', { href: '#/balloon' }, icon('left', 16), h('span.hide-sm', 'Balloon Pop')),
+    h('a.back-link', { href: '#/games/balloon' }, icon('left', 16), h('span.hide-sm', 'Balloon Pop')),
     title,
     h('div.bp-tools', fsBtn, endBtn));
   const section = h('section.screen.bp-game', top, board, stage, panel);
@@ -406,7 +407,7 @@ function gameView(root, gameId, ctx) {
       game = res.game;
     } catch (e) {
       if (!alive) return;
-      root.replaceChildren(emptyState('alert', 'Oʻyinni ochib boʻlmadi', e.message, h('a.btn.primary', { href: '#/balloon' }, 'Balloon Pop')));
+      root.replaceChildren(emptyState('alert', 'Oʻyinni ochib boʻlmadi', e.message, h('a.btn.primary', { href: '#/games/balloon' }, 'Balloon Pop')));
       return;
     }
     root.replaceChildren(section, logBox);
@@ -658,7 +659,7 @@ function gameView(root, gameId, ctx) {
         method: 'POST',
         body: { topicId: game.topicId, teams: game.teams.map((t) => ({ name: t.name, color: t.color })), balloons: game.balloons, answerTime: game.answerTime },
       });
-      ctx.navigate(`/balloon/${res.game.id}`);
+      ctx.navigate(`/games/balloon/${res.game.id}`);
     } catch (e) {
       toast(e.message, 'error');
     }
@@ -977,7 +978,7 @@ function gameView(root, gameId, ctx) {
       h('div.result-compare', col(0), h('span.vs-badge', 'VS'), col(1)),
       h('div.result-actions',
         h('button.btn.accent', { type: 'button', onclick: rematch }, icon('refresh', 16), 'Qayta oʻynash'),
-        h('a.btn.primary', { href: '#/balloon' }, icon('sparkles', 16), 'Yangi oʻyin')));
+        h('a.btn.primary', { href: '#/games/balloon' }, icon('sparkles', 16), 'Yangi oʻyin')));
   }
 
   function logText(e) {
