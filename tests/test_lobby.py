@@ -360,3 +360,33 @@ def test_simultaneous_joins_over_websocket(tmp_path, monkeypatch):
             await server.close()
 
     asyncio.run(body())
+
+
+def test_presence_is_only_for_admins_and_sends_throttled_diffs(env):
+    """Boshqaruvdagi foydalanuvchilar ro'yxati uchun onlayn identifikatorlar: faqat administratorlarga (hammaga
+    tarqatilmaydi), keyin faqat o'zgarishlar; huquq olib qo'yilsa — obuna bekor qilinadi."""
+    boss_id = env.db.create_user("boss", "x", True)
+    env.users["boss"] = {"id": boss_id, "login": "boss"}
+    a = online(env, "ali")
+    act(env, "ali", a, "presence:sub")
+    assert errors(a)[-1]["code"] == "forbidden" and a.last("presence") is None
+    b = online(env, "boss")
+    act(env, "boss", b, "presence:sub")
+    assert set(b.last("presence")["online"]) == {env.users["ali"]["id"], boss_id}
+    v = online(env, "vali")
+    env.clock.advance(0.01)
+    assert b.last("presence:diff") == {"on": [env.users["vali"]["id"]], "off": []}
+    assert a.last("presence:diff") is None  # oddiy foydalanuvchilarga hech narsa bormaydi
+    # bir soniya ichidagi bir nechta o'zgarish — bitta xabar, yakuniy holat bilan
+    before = len(b.of("presence:diff"))
+    env.hub.disconnect(env.users["vali"]["id"], v)
+    s = online(env, "soli")
+    env.clock.advance(0.5)
+    assert len(b.of("presence:diff")) == before
+    env.clock.advance(0.6)
+    assert b.last("presence:diff") == {"on": [env.users["soli"]["id"]], "off": [env.users["vali"]["id"]]}
+    env.hub.presence_revoke(boss_id)
+    count = len(b.of("presence:diff"))
+    env.hub.disconnect(env.users["soli"]["id"], s)
+    env.clock.advance(2)
+    assert len(b.of("presence:diff")) == count

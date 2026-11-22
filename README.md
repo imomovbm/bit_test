@@ -7,6 +7,11 @@ Foydalanuvchilar o'rtasida test bo'yicha bellashuv (duel) va mustaqil mashq qili
 - **Duel** — ikki foydalanuvchi bitta mavzuni tanlaydi, har biriga 15 ta savol beriladi, har bir savolga 15 soniya.
   - G'olib — ko'proq to'g'ri javob bergan; teng bo'lsa — tezroq javob bergan.
   - Raqib aloqasi uzilsa yoki 30 soniya davomida javob bermasa — ikkinchi ishtirokchi g'olib.
+  - **Lobbi** — raqib kutayotganlar ro'yxati (taxallus, mavzu, kutish vaqti) va **bir bosishda qo'shilish**; mavzu
+    tanlansa yoki «Istalgan mavzuda raqib topish» bosilsa — tezkor juftlash; «Hozir faol mavzular»; hammasi jonli
+    (WebSocket). Bir vaqtda bosgan ikki kishidan faqat bittasi duelga kiradi.
+  - **Mavzular katalogi** — «Qizg'in / Bugun / Hafta / Oy / Hammasi» bo'yicha reyting, qidiruv, cheksiz aylantirish
+    (minglab mavzu bo'lsa ham hammasi birdaniga yuklanmaydi). Batafsil: [docs/scaling.md](docs/scaling.md).
 - **Taklif havolasi** — onlayn bo'lmagan do'stni duelga havola orqali chaqirish.
 - **Mashq rejimi** — vaqt cheklovisiz 10 / 30 / 50 yoki barcha savollar.
 - **O'yinlar paneli** (faqat o'qituvchilar va administratorlar uchun):
@@ -178,7 +183,14 @@ Menyudagi **Boshqaruv** bo'limi faqat administratorlarga ko'rinadi (server ham b
     2–10 variant, bitta to'g'ri javob), **bankdan tanlash**, **fayldan savol qo'shish** (mavzu oxiriga), fayl bilan
     almashtirish, `.txt` sifatida yuklab olish, nomini o'zgartirish, variantlarni aralashtirish;
   - **Faol / yopiq** — yopiq mavzu foydalanuvchilarga (duel, o'rganish, Balloon Pop) ko'rinmaydi va unda o'ynab
-    bo'lmaydi; uni kutayotganlar navbatdan chiqariladi. Savoli yo'q mavzu ham ko'rinmaydi.
+    bo'lmaydi; uni kutayotganlar navbatdan chiqariladi (xabar bilan), boshlangan duellar oxirigacha davom etadi.
+    Yopish yumshoq: savollar va tarix saqlanadi, istalgan vaqtda qayta ochish mumkin. Savoli yo'q mavzu ham ko'rinmaydi.
+  - **Faollik** — ro'yxat serverda sahifalanadi: oxirgi o'yin, jami duellar, oxirgi 30 kundagi duellar, holat
+    (saralash), filtrlar (holat, nom, «N kundan beri o'ynalmagan»: 30/60/90/180), belgilab **ommaviy yopish/ochish**
+    (soni bilan tasdiqlash);
+  - **O'chirishga tavsiya** — N kundan (standart 90) beri o'ynalmagan faol mavzular: bittalab bir bosishda yoki
+    hammasini yopish; **Jurnal** — har bir holat o'zgarishi (kim, qachon, sabab); **avtomatik yopish** — ixtiyoriy,
+    standart holatda o'chiq.
 - **Savollar banki** — barcha savollar bir joyda; har bir savol bankda alohida saqlanadi va mavzularga
   *biriktiriladi* (bir savol bir nechta mavzuda bo'lishi mumkin):
   - qidiruv (savol va variant matni), mavzu bo'yicha filtr (shu jumladan «hech bir mavzuda yo'q»), sahifalash;
@@ -240,6 +252,14 @@ Keyingi savol
 | `TD_OCTAGON_TTL` | `7200` | Octagon: faolsiz o'yin xotiradan o'chiriladigan vaqt (soniya) |
 | `TD_OCTAGON_MAX_SOCKETS` | `5000` | Octagon: jami ochiq ulanishlar chegarasi |
 | `TD_PUBLIC_URL` | — | Saytning ommaviy manzili (masalan, `https://quiz.maktab.uz`). Berilsa, QR kod va qo'shilish havolasi doim shu manzilga ishora qiladi |
+| `TD_TZ_OFFSET_HOURS` | `5` | «Bugun» va kunlik hisoblar uchun vaqt mintaqasi (UTC+5 — Toshkent) |
+| `TD_HOT_WINDOW_DAYS` | `14` | «Qizg'in» reyting: hisobga olinadigan kunlar |
+| `TD_HOT_HALF_LIFE_DAYS` | `2` | «Qizg'in» reyting: faollik vazni har shuncha kunda ikki baravar kamayadi |
+| `TD_HOT_LIVE_WEIGHT` | `3` | «Qizg'in» reyting: hozir kutayotgan/o'ynayotganlar uchun qo'shimcha vazn |
+| `TD_RANKING_TTL` | `30` | Mavzular reytingi keshi eng ko'pi bilan shuncha soniya eskiradi |
+| `TD_RANKING_REFRESH` | `5` | Yangi duel boshlangach reyting eng tez shuncha soniyada yangilanadi |
+| `TD_SEEK_TTL` | `120` | Raqib kutish (seek) muddati, soniya |
+| `TD_SUGGEST_IDLE_DAYS` | `90` | Shuncha kun o'ynalmagan mavzular o'chirishga tavsiya qilinadi (panelda o'zgartirish mumkin) |
 
 Misol: `TD_PORT=9000 TD_ADMINS=bekzod python run.py`
 
@@ -295,7 +315,10 @@ python -m pytest
 - `tests/test_octagon_api.py` — rollar va 403/401 (REST va WebSocket), `/play`, haqiqiy WebSocket orqali to'liq o'yin;
 - `tests/test_octagon_security.py` va `tests/test_octagon.py` oxiridagi testlar — xavfsizlik auditi regressiyalari
   (IDOR, sessiya, CSRF/CORS, sarlavhalar, cheklovlar, poyga holatlari, server qayta ishga tushishi);
-- `tests/test_qr.py` — QR kod kodlovchisi.
+- `tests/test_qr.py` — QR kod kodlovchisi;
+- `tests/test_activity.py`, `tests/test_catalog.py`, `tests/test_lobby.py`, `tests/test_admin_topics.py`,
+  `tests/test_leaderboard_stats.py` — mavzular faolligi (parallel yozish, backfill, migratsiya), reyting va «qizg'in»
+  formula, lobbi va juftlash (bir vaqtda qo'shilish), boshqaruv vositalari (403/401), reyting yig'indisi.
 
 Brauzerdagi to'liq tekshiruv (Playwright; ilovaning o'ziga kerak emas):
 
@@ -309,6 +332,30 @@ qo'shilishni yopish), o'quvchi xabarlarini, XSS (savol/variant/ism/mavzu nomidag
 1280 px kengliklarni (gorizontal siljish yo'q, tugmalar ≥ 48 px) tekshiradi; brauzer konsolidagi har qanday xato
 (jumladan CSP buzilishi) testni yiqitadi.
 
+```bash
+node e2e/lobby.e2e.js          # duel bosh sahifasi: jonli lobbi -> qo'shilish -> duel -> «Bugun» reytingi, poyga, boshqaruv
+python3 scripts/loadtest.py    # yuklama sinovi: 5 000 mavzu, 20 000 foydalanuvchi, bir yillik duellar, 500 o'yinchi
+python3 scripts/loadtest.py --explain   # asosiy so'rovlarning EXPLAIN QUERY PLAN natijalari
+```
+
+Natijalar va cheklovlar: [docs/scaling.md](docs/scaling.md).
+
+## Masshtab: mavzular faolligi, reyting va lobbi
+
+- Duel boshlanganda (sanoq tugagach) mavzuning oxirgi o'yini, duellar soni va kunlik yig'indisi bitta qisqa
+  tranzaksiyada yoziladi; reytinglar faqat shu yig'indidan hisoblanadi (duellar jadvali sanalmaydi) va xotirada
+  keshlanadi (≤ 30 s eskirishi mumkin; jonli kutish/o'ynash sonlari ≤ 1 s).
+- Yangi ustunlar va jadvallar ilova birinchi ishga tushganda avtomatik qo'shiladi va mavjud duellar tarixidan
+  to'ldiriladi (550 ming duelda ~3 soniya). Qo'lda qayta hisoblash va tekshirish:
+
+  ```bash
+  python -m app.backfill --db data/testduel.db --dry-run   # bazaning nusxasida (asl faylga tegmaydi)
+  python -m app.backfill --db data/testduel.db             # yozish (idempotent, bitta tranzaksiya)
+  ```
+
+- Ilova **bitta nusxada** ishlaydi (lobbi va duellar holati jarayon xotirasida) — bir nechta nusxa ortida
+  ishlatish qo'llab-quvvatlanmaydi.
+
 ## Loyiha tuzilishi
 
 ```
@@ -318,5 +365,7 @@ static/     frontend (HTML/CSS/JS; Balloon Pop sahnasi — static/js/balloon-sce
             o'quvchilar sahifasi — static/play.html + static/js/play.js + static/css/play.css)
 tests/      testlar (pytest)
 e2e/        brauzer testlari (Playwright)
+scripts/    yuklama sinovi (scripts/loadtest.py)
+docs/       hujjatlar (docs/scaling.md — faollik, reyting, lobbi, yuklama natijalari)
 run.py      ishga tushirish nuqtasi
 ```

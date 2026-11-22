@@ -44,6 +44,7 @@ from typing import Any
 
 from . import config
 from .catalog import TopicCatalog
+from .roles import is_admin
 from .security import RateLimiter
 
 log = logging.getLogger("testduel.hub")
@@ -55,6 +56,7 @@ MAINTENANCE_EVERY = 360      # har necha tozalashda bir marta xizmat ishlari (�
 STATS_EVERY = 15.0           # onlayn foydalanuvchilar soni hammaga ko'pi bilan shuncha soniyada bir marta
 TOPICS_SIGNAL_EVERY = 5.0    # "mavzular o'zgardi" xabari lobbi obunachilariga ko'pi bilan shuncha soniyada bir marta
 WATCH_LIMIT = 60             # mijoz kuzatadigan mavzular (ekrandagi kartochkalar) soni
+PRESENCE_FLUSH = 1.0         # administratorlarga onlayn ro'yxat o'zgarishlari ko'pi bilan shuncha soniyada bir marta
 ACTION_LIMIT_USER = (30, 60.0)   # seek yaratish / qo'shilish / bekor qilish: foydalanuvchiga daqiqada 30 ta
 ACTION_LIMIT_IP = (300, 60.0)    # bitta IP (maktab tarmog'i) dan daqiqada 300 ta
 
@@ -214,6 +216,10 @@ class DuelHub:
         self.user_duel: dict[int, str] = {}
         self.pending_results: dict[int, tuple[float, dict]] = {}
         self.subs: dict[Any, Sub] = {}
+        self.presence_subs: dict[Any, int] = {}             # boshqaruvdagi foydalanuvchilar ro'yxati: ulanish -> admin
+        self._presence_pending: dict[int, bool] = {}
+        self._presence_timer = None
+        self._presence_flushed = -math.inf
         self.catalog = TopicCatalog(db, clock, self.topic_live)
         self.user_actions = RateLimiter(*ACTION_LIMIT_USER)
         self.ip_actions = RateLimiter(*ACTION_LIMIT_IP)
@@ -326,11 +332,13 @@ class DuelHub:
         })
         if first:
             self._user_online(uid)
+            self._presence_changed(uid, True)
         self._ensure_sweep()
         self._stats_changed()
 
     def disconnect(self, user_id: int, conn) -> None:
         self.subs.pop(conn, None)
+        self.presence_subs.pop(conn, None)
         conns = self.conns.get(user_id)
         if not conns or conn not in conns:
             return
@@ -339,6 +347,7 @@ class DuelHub:
             del self.conns[user_id]
             self._touch(user_id)
             self._user_offline(user_id)
+            self._presence_changed(user_id, False)
         self._stats_changed()
 
     def _touch(self, uid: int) -> None:
@@ -362,6 +371,10 @@ class DuelHub:
                 self.subscribe(user_id, conn, data)
             elif msg_type == "lobby:unsub":
                 self.subs.pop(conn, None)
+            elif msg_type == "presence:sub":
+                self.presence_subscribe(user_id, conn)
+            elif msg_type == "presence:unsub":
+                self.presence_subs.pop(conn, None)
             elif msg_type == "duel:answer":
                 self.answer(user_id, str(data.get("duelId", "")), _as_int(data.get("index")), _as_int(data.get("choice")))
             elif msg_type == "duel:leave":
@@ -726,6 +739,39 @@ class DuelHub:
         for conn in list(self.subs):
             conn.send("topics", {})
 
+    # ------------------------------------- onlayn holat (faqat administratorlarga)
+    def presence_subscribe(self, uid: int, conn) -> None:
+        """Boshqaruvdagi foydalanuvchilar ro'yxati: onlayn foydalanuvchilar identifikatorlari (faqat administratorlarga),
+        keyin ko'pi bilan PRESENCE_FLUSH soniyada bir marta farqlar. Hammaga tarqatiladigan ro'yxat yo'q (O(N²) bo'lardi)."""
+        if not is_admin(self.db.user_by_id(uid)):
+            raise HubError("Ruxsat yoʻq", "forbidden")
+        self.presence_subs[conn] = uid
+        conn.send("presence", {"online": sorted(self.conns)})
+
+    def presence_revoke(self, uid: int) -> None:
+        """Administrator huquqi olib qo'yilganda — uning onlayn ro'yxati obunalari bekor qilinadi."""
+        for conn, owner in list(self.presence_subs.items()):
+            if owner == uid:
+                del self.presence_subs[conn]
+
+    def _presence_changed(self, uid: int, online: bool) -> None:
+        if not self.presence_subs:
+            return
+        self._presence_pending[uid] = online
+        if self._presence_timer is None:
+            delay = max(0.0, PRESENCE_FLUSH - (self.clock.now() - self._presence_flushed))
+            self._presence_timer = self.clock.call_later(delay, self._flush_presence)
+
+    def _flush_presence(self) -> None:
+        self._presence_timer = None
+        self._presence_flushed = self.clock.now()
+        pending, self._presence_pending = self._presence_pending, {}
+        on = sorted(u for u, v in pending.items() if v and self.is_online(u))
+        off = sorted(u for u, v in pending.items() if not v and not self.is_online(u))
+        if on or off:
+            for conn in list(self.presence_subs):
+                conn.send("presence:diff", {"on": on, "off": off})
+
     # -------------------------------------------------------- tozalash
     def _ensure_sweep(self) -> None:
         if self._sweep_timer is None:
@@ -794,7 +840,7 @@ class DuelHub:
         for uid in (a, b):  # ikkalasi birga duelga yuboriladi; duel:start navbatni ham yopadi (alohida queue:null yo'q —
             self._send(uid, "duel:start", self.duel_state(uid))  # aks holda brauzer bir lahzaga lobbini chizib, qayta obuna bo'lardi)
         duel.start_timer = self.clock.call_later(config.COUNTDOWN, self._begin, duel.id)
-        log.info("Duel %s juftlandi: %s vs %s (%s)", duel.id, self.logins.get(a), self.logins.get(b), topic["name"])
+        log.info("Duel %s juftlandi: #%d vs #%d (mavzu #%d)", duel.id, a, b, topic_id)  # jurnalda loginlar emas, id
         self._lobby_changed()
 
     def _begin(self, duel_id: str) -> None:
@@ -824,7 +870,7 @@ class DuelHub:
             self.user_duel.pop(uid, None)
             if uid != by:
                 self._send(uid, "duel:cancel", {"duelId": duel.id, "message": message})
-        log.info("Duel %s bekor qilindi (sanoq paytida %s chiqdi)", duel.id, self.logins.get(by))
+        log.info("Duel %s bekor qilindi (sanoq paytida #%s chiqdi)", duel.id, by)
         self._lobby_changed()
 
     def _release_topic(self, topic_id: int) -> None:
@@ -987,7 +1033,7 @@ class DuelHub:
             )
         except Exception:  # natijani saqlab bo'lmasa ham o'yinchilar natijani ko'rsin
             log.exception("Duel natijasini saqlashda xato")
-        log.info("Duel %s tugadi: %s %d:%d %s, sabab=%s", duel.id, a.login, a.correct, b.correct, b.login, reason)
+        log.info("Duel %s tugadi: #%d %d:%d #%d, sabab=%s", duel.id, a.user_id, a.correct, b.correct, b.user_id, reason)
         for p in (a, b):
             payload = self._result_payload(duel, p, duel.other(p.user_id), winner, reason)
             self.user_duel.pop(p.user_id, None)

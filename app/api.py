@@ -895,7 +895,7 @@ async def admin_topic_status(request: web.Request):
             hub.topic_removed(t["id"], "Siz kutayotgan mavzu yopildi")
     if changed:
         hub.topics_changed()
-    log.info("%s: %d ta mavzu %s", user["login"], len(changed), "ochildi" if active else "yopildi")
+    log.info("admin #%d: %d ta mavzu %s", user["id"], len(changed), "ochildi" if active else "yopildi")
     return ok({"changed": len(changed), "topics": changed})
 
 
@@ -924,7 +924,7 @@ async def admin_topic_settings(request: web.Request):
             if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= 3650 or (key == "autoDeactivateDays" and 0 < value < 7):
                 raise ApiError("Kunlar soni noto'g'ri (avtomatik yopish: 0 — o'chiq yoki 7–3650)")
             db.set_setting(setting, str(value))
-            log.info("%s: %s = %d", user["login"], setting, value)
+            log.info("admin #%d: %s = %d", user["id"], setting, value)
     return ok({"settings": topic_activity_settings(db)})
 
 
@@ -1290,6 +1290,8 @@ async def admin_update_user(request: web.Request):
         fresh = db.user_by_id(uid)
         # foydalanuvchining ochiq oynalarida menyu darhol yangilanadi
         hub.send_user(uid, "account", {"isAdmin": bool(fresh["is_admin"]) or is_superadmin(fresh), "isTeacher": is_teacher(fresh)})
+        if not (fresh["is_admin"] or is_superadmin(fresh)):
+            hub.presence_revoke(uid)
         if could_teach and not is_teacher(fresh):
             end_teacher_games(request.app, uid, "O'qituvchi huquqi olib qo'yildi — o'yin yakunlandi")
     if "blocked" in data:

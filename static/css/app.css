@@ -366,7 +366,7 @@ select.seek-filter { width: auto; flex: 0 1 260px; min-width: 0; min-height: 48p
 .seek-row.mine { background: var(--primary-soft); border-radius: 12px; padding: 8px 10px; }
 .seek-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .seek-login { display: flex; align-items: center; gap: 6px; font-weight: 750; font-size: 14.5px; min-width: 0; }
-.seek-topic { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seek-topic { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .seek-time { flex: none; font-size: 13px; color: var(--text-2); min-width: 40px; text-align: right; }
 .seek-btn { flex: none; min-height: 48px; padding: 8px 14px; }
 .seek-empty { display: flex; flex-direction: column; gap: 4px; padding: 18px 12px; text-align: center; border: 1px dashed var(--border-strong); border-radius: 12px; font-size: 14px; }
@@ -391,7 +391,7 @@ select.seek-filter { width: auto; flex: 0 1 260px; min-width: 0; min-height: 48p
 .browse-search input { padding-left: 40px; min-height: 48px; }
 .browse-search .ic { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
 .period-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 10px; max-width: 560px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border); }
-.period-tab { flex: 1 1 auto; min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.period-tab { flex: 1 1 auto; min-width: 48px; min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .period-tab:hover { color: var(--text); }
 .period-tab.active { background: var(--surface); color: var(--primary); box-shadow: var(--shadow-sm); }
 .browse-summary { margin: 0 0 10px; min-height: 1.2em; }
@@ -770,9 +770,11 @@ th[aria-sort] .th-arrow { color: var(--primary); }
 th.num .th-sort { flex-direction: row-reverse; }
 .adm-th-check, .adm-td-check { width: 40px; }
 .adm-activity-table td.adm-td-main, .adm-suggest-table td.adm-td-main { min-width: 140px; }
-.adm-activity-table th, .adm-activity-table td { padding-left: 8px; padding-right: 8px; }
-.adm-activity-table th:first-child, .adm-activity-table td:first-child { padding-left: 14px; }
-.adm-activity-table th:last-child, .adm-activity-table td:last-child { padding-right: 12px; }
+@media (min-width: 761px) { /* keng ekranda jadval ixchamroq (telefonda qatorlar kartochka ko'rinishida) */
+  .adm-activity-table th, .adm-activity-table td { padding-left: 8px; padding-right: 8px; }
+  .adm-activity-table th:first-child, .adm-activity-table td:first-child { padding-left: 14px; }
+  .adm-activity-table th:last-child, .adm-activity-table td:last-child { padding-right: 12px; }
+}
 .adm-activity-table .topic-cell, .adm-suggest-table .topic-cell { overflow-wrap: break-word; }
 .adm-td-actions { width: 1%; }
 .table tr.is-selected td { background: var(--primary-soft); }
@@ -874,6 +876,8 @@ select.adm-select { width: auto; max-width: 100%; min-height: 40px; padding: 8px
   .adm-topics-panel .pager-btn { min-width: 48px; height: 48px; }
   .adm-topics-panel .switch { min-height: 48px; }
   .adm-topics-panel .link-btn { min-height: 48px; }
+  /* jadval kartochkalaridagi mavzu nomi havolasi: bosish maydoni 48px, ko'rinishi o'zgarmaydi */
+  .adm-topics-panel .adm-topic-link { display: inline-block; min-width: 48px; padding-block: 14px; margin-block: -14px; }
   .bank-src { margin-left: 0; flex-basis: 100%; }
   .pager-info { flex-basis: 100%; text-align: center; margin: 2px 0 0; }
 }
@@ -934,7 +938,7 @@ select.adm-select { width: auto; max-width: 100%; min-height: 40px; padding: 8px
 /* ------------------------------------------------------------- mobil */
 /* o'rta kenglikdagi ekranlar: sarlavha sig'ishi uchun foydalanuvchi nomi va menyu yozuvlari yashiriladi */
 @media (max-width: 1180px) {
-  .header-right .user-name, .header-right .badge.admin { display: none; }
+  .header-right .user-name, .header-right .badge.admin, .header-right .badge.owner, .header-right .badge.teacher { display: none; }
   .user-box { padding: 3px; }
 }
 @media (max-width: 1060px) {
@@ -985,6 +989,8 @@ select.adm-select { width: auto; max-width: 100%; min-height: 40px; padding: 8px
   .seek-row { gap: 9px; }
   .seek-btn { padding: 8px 12px; }
   .browse-search { max-width: none; flex-basis: 100%; }
+  /* kutish ekrani telefonda: tugmalar va havola maydoni kamida 48px */
+  .waiting .btn, .waiting .invite-card input { min-height: 48px; }
   /* telefonda katalog kartochkalari ixcham: ikonka yashiriladi, jonli belgi bo'lmasa yuqori qator ham */
   .browse .topic-grid { gap: 10px; }
   .browse .topic-card { padding: 14px; gap: 6px; }

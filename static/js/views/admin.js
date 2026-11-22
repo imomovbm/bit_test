@@ -1625,7 +1625,8 @@ function usersSection(body, ctx, state, query) {
     if (state.alive) regBox.replaceChildren(registrationSwitch(data.settings.registrationOpen, manage));
   }).catch(() => {});
 
-  const isOnline = (u) => u.online; // ro'yxat yuklangan paytdagi holat («Yangilash» — qayta so'raydi)
+  // onlayn holat jonli: administratorlarga onlayn identifikatorlar obunasi (aks holda — ro'yxat yuklangan paytdagi holat)
+  const isOnline = (u) => (live.onlineIds ? live.onlineIds.has(u.id) : u.online);
   const match = {
     all: () => true,
     admins: (u) => u.isAdmin,
@@ -1852,6 +1853,9 @@ function usersSection(body, ctx, state, query) {
 
   load();
   if (manage && query.get('new')) createUser();
+  live.subscribePresence();
+  state.cleanups.push(live.on('presence', () => users && paint()));
+  state.cleanups.push(() => live.unsubscribePresence());
 }
 
 // ============================================================ yordamchilar

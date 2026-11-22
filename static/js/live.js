@@ -12,12 +12,14 @@ let lastMessageAt = 0;
 const emptyPresence = () => ({ online: 0 });
 const emptyLobby = () => ({ seeks: [], counts: {}, live: [], online: 0, waiting: 0, limit: 50, ready: false });
 let lobbySub = null; // joriy obuna {topicId, watch} — qayta ulanganda tiklanadi
+let presenceSub = false; // boshqaruvdagi foydalanuvchilar ro'yxati (faqat administratorlar) — onlayn identifikatorlar
 
 export const live = {
   status: 'offline', // offline | connecting | online
   rules: { duelQuestions: 15, questionTime: 15, afkSeconds: 30, afkTimeouts: 2, disconnectGrace: 10, seekSeconds: 120, lanUrl: null },
   presence: emptyPresence(),
   lobby: emptyLobby(),
+  onlineIds: null, // Set — faqat administrator obuna bo'lganda (presence:sub)
   queue: null,
   duel: null,
   result: null,
@@ -74,6 +76,18 @@ export const live = {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'lobby:sub', d: lobbySub }));
   },
 
+  /** Onlayn foydalanuvchilar identifikatorlari (faqat administratorlar uchun, boshqaruvdagi foydalanuvchilar ro'yxati). */
+  subscribePresence() {
+    presenceSub = true;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'presence:sub', d: {} }));
+  },
+
+  unsubscribePresence() {
+    presenceSub = false;
+    this.onlineIds = null;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'presence:unsub', d: {} }));
+  },
+
   unsubscribeLobby() {
     lobbySub = null;
     this.lobby = emptyLobby();
@@ -122,6 +136,8 @@ export const live = {
     this.presence = emptyPresence();
     this.lobby = emptyLobby();
     lobbySub = null;
+    presenceSub = false;
+    this.onlineIds = null;
     setStatus('offline');
   },
 };
@@ -261,6 +277,18 @@ function handle(t, d) {
       setQueue(d.queue);
       setDuel(d.duel);
       if (lobbySub) live.send('lobby:sub', lobbySub); // qayta ulanish: lobbi holati qayta so'raladi
+      if (presenceSub) live.send('presence:sub');
+      break;
+    case 'presence':
+      live.onlineIds = new Set(d.online || []);
+      live.emit('presence');
+      break;
+    case 'presence:diff':
+      if (live.onlineIds) {
+        for (const id of d.on || []) live.onlineIds.add(id);
+        for (const id of d.off || []) live.onlineIds.delete(id);
+      }
+      live.emit('presence');
       break;
     case 'stats':
       live.presence.online = d.online || 0;
