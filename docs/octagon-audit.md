@@ -12,8 +12,10 @@ out to be safe were kept as regression tests too. Line links point to the code a
 **Result:** 14 findings — 0 critical, 0 high, 3 medium, 11 low. All 14 are fixed and covered by tests. Accepted
 residual risks are listed at the end; nothing found was left unfixed.
 
-Test suites after the fixes: `python -m pytest` — **169 passed** (130 before the audit); `node e2e/octagon.e2e.js` —
-**150 browser checks passed**, no console errors (any console error, including a CSP violation, fails the run).
+Test suites: `python -m pytest` — **169 passed** after the audit fixes (130 before), **185** after the visual restyle
+(adds `tests/test_octagon_theme.py`); `node e2e/octagon.e2e.js` — **150 browser checks** after the audit fixes, **324**
+after the restyle (every screen at 360/375/768/1280 px), no console errors (any console error, including a CSP
+violation, fails the run).
 
 ---
 
@@ -31,7 +33,7 @@ Test suites after the fixes: `python -m pytest` — **169 passed** (130 before t
 | 2.1 | Games panel in the main navigation for teachers/admins | PASS | [static/js/views/games.js:26](../static/js/views/games.js#L26); E2E §0–1 (menu appears/disappears live when the role changes) |
 | 2.2 | Balloon Pop moved into it and works as before | PASS | `#/games/balloon`, old `#/balloon` links redirect; `tests/test_balloon.py`; Balloon Pop browser regression scripts |
 | 2.3 | Game cards for Balloon Pop and Octagon | PASS | `games.js`; E2E screenshots `games-*.png` |
-| 3.1 | Game name in one constant | PASS | `GAME_NAME` [static/js/octagon/common.js:5](../static/js/octagon/common.js#L5) (all UI text uses it; internal names such as `/api/octagon` stay) |
+| 3.1 | Game name in one constant | PASS | `GAME_NAME` [static/js/octagon/common.js:6](../static/js/octagon/common.js#L6) (all UI text uses it; internal names such as `/api/octagon` stay) |
 | 3.2 | Topic selection from existing topics | PASS | [app/api.py:550](../app/api.py#L550) (active topics with questions) |
 | 3.3 | Time per question: presets 10/20/30/60, custom 5–120, default 20, validated server-side, locked after start | PASS | [app/octagon.py:195](../app/octagon.py#L195), [app/octagon.py:578](../app/octagon.py#L578); `test_clean_settings_validation`, `test_settings_locked_after_start`, `test_configured_timer_is_used`; E2E §3 (custom 7 s used, 200 s rejected) |
 | 3.4 | Optional shuffle of questions/answers | PASS | [app/octagon.py:215](../app/octagon.py#L215) |
@@ -40,23 +42,23 @@ Test suites after the fixes: `python -m pytest` — **169 passed** (130 before t
 | 3.7 | Live player list with connected status and count | PASS | `host_state()` [app/octagon.py:817](../app/octagon.py#L817); E2E §4–5 |
 | 3.8 | Start button; the quiz never starts by itself | PASS | [app/octagon.py:468](../app/octagon.py#L468); `test_game_waits_in_lobby_until_teacher_starts`; E2E §5 |
 | 3.9 | Question → results → top 5 → next → podium; end early | PASS | `_next`, [app/octagon.py:538](../app/octagon.py#L538); `test_full_game_scores_ranks_and_podium`, `test_end_early_and_cancel_in_lobby` |
-| 3.10 | PIN always visible at the top (teacher and student) | PASS | [static/js/views/octagon.js:462](../static/js/views/octagon.js#L462), [static/js/play.js:479](../static/js/play.js#L479); E2E checks the PIN in every phase |
-| 3.11 | Teacher screen shows question and answer texts with colour and shape | PASS | [static/js/views/octagon.js:633](../static/js/views/octagon.js#L633) |
+| 3.10 | PIN always visible at the top (teacher and student) | PASS | [static/js/views/octagon.js:500](../static/js/views/octagon.js#L500), [static/js/play.js:521](../static/js/play.js#L521); E2E checks the PIN in every phase |
+| 3.11 | Teacher screen shows question and answer texts with colour and shape | PASS | [static/js/views/octagon.js:703](../static/js/views/octagon.js#L703) |
 | 3.12 | Students join by QR or PIN, then only a nickname | PASS | E2E §4 |
 | 3.13 | Nickname: trim, 1–20 chars, unique, profanity/HTML sanitising | PASS | [app/octagon.py:145](../app/octagon.py#L145), [app/octagon.py:643](../app/octagon.py#L643); `test_clean_nickname`, `test_bad_nicknames_rejected`, `test_duplicate_nickname_rejected_even_for_disconnected_player`; E2E §17 |
-| 3.14 | Late join at any time, 0 points, on the leaderboard | PASS | `test_late_joiner_mid_game`; E2E §9 |
-| 3.15 | Student screen = shapes only; tiny payloads; no question/answer text; correct answer never early | PASS | [app/octagon.py:798](../app/octagon.py#L798); engine test `test_student_messages_never_contain_question_or_answer_text`, real WebSocket traffic `test_live_game_over_websocket` (every frame < 300 bytes), browser frames E2E §12 |
+| 3.14 | Late join at any time, 0 points, on the leaderboard | PASS | `test_late_joiner_mid_game`; E2E §8 |
+| 3.15 | Student screen = shapes only; tiny payloads; no question/answer text; correct answer never early | PASS | [app/octagon.py:798](../app/octagon.py#L798); engine test `test_student_messages_never_contain_question_or_answer_text`, real WebSocket traffic `test_live_game_over_websocket` (every frame < 300 bytes), browser frames E2E §13 |
 | 3.16 | Lightweight student route | PASS | Separate `play.html` / `play.js`; E2E §14 asserts that only the student files load and that they total < 80 KB |
-| 3.17 | Colour is never the only signal | PASS | Every option has a shape and an accessible name [static/js/octagon/common.js:8](../static/js/octagon/common.js#L8) |
+| 3.17 | Colour is never the only signal | PASS | Every option has a shape and an accessible name [static/js/octagon/common.js:10](../static/js/octagon/common.js#L10) |
 | 3.18 | 2–4 options; true/false handled; >4 options handled and reported | PASS | Teacher chooses trim (correct + 3 random wrong) or skip: [app/octagon.py:215](../app/octagon.py#L215); `test_long_option_questions_trimmed_or_skipped`, `test_two_option_question`; E2E 2-option layout check |
 | 3.19 | Personal result after each question | PASS | `res` in `student_state`; E2E §6 |
-| 3.20 | Persistent player ID + secret token, localStorage with cookie fallback, per PIN | PASS | [static/js/play.js:109](../static/js/play.js#L109) |
-| 3.21 | Reconnect resumes the same player, never a duplicate | PASS | [app/octagon.py:676](../app/octagon.py#L676); `test_reconnect_resumes_same_player_without_duplicates`; E2E §8 |
-| 3.22 | Same token in a second tab/device: newest wins, old one closed gracefully | PASS | `test_same_token_in_second_tab_takes_over`, `test_concurrent_join_same_nick_and_concurrent_resume`; E2E §10 |
+| 3.20 | Persistent player ID + secret token, localStorage with cookie fallback, per PIN | PASS | [static/js/play.js:113](../static/js/play.js#L113) |
+| 3.21 | Reconnect resumes the same player, never a duplicate | PASS | [app/octagon.py:676](../app/octagon.py#L676); `test_reconnect_resumes_same_player_without_duplicates`; E2E §9 |
+| 3.22 | Same token in a second tab/device: newest wins, old one closed gracefully | PASS | `test_same_token_in_second_tab_takes_over`, `test_concurrent_join_same_nick_and_concurrent_resume`; E2E §11 |
 | 3.23 | A taken nickname of a disconnected player is not hijacked | PASS | `test_duplicate_nickname_rejected_even_for_disconnected_player` |
 | 3.24 | Disconnected players keep their score | PASS | `test_reconnect_resumes_same_player_without_duplicates` |
-| 3.25 | Auto-reconnect with backoff; server resends the state | PASS | [static/js/play.js:214](../static/js/play.js#L214); E2E §16 (growing gaps, an answer tapped offline is delivered) |
-| 3.26 | Teacher resumes control after a reload | PASS | [app/octagon.py:733](../app/octagon.py#L733); `test_host_reconnect_resumes_control`; E2E §11 |
+| 3.25 | Auto-reconnect with backoff; server resends the state | PASS | [static/js/play.js:218](../static/js/play.js#L218); E2E §16 (growing gaps, an answer tapped offline is delivered) |
+| 3.26 | Teacher resumes control after a reload | PASS | [app/octagon.py:733](../app/octagon.py#L733); `test_host_reconnect_resumes_control`; E2E §10 |
 | 3.27 | Scoring: max 1000, 500 + up to 500, measured on the server, exact, rounded once (half-up) | PASS (see note) | [app/octagon.py:77](../app/octagon.py#L77); scoring tests (≤ 0.5 s → 1000, exactly 0.5 s → 1000, half → 750, full → 500, wrong → 0, 10/20/60 s timers, 1 ms rounding including a case where floating point would be off by one). *Note:* the spec's literal clamp `max(t, 500 ms)` gives 988 at exactly 0.5 s with a 20 s timer, contradicting its own test list; implemented as “≤ 500 ms counts as 0 ms” so all listed tests hold. |
 | 3.28 | One answer per question, late answers rejected, latency behaviour documented | PASS | [app/octagon.py:703](../app/octagon.py#L703); `test_one_answer_per_question_first_wins`, `test_answer_after_deadline_is_rejected_by_server_time`; README “Ball” section |
 | 3.29 | Pure scoring function `calculateScore(...)` | PASS | `calculate_score(is_correct, response_time_ms, timer_ms, max_points=1000)` (Python naming) |
@@ -73,9 +75,9 @@ Test suites after the fixes: `python -m pytest` — **169 passed** (130 before t
 
 | # | Inconsistency | Fix |
 |---|---|---|
-| I1 | The client accepted PINs starting with `0` (`\d{6}`) while the server only issues `[1-9]\d{5}` | Same regex on both sides [static/js/play.js:58](../static/js/play.js#L58); E2E §4 checks that a `0…` PIN is rejected locally and a well-formed unknown PIN gets the server's “not found” |
+| I1 | The client accepted PINs starting with `0` (`\d{6}`) while the server only issues `[1-9]\d{5}` | Same regex on both sides [static/js/play.js:62](../static/js/play.js#L62); E2E §4 checks that a `0…` PIN is rejected locally and a well-formed unknown PIN gets the server's “not found” |
 | I2 | Client hard-coded copies of server defaults (time 20 s, 10 questions, a “3” in the get-ready ring) | The setup form now uses the server's `limits` (`defaultTime`, `defaultQuestions`); the get-ready ring starts from the server's `remainingMs`. The 10/20/30/60 presets are the spec's presets (client-only by design; the server validates the 5–120 range) |
-| I3 | Stored student identity: no expiry in localStorage but 12 h in the cookie fallback | 12 h in both; stale entries are removed at start [static/js/play.js:142](../static/js/play.js#L142); E2E §18 |
+| I3 | Stored student identity: no expiry in localStorage but 12 h in the cookie fallback | 12 h in both; stale entries are removed at start [static/js/play.js:146](../static/js/play.js#L146); E2E §18 |
 | I4 | An answer sent before the question opened got the error code `late` | New code `early` [app/octagon.py:713](../app/octagon.py#L713); `test_answer_before_question_opens_is_rejected` |
 | I5 | Student UI used ʻ / ʼ (oʻ, gʻ, maʼ) but the Octagon server messages used `'` | Octagon messages normalised. Other app server messages still use `'` (pre-existing, outside this feature) |
 | I6 | Dead code: unused `html` (innerHTML) option of the shared `h()` helper — an XSS foot-gun; unused `Player.joined_at` | Both removed |
@@ -162,3 +164,16 @@ No dependency versions were changed.
 5. **Nickname profanity filter is basic** (Uzbek, Russian, English word lists).
 6. **Third-party name in commit `acb5660`'s message** is still in git history (rewriting published history needs a
    force-push; ask if you want it).
+
+---
+
+## Re-verification after the visual restyle
+
+- `python -m pytest`: 185 passed (includes WCAG contrast checks of every colour pair in `static/css/octagon-theme.css`).
+- `node e2e/octagon.e2e.js`: 324 checks — the full flow, all security sections above, and every student and teacher
+  screen (lobby, question, answer locked in, reveal, leaderboard, podium) at 360, 375, 768 and 1280 px: no horizontal
+  scrolling, key texts not clipped, all text ≥ 12 px, tap targets ≥ 48 px on phones.
+- Screenshot grids: [student](screenshots/octagon-student.jpg), [teacher / projector](screenshots/octagon-teacher.jpg);
+  full-size images are written to `e2e/screenshots/` by every E2E run.
+- Student page weight (no images, web fonts or libraries): 33.8 KB → 49.3 KB raw, 11.1 KB → 16.4 KB gzipped
+  (new shared theme file, new screens, and the identity-expiry fix above).

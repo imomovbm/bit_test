@@ -1,16 +1,8 @@
-/* O'quvchilar sahifasi (/play): telefon uchun, mustaqil (asosiy app.css yuklanmaydi), tashqi shriftlarsiz. */
+/* Octagon — o'quvchilar sahifasi (/play): telefon uchun, mustaqil (asosiy app.css yuklanmaydi), tashqi shrift va
+   rasmlarsiz. Barcha ranglar octagon-theme.css dagi o'zgaruvchilardan (yagona mavzu fayli). */
 :root {
-  --bg1: #2c2391;
-  --bg2: #4a3fe0;
-  --card: #ffffff;
-  --text: #17153a;
-  --muted: #625f86;
-  --good: #1d8a3b;
-  --bad: #c9283a;
-  --none: #5b5f73;
-  --radius: 18px;
-  --top-h: 52px;
-  color-scheme: light;
+  --top-h: 56px;
+  color-scheme: dark;
   -webkit-text-size-adjust: 100%;
 }
 
@@ -20,9 +12,8 @@ html, body { margin: 0; min-height: 100%; }
 
 body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif;
-  background: linear-gradient(160deg, var(--bg1), var(--bg2));
-  background-attachment: fixed;
-  color: #fff;
+  background: var(--oc-bg);
+  color: var(--oc-ink);
   overflow-x: hidden;
   -webkit-tap-highlight-color: transparent;
 }
@@ -32,12 +23,13 @@ body {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  transition: background-color 0.25s;
+  background: radial-gradient(120% 60% at 50% -12%, var(--oc-glow-accent), transparent 62%), var(--oc-pattern), var(--oc-bg);
 }
 
-#play.pl-res-good { background: var(--good); }
-#play.pl-res-bad { background: var(--bad); }
-#play.pl-res-none { background: var(--none); }
+/* natija: yuqoridan rangli nur (to'g'ri — yashil, noto'g'ri — qizil, javobsiz — kulrang) */
+#play.pl-res-good { background: radial-gradient(130% 70% at 50% -14%, var(--oc-glow-good), transparent 64%), var(--oc-pattern), var(--oc-bg); }
+#play.pl-res-bad { background: radial-gradient(130% 70% at 50% -14%, var(--oc-glow-bad), transparent 64%), var(--oc-pattern), var(--oc-bg); }
+#play.pl-res-none { background: radial-gradient(130% 70% at 50% -14%, var(--oc-glow-none), transparent 64%), var(--oc-pattern), var(--oc-bg); }
 
 .pl-boot { flex: 1; }
 
@@ -52,40 +44,52 @@ body {
   gap: 10px;
   min-height: calc(var(--top-h) + env(safe-area-inset-top));
   padding: env(safe-area-inset-top) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left));
-  background: rgba(10, 8, 40, 0.32);
-  backdrop-filter: blur(6px);
+  background: var(--oc-bar);
+  border-bottom: 1px solid var(--oc-line);
+  backdrop-filter: blur(8px);
 }
 
-.pl-brand { font-weight: 800; font-size: 19px; letter-spacing: 0.02em; }
+.pl-brand { display: flex; align-items: center; gap: 10px; font-weight: 900; font-size: 19px; letter-spacing: 0.03em; }
 
-.pl-pin { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
-.pl-pin span { font-size: 12px; font-weight: 700; opacity: 0.75; letter-spacing: 0.08em; }
-.pl-pin b { font-size: 22px; font-weight: 800; letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+.pl-pin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 10px;
+  border-radius: 12px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-line);
+  white-space: nowrap;
+}
+.pl-pin span { font-size: 12px; font-weight: 800; color: var(--oc-ink-2); letter-spacing: 0.14em; }
+.pl-pin b { font-size: 22px; font-weight: 900; letter-spacing: 0.08em; font-variant-numeric: tabular-nums; }
 
 .pl-me { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.pl-nick { font-weight: 700; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-nick { font-weight: 800; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-score {
-  padding: 4px 10px;
+  padding: 5px 12px;
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.18);
-  font-weight: 800;
+  background: var(--oc-accent);
+  color: var(--oc-accent-ink);
+  font-weight: 900;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.pl-score small { font-weight: 600; opacity: 0.8; }
+.pl-score small { font-weight: 700; }
 
 .pl-conn {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 8px 14px;
-  background: #ffd25a;
-  color: #2b2000;
-  font-weight: 700;
+  gap: 10px;
+  padding: 9px 14px;
+  background: var(--oc-warn);
+  color: var(--oc-warn-ink);
+  font-weight: 800;
   font-size: 14px;
   text-align: center;
 }
+.pl-conn .oc-loader { color: var(--oc-warn-ink); }
 .pl-conn[hidden] { display: none; }
 
 /* -------------------------------------------------------------------- sahna */
@@ -101,69 +105,116 @@ body {
 }
 
 .pl-card {
-  background: var(--card);
-  color: var(--text);
-  border-radius: var(--radius);
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-line);
+  color: var(--oc-ink);
+  border-radius: 24px;
   padding: 24px 20px;
-  box-shadow: 0 18px 50px rgba(10, 8, 40, 0.35);
+  box-shadow: var(--oc-shadow);
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: 100%;
   max-width: 440px;
   margin: 0 auto;
+  animation: oc-pop 0.2s ease-out;
 }
 .pl-card h1 { margin: 0; font-size: 24px; text-align: center; }
 .pl-center { align-items: center; text-align: center; }
 
-.pl-muted { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; text-align: center; }
-.pl-wait .pl-muted, .pl-result .pl-muted, .pl-final .pl-muted { color: rgba(255, 255, 255, 0.82); }
+.pl-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--oc-ink-2);
+}
+
+.pl-muted { margin: 0; color: var(--oc-ink-2); font-size: 15px; line-height: 1.45; text-align: center; }
 
 .pl-input {
   width: 100%;
   min-height: 56px;
   padding: 12px 16px;
-  border: 2px solid #cfcde6;
+  border: 2px solid var(--oc-line-strong);
   border-radius: 14px;
   font: inherit;
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 800;
   text-align: center;
-  color: var(--text);
-  background: #fff;
+  color: var(--oc-ink);
+  background: var(--oc-bg);
 }
-.pl-input:focus { outline: none; border-color: var(--bg2); box-shadow: 0 0 0 4px rgba(74, 63, 224, 0.22); }
-.pl-pin-input { font-size: 30px; letter-spacing: 0.12em; font-variant-numeric: tabular-nums; }
+.pl-input::placeholder { color: var(--oc-ink-3); }
+.pl-input:focus { outline: none; border-color: var(--oc-focus); box-shadow: 0 0 0 4px var(--oc-glow-accent); }
+.pl-pin-input { font-size: 32px; letter-spacing: 0.14em; font-variant-numeric: tabular-nums; }
 
-.pl-error { margin: 0; color: var(--bad); font-weight: 700; text-align: center; font-size: 15px; }
+.pl-error { margin: 0; color: var(--oc-red-hi); font-weight: 800; text-align: center; font-size: 15px; }
 .pl-error[hidden] { display: none; }
 
 .pl-btn {
   min-height: 56px;
   padding: 12px 20px;
   border: 0;
-  border-radius: 14px;
-  background: #17153a;
-  color: #fff;
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--oc-accent), var(--oc-accent-lo));
+  color: var(--oc-accent-ink);
   font: inherit;
   font-size: 18px;
-  font-weight: 800;
+  font-weight: 900;
   cursor: pointer;
+  box-shadow: 0 8px 22px var(--oc-glow-accent);
+  transition: transform 0.08s ease-out;
 }
+.pl-btn:active { transform: scale(0.98); }
 .pl-btn:disabled { opacity: 0.6; cursor: default; }
-.pl-btn.ghost { background: rgba(255, 255, 255, 0.16); border: 2px solid rgba(255, 255, 255, 0.5); }
-.pl-btn:focus-visible, .pl-link:focus-visible, .pl-answer:focus-visible { outline: 3px solid #ffd25a; outline-offset: 3px; }
+.pl-btn.ghost { background: transparent; border: 2px solid var(--oc-line-strong); box-shadow: none; color: var(--oc-ink); }
+.pl-btn:focus-visible, .pl-link:focus-visible { outline: 3px solid var(--oc-focus); outline-offset: 3px; }
 
 .pl-link {
   min-height: 48px;
   border: 0;
   background: none;
-  color: var(--muted);
+  color: var(--oc-ink-2);
   font: inherit;
   font-weight: 700;
   text-decoration: underline;
+  text-underline-offset: 3px;
   cursor: pointer;
 }
+
+/* ---------------------------------------------- sakkizburchak nishonlar va belgilar */
+.pl-glyph { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* tashqi halqa (--ring) va ichki to'ldirish (--fill): ikkala qatlam ham muntazam sakkizburchak, halqa qalinligi teng */
+.pl-badge, .pl-medal {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  clip-path: var(--oc-octagon);
+  background: var(--ring);
+}
+.pl-badge::before, .pl-medal::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  z-index: -1;
+  clip-path: var(--oc-octagon);
+  background: var(--fill);
+}
+.pl-badge { --ring: var(--oc-line-strong); --fill: var(--oc-surface-2); width: clamp(104px, 30vw, 136px); color: var(--oc-ink); }
+.pl-badge.ok { --ring: var(--oc-accent-2); --fill: var(--oc-accent); color: var(--oc-accent-ink); }
+.pl-badge.good { --ring: var(--oc-green-hi); --fill: var(--oc-green); color: var(--oc-green-ink); }
+.pl-badge.bad { --ring: var(--oc-red-hi); --fill: var(--oc-red); color: var(--oc-red-ink); }
+.pl-badge.none { color: var(--oc-ink-2); }
+.pl-badge.breathe { animation: oc-breathe 2.6s ease-in-out infinite; }
 
 /* -------------------------------------------------------------- kutish ekranlari */
 .pl-wait, .pl-result, .pl-final {
@@ -172,140 +223,150 @@ body {
   align-items: center;
   text-align: center;
   gap: 14px;
+  animation: oc-rise 0.25s ease-out;
 }
-.pl-wait h1, .pl-result h1, .pl-final h1 { margin: 0; font-size: clamp(26px, 7vw, 40px); line-height: 1.15; }
+.pl-wait h1, .pl-result h1, .pl-final h1, .pl-locked h1 { margin: 0; font-size: clamp(26px, 7vw, 40px); line-height: 1.15; }
 
 .pl-big-nick {
   margin: 0;
   max-width: 100%;
-  padding: 8px 18px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.16);
+  padding: 10px 22px;
+  border-radius: 16px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-line);
   font-size: clamp(22px, 6vw, 32px);
-  font-weight: 800;
+  font-weight: 900;
   overflow-wrap: anywhere;
 }
 
-.pl-qlabel { margin: 0; font-weight: 800; font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.85; }
+.pl-qlabel { margin: 0; font-weight: 800; font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--oc-ink-2); }
 
-.pl-pulse {
-  width: 96px;
-  height: 96px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.18);
-  font-size: 42px;
-  font-weight: 800;
-  animation: pl-pulse 1.6s ease-in-out infinite;
-}
-
-.pl-count {
-  width: clamp(120px, 38vw, 180px);
-  aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: #fff;
-  color: var(--bg1);
-  font-size: clamp(64px, 20vw, 104px);
-  font-weight: 900;
-  font-variant-numeric: tabular-nums;
-  box-shadow: 0 14px 40px rgba(10, 8, 40, 0.35);
-}
+/* tayyorlanish sanog'i: sakkizburchak bo'ylab yuguradigan chiziq */
+.pl-count { position: relative; width: clamp(140px, 42vw, 196px); aspect-ratio: 1; display: grid; place-items: center; }
+.pl-count svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pl-count .track { fill: var(--oc-surface); stroke: var(--oc-line-strong); stroke-width: 3; }
+.pl-count .bar { fill: none; stroke: var(--oc-accent-2); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 26 74; animation: oc-dash 1.4s linear infinite; }
+.pl-count span { position: relative; font-size: clamp(64px, 20vw, 100px); font-weight: 900; font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------- savol (shakllar) */
-#play.pl-phase-question .pl-stage { justify-content: stretch; max-width: 960px; }
+#play.pl-phase-question .pl-stage { justify-content: stretch; max-width: 980px; }
 
-.pl-question {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
-}
+.pl-question, .pl-locked { flex: 1; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 
-.pl-qhead { display: flex; align-items: center; gap: 12px; }
+.pl-qhead { display: flex; align-items: center; gap: 12px; width: 100%; }
 .pl-qhead .pl-qlabel { white-space: nowrap; }
 
-.pl-timer { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 120px; width: 100%; }
-.pl-wait .pl-timer { max-width: 360px; }
+.pl-timer { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 120px; }
+.pl-timer-track { flex: 1; height: 12px; border-radius: 99px; background: var(--oc-surface-2); overflow: hidden; }
 .pl-timer-bar {
-  flex: 1;
-  height: 10px;
-  border-radius: 99px;
-  background: #ffd25a;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--oc-accent-2), var(--oc-accent));
   transform-origin: left center;
   transition: transform 0.2s linear;
-  box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0);
 }
+.pl-timer-bar.low { background: var(--oc-red-hi); }
 .pl-timer-num { min-width: 2.2em; text-align: right; font-weight: 900; font-size: 22px; font-variant-numeric: tabular-nums; }
 
-.pl-grid {
-  flex: 1;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  min-height: 260px;
-}
+.pl-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 280px; }
 .pl-grid.n2 { grid-template-rows: 1fr; }
 .pl-grid.n3 > :last-child { grid-column: 1 / -1; }
 
+/* katta javob tugmasi: qalin yorug' chegara, gradient + naqsh (.oc-fill), markazda shakl */
 .pl-answer {
   display: grid;
   place-items: center;
-  min-height: 96px;
-  border: 0;
-  border-radius: 18px;
+  min-height: 104px;
+  padding: 0;
+  border-radius: 26px;
+  font: inherit;
   cursor: pointer;
-  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.22), 0 10px 24px rgba(0, 0, 0, 0.2);
-  transition: transform 0.08s, box-shadow 0.08s;
+  box-shadow: var(--oc-shadow-sm);
+  transition: transform 0.08s ease-out, filter 0.08s;
   touch-action: manipulation;
+  animation: oc-pop 0.18s ease-out backwards;
 }
-.pl-answer svg { width: clamp(56px, 20vmin, 132px); height: auto; filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.2)); }
-.pl-answer:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.22), 0 6px 14px rgba(0, 0, 0, 0.2); }
+.pl-answer:nth-child(2) { animation-delay: 0.04s; }
+.pl-answer:nth-child(3) { animation-delay: 0.08s; }
+.pl-answer:nth-child(4) { animation-delay: 0.12s; }
+.pl-answer .oc-shape { width: clamp(64px, 22vmin, 136px); height: auto; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.24)); }
+.pl-answer:active { transform: scale(0.96); filter: brightness(1.1); }
+.pl-answer:focus-visible { outline: 4px solid var(--oc-focus); outline-offset: 3px; }
 
-.pl-shape {
-  display: inline-grid;
-  place-items: center;
-  padding: 14px;
-  border-radius: 18px;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25);
+/* javob qulflandi: tanlangan shakl sakkizburchak ramkada */
+.pl-locked-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 26px 16px;
+  text-align: center;
+  border-radius: 28px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-line);
+  box-shadow: var(--oc-shadow);
+  animation: oc-pop 0.22s ease-out;
 }
+.pl-shape { display: inline-grid; place-items: center; padding: 10px; border-radius: 16px; }
+.pl-shape.big { width: clamp(150px, 44vw, 196px); aspect-ratio: 1; padding: 0; border: 0; border-radius: 0; clip-path: var(--oc-octagon); }
+.pl-shape.big .oc-shape { width: 52%; height: auto; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.24)); }
+.pl-lock-tag {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 99px;
+  border: 1px solid var(--oc-line-strong);
+  color: var(--oc-ink-2);
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pl-lock-tag.on { background: var(--oc-focus); border-color: var(--oc-focus); color: var(--oc-warn-ink); }
 
 /* ------------------------------------------------------------------ natijalar */
-.pl-res-ic {
-  width: 104px;
-  height: 104px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: #fff;
-  font-size: 56px;
-  font-weight: 900;
-  color: var(--good);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.25);
+.pl-points { margin: 0; font-size: clamp(30px, 9vw, 44px); font-weight: 900; font-variant-numeric: tabular-nums; }
+
+.pl-correct-was {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 18px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-line);
+  font-weight: 800;
 }
-.pl-result.bad .pl-res-ic, .pl-res-ic.bad { color: var(--bad); }
-.pl-result.none .pl-res-ic, .pl-res-ic.none { color: var(--none); }
-
-.pl-points { margin: 0; font-size: clamp(28px, 8vw, 40px); font-weight: 900; font-variant-numeric: tabular-nums; }
-
-.pl-correct-was { display: flex; align-items: center; gap: 12px; font-weight: 700; }
-.pl-correct-was .pl-shape { padding: 8px; border-radius: 12px; }
+.pl-correct-was .pl-shape { padding: 7px; border-width: 3px; border-radius: 12px; }
 
 .pl-rank {
   margin: 0;
-  padding: 10px 18px;
-  border-radius: 14px;
-  background: rgba(0, 0, 0, 0.18);
-  font-size: 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 24px;
+  border-radius: 18px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-line);
+  color: var(--oc-ink-2);
+  font-size: 16px;
   font-variant-numeric: tabular-nums;
 }
+.pl-rank b { color: var(--oc-ink); font-size: 22px; }
 
 /* ---------------------------------------------------------------------- podium */
-.pl-medal { font-size: 76px; line-height: 1; }
-.pl-place { margin: 0; font-size: clamp(34px, 10vw, 52px); font-weight: 900; }
+.pl-medal { width: clamp(120px, 34vw, 156px); color: var(--oc-medal-ink); --ring: var(--oc-ring-light); --fill: var(--oc-gold); line-height: 1; }
+.pl-medal b { font-size: clamp(46px, 14vw, 62px); font-weight: 900; font-variant-numeric: tabular-nums; }
+.pl-medal small { font-size: 12px; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase; }
+.pl-medal { grid-template-rows: auto auto; align-content: center; }
+.pl-medal.silver { --fill: var(--oc-silver); }
+.pl-medal.bronze { --fill: var(--oc-bronze); }
+.pl-medal.rest { --ring: var(--oc-accent-2); --fill: var(--oc-accent); color: var(--oc-accent-ink); }
+.pl-place { margin: 0; font-size: clamp(32px, 10vw, 48px); font-weight: 900; }
 
 .pl-top3 {
   list-style: none;
@@ -322,39 +383,26 @@ body {
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-line);
   font-size: 17px;
 }
-.pl-top3 li.me { background: rgba(255, 210, 90, 0.35); }
-.pl-top3-n { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #fff; color: var(--bg1); font-weight: 900; flex: none; }
-.pl-top3-nick { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.pl-top3 li.me { border-color: var(--oc-focus); box-shadow: inset 0 0 0 1px var(--oc-focus); }
+.pl-top3-n { width: 34px; height: 34px; display: grid; place-items: center; flex: none; font-weight: 900; color: var(--oc-medal-ink); background: var(--oc-gold); }
+.pl-top3-n.m2 { background: var(--oc-silver); }
+.pl-top3-n.m3 { background: var(--oc-bronze); }
+.pl-top3-nick { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
 .pl-top3 b { font-variant-numeric: tabular-nums; }
-
-/* ---------------------------------------------------------------- spinner */
-.pl-spin {
-  width: 18px;
-  height: 18px;
-  border: 3px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  display: inline-block;
-  animation: pl-spin 0.8s linear infinite;
-  flex: none;
-}
-.pl-spin.lg { width: 44px; height: 44px; border-width: 4px; color: var(--bg2); }
-
-@keyframes pl-spin { to { transform: rotate(360deg); } }
-@keyframes pl-pulse { 50% { transform: scale(1.08); background: rgba(255, 255, 255, 0.28); } }
 
 /* telefon yonboshlab ushlanganda (past balandlik) */
 @media (max-height: 480px) {
-  :root { --top-h: 44px; }
+  :root { --top-h: 46px; }
   .pl-stage { padding-top: 8px; padding-bottom: 8px; }
   .pl-grid { min-height: 0; }
   .pl-answer { min-height: 64px; }
-  .pl-count, .pl-res-ic, .pl-pulse { width: 84px; height: 84px; font-size: 44px; }
-  .pl-medal { font-size: 48px; }
+  .pl-count, .pl-badge, .pl-medal, .pl-shape.big { width: 96px; }
+  .pl-count span, .pl-medal b { font-size: 44px; }
 }
 
 @media (min-width: 700px) {

@@ -531,8 +531,9 @@ export function sfx(kind) {
   }
 }
 
-export function beep(kind) {
-  if (!audioCtx || !isSoundOn()) return;
+export function beep(kind, force = false) {
+  // force — o'yinning o'z ovoz tugmasi yoqilgan (masalan, Octagon: standart o'chiq), umumiy sozlama e'tiborga olinmaydi
+  if (!audioCtx || (!force && !isSoundOn())) return;
   const seq = SOUNDS[kind];
   if (!seq) return;
   try {

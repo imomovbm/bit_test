@@ -2,7 +2,7 @@
 // O'yin holati serverda: sahifa yangilansa yoki aloqa uzilsa, o'qituvchi o'sha o'yinni boshqarishda davom etadi.
 import { h, icon, toast, confirmDialog, spinner, emptyState, beep, confetti } from '../lib.js';
 import { api } from '../api.js';
-import { GAME_NAME, SHAPES, shapeIcon, formatPin } from '../octagon/common.js';
+import { GAME_NAME, OCTAGON_RING, SHAPES, formatPin, octagonLoader, octagonMark, shapeClass, shapeIcon } from '../octagon/common.js';
 
 const T = {
   back: 'Oʻyinlar',
@@ -44,7 +44,13 @@ const T = {
   pin: 'PIN',
   joinAt: 'Qoʻshilish:',
   scan: 'Telefon kamerasi bilan skanerlang',
-  orOpen: 'yoki saytni oching va PIN kiriting:',
+  stepOpen: 'Telefonda saytni oching',
+  stepPin: 'PIN kodni kiriting',
+  stepNick: 'Ismingizni yozing — tayyor!',
+  backTitle: 'Octagon: yangi oʻyin sozlamalari',
+  loading: 'Yuklanmoqda…',
+  soundOn: 'Ovozni yoqish (standart — oʻchiq)',
+  soundOff: 'Ovozni oʻchirish',
   waitingPlayers: 'Oʻquvchilar kutilmoqda…',
   playersJoined: (n) => `${n} ta oʻquvchi`,
   online: (n, total) => `${n}/${total} onlayn`,
@@ -245,11 +251,11 @@ function setupView(root, ctx) {
   const howCard = h('div.card.oct-how',
     h('h2.card-title', icon('help', 18), T.howTitle),
     h('ol.bp-steps', T.how.map(([title, text], i) => h('li', h('span.bp-step-n', String(i + 1)), h('div', h('b', title), h('p.muted', text))))),
-    h('div.oct-art.sm', SHAPES.map((s, i) => h('span', { style: { background: s.bg, color: s.fg } }, shapeIcon(i, 22)))));
+    h('div.oct-art.sm', SHAPES.map((s, i) => h(`span.oc-fill.${shapeClass(i)}`, { role: 'img', 'aria-label': s.name, title: s.name }, shapeIcon(i, 22)))));
 
   root.append(h('section.screen.oct-lobby-page',
     h('a.back-link.games-back', { href: '#/games' }, icon('left', 16), T.back),
-    h('div.page-head', h('div', h('h1', GAME_NAME), h('p.muted', T.lead))),
+    h('div.page-head.oct-head', octagonMark(48), h('div', h('h1', GAME_NAME), h('p.muted', T.lead))),
     activeBox,
     h('div.bp-lobby-grid', setupCard, howCard)));
   paintTime();
@@ -438,16 +444,47 @@ function qrSvg(qr, url) {
   const bg = document.createElementNS(ns, 'rect');
   bg.setAttribute('width', String(qr.size));
   bg.setAttribute('height', String(qr.size));
-  bg.setAttribute('fill', '#fff');
+  bg.setAttribute('class', 'oct-qr-bg');
   const path = document.createElementNS(ns, 'path');
   path.setAttribute('d', qr.path);
-  path.setAttribute('fill', '#000');
+  path.setAttribute('class', 'oct-qr-dots');
   svg.append(bg, path);
   return svg;
 }
 
+/** Sakkizburchak taymer halqasi: yo'l uzunligi 100, qolgan vaqt — chiziq uzunligi. */
+function octRing(extra = '') {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const cls of ['track', 'bar']) {
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', OCTAGON_RING);
+    path.setAttribute('pathLength', '100');
+    path.setAttribute('class', cls);
+    svg.append(path);
+  }
+  return h(`div.oct-ring${extra}`, { 'data-ring': '' }, svg, h('span', { 'data-countdown': '' }, ''));
+}
+
 function fmt(n) {
-  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+function initials(nick) {
+  const parts = String(nick).trim().split(/\s+/).filter(Boolean);
+  return ((parts[0] || '?')[0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+}
+
+const SOUND_KEY = 'td-octagon-sound';
+
+function soundOn() {
+  try {
+    return localStorage.getItem(SOUND_KEY) === 'on'; // standart — ovozsiz
+  } catch {
+    return false;
+  }
 }
 
 function hostView(root, pinParam) {
@@ -457,22 +494,25 @@ function hostView(root, pinParam) {
   let lastPhaseKey = '';
   let lastBoard = '';
   let alive = true;
+  let sound = soundOn();
   root.classList.add('wide');
 
   const pinBox = h('div.oct-pin', h('span', T.pin), h('b', formatPin(pin)));
   const joinLine = h('div.oct-join-line');
-  const countPill = h('span.pill.oct-count', icon('users', 16), h('b', '0'));
-  const connPill = h('span.pill.conn-pill', { hidden: true }, icon('wifiOff', 14), h('span.hide-sm', T.reconnecting));
-  const fsBtn = h('button.icon-btn', { type: 'button', title: T.fullscreen, 'aria-label': T.fullscreen, onclick: toggleFullscreen }, icon('maximize', 18));
-  const endBtn = h('button.btn.ghost.sm', { type: 'button', onclick: endGame }, icon('flag', 14), h('span.hide-sm', T.end));
-  const lockBtn = h('button.btn.ghost.sm.oct-lock', { type: 'button', 'aria-pressed': 'false', onclick: () => game && act('lock', { locked: !game.locked }) });
+  const countPill = h('span.oct-pill.oct-count', icon('users', 16), h('b', '0'));
+  const connPill = h('span.oct-pill.warn', { hidden: true, role: 'status' }, icon('wifiOff', 14), h('span.hide-sm', T.reconnecting));
+  const lockBtn = h('button.oct-tool.oct-lock', { type: 'button', 'aria-pressed': 'false', onclick: () => game && act('lock', { locked: !game.locked }) });
+  const soundBtn = h('button.oct-tool.oct-sound', { type: 'button', onclick: toggleSound });
+  const fsBtn = h('button.oct-tool.oct-fs', { type: 'button', title: T.fullscreen, 'aria-label': T.fullscreen, onclick: toggleFullscreen }, icon('maximize', 18));
+  const endBtn = h('button.oct-tool.oct-end', { type: 'button', onclick: endGame }, icon('flag', 16), h('span.hide-sm', T.end));
   const bar = h('div.oct-bar',
-    h('a.back-link', { href: '#/games/octagon', title: GAME_NAME }, icon('left', 16), h('span.hide-sm', GAME_NAME)),
+    h('a.oct-back', { href: '#/games/octagon', title: T.backTitle, 'aria-label': T.backTitle }, icon('left', 18), octagonMark(28), h('span.hide-sm', GAME_NAME)),
     h('div.oct-bar-pin', pinBox, joinLine),
-    h('div.oct-bar-tools', connPill, countPill, lockBtn, fsBtn, endBtn));
-  const stage = h('div.oct-stage', spinner());
+    h('div.oct-bar-tools', connPill, countPill, lockBtn, soundBtn, fsBtn, endBtn));
+  const stage = h('div.oct-stage', h('div.oct-loading', octagonLoader(), h('span', T.loading)));
   const section = h('section.screen.oct-host', bar, stage);
   root.append(section);
+  paintSound();
 
   const sock = hostSocket(pin, {
     onStatus(s) {
@@ -490,6 +530,7 @@ function hostView(root, pinParam) {
           sock.close();
           stage.replaceChildren(emptyState('alert', T.notFound, d.m, h('a.btn.primary', { href: '#/games/octagon' }, T.newGame)));
           endBtn.hidden = true;
+          lockBtn.hidden = true;
         } else {
           toast(d.m, 'error');
         }
@@ -500,6 +541,28 @@ function hostView(root, pinParam) {
   function act(action, extra = {}) {
     if (!game) return;
     sock.send(action, { phase: game.phase, q: game.index, ...extra });
+  }
+
+  function play(kind) {
+    if (sound) beep(kind, true); // Octagon ovozi alohida, standart — o'chiq
+  }
+
+  function paintSound() {
+    soundBtn.setAttribute('aria-pressed', String(sound));
+    soundBtn.title = sound ? T.soundOff : T.soundOn;
+    soundBtn.setAttribute('aria-label', soundBtn.title);
+    soundBtn.replaceChildren(icon(sound ? 'volume' : 'mute', 18));
+  }
+
+  function toggleSound() {
+    sound = !sound;
+    try {
+      localStorage.setItem(SOUND_KEY, sound ? 'on' : 'off');
+    } catch {
+      /* saqlab bo'lmasa ham ishlaydi */
+    }
+    paintSound();
+    play('tick');
   }
 
   function render(g) {
@@ -519,10 +582,10 @@ function hostView(root, pinParam) {
     }
     lastPhaseKey = key;
     lastBoard = boardKey(g);
-    if (g.phase === 'question') beep('tick');
+    if (g.phase === 'question') play('tick');
     if (g.phase === 'podium') {
-      beep('win');
-      confetti();
+      play('win');
+      confetti(themeColors());
     }
     stage.replaceChildren(({
       lobby: lobbyScreen,
@@ -540,7 +603,7 @@ function hostView(root, pinParam) {
     lockBtn.classList.toggle('on', !!g.locked);
     lockBtn.setAttribute('aria-pressed', String(!!g.locked));
     lockBtn.title = T.lockTitle(!!g.locked);
-    lockBtn.replaceChildren(icon(g.locked ? 'lock' : 'unlock', 14), h('span.hide-sm', g.locked ? T.lockClosed : T.lockOpen));
+    lockBtn.replaceChildren(icon(g.locked ? 'lock' : 'unlock', 16), h('span.hide-sm', g.locked ? T.lockClosed : T.lockOpen));
     const note = stage.querySelector('[data-locked]');
     if (note) note.hidden = !g.locked;
   }
@@ -573,39 +636,46 @@ function hostView(root, pinParam) {
 
   // ----------------------------------------------------------------- lobbi
   function lobbyScreen(g) {
+    const site = g.joinBase.replace(/^https?:\/\//, '') + '/play';
     const startBtn = h('button.btn.accent.lg.oct-start', { type: 'button', 'data-start': '', disabled: !g.playerCount, onclick: () => act('start') },
       icon('play', 20), T.start);
     return h('div.oct-lobby',
-      h('div.card.oct-qr-card',
-        h('div.oct-qr', qrSvg(g.qr, g.joinUrl)),
-        h('p.oct-scan', T.scan),
-        h('p.muted.small', T.orOpen),
-        h('p.oct-url', h('b', g.joinBase.replace(/^https?:\/\//, '') + '/play'), h('span.oct-url-pin', `PIN ${formatPin(g.pin)}`))),
-      h('div.card.oct-players-card',
+      h('div.oct-join',
+        h('div.oct-join-steps',
+          h('p.oct-step-label', h('span.oct-step-n.oc-oct', '1'), T.stepOpen),
+          h('p.oct-url', h('b', site)),
+          h('p.oct-step-label', h('span.oct-step-n.oc-oct', '2'), T.stepPin),
+          h('div.oct-hero-pin', { 'aria-label': `PIN ${formatPin(g.pin)}` }, formatPin(g.pin)),
+          h('p.oct-step-label', h('span.oct-step-n.oc-oct', '3'), T.stepNick)),
+        h('div.oct-qr-box',
+          h('div.oct-qr', qrSvg(g.qr, g.joinUrl)),
+          h('p.oct-scan', icon('maximize', 16), T.scan))),
+      h('div.oct-players-card',
         h('div.oct-players-head',
           h('h2', { 'data-count': '' }, g.playerCount ? T.playersJoined(g.playerCount) : T.waitingPlayers),
-          h('span.small.muted', `${g.topicName}`)),
+          h('span.oct-topic', g.topicName)),
         playersList(g),
-        h('p.alert.warning.oct-locked-note', { 'data-locked': '', hidden: !g.locked }, icon('lock', 16), h('span', T.lockedNote)),
+        h('p.oct-locked-note', { 'data-locked': '', hidden: !g.locked }, icon('lock', 16), h('span', T.lockedNote)),
         h('div.oct-lobby-foot',
           lobbyTime(g),
-          h('div.oct-start-box', startBtn, h('span.small.muted', { 'data-start-hint': '', hidden: !!g.playerCount }, T.startNeedPlayers)))));
+          h('div.oct-start-box', startBtn, h('span.small.oct-dim', { 'data-start-hint': '', hidden: !!g.playerCount }, T.startNeedPlayers)))));
   }
 
   function playersList(g) {
     if (!g.players || !g.players.length) {
-      return h('div.oct-players.empty', { 'data-players': '' }, h('span.spinner'), h('span.muted', T.waitingPlayers));
+      return h('div.oct-players.empty', { 'data-players': '' }, octagonLoader(), h('span', T.waitingPlayers));
     }
-    return h('ul.oct-players', { 'data-players': '' }, g.players.map((p) => h(`li.oct-player${p.online ? '' : '.off'}`,
+    return h('ul.oct-players', { 'data-players': '' }, g.players.map((p, i) => h(`li.oct-player${p.online ? '' : '.off'}`,
       { title: p.online ? null : `${p.nick} — ${T.offline}` },
+      h(`span.oct-avatar.oc-oct.${shapeClass(i % SHAPES.length)}`, { 'aria-hidden': 'true' }, initials(p.nick)),
       p.online ? null : h('span.oct-off', { role: 'img', 'aria-label': T.offline }, icon('wifiOff', 14)),
       h('span.oct-player-nick', p.nick),
-      h('button.oct-kick', { type: 'button', title: T.kick(p.nick), 'aria-label': T.kick(p.nick), onclick: () => kick(p) }, icon('x', 14)))));
+      h('button.oct-kick', { type: 'button', title: T.kick(p.nick), 'aria-label': T.kick(p.nick), onclick: () => kick(p) }, icon('x', 16)))));
   }
 
   function lobbyTime(g) {
     const box = h('div.oct-lobby-time', { 'data-time': '' },
-      h('span.small.muted', T.settingsLine(g.total, g.timeLimit)),
+      h('span.small.oct-dim', T.settingsLine(g.total, g.timeLimit)),
       chips(TIME_PRESETS.map((v) => [v, `${v} s`]), TIME_PRESETS.includes(g.timeLimit) ? g.timeLimit : null, T.time, (v) => act('settings', { timeLimit: v })).el);
     box.title = T.timeLocked;
     return box;
@@ -626,17 +696,16 @@ function hostView(root, pinParam) {
     return h('div.oct-ready',
       qHead(g),
       h('div.oct-qtext', { class: g.question.text.length > 160 ? 'long' : null }, g.question.text),
-      h('div.oct-ring.big', h('span', { 'data-countdown': '' }, String(Math.max(1, Math.ceil((g.remainingMs || 0) / 1000))))),
-      h('p.muted', T.getReady));
+      octRing('.big'),
+      h('p.oct-dim', T.getReady));
   }
 
   function tiles(g, reveal) {
     const total = Math.max(1, ...(g.counts || [0]));
     return h(`div.oct-tiles.n${g.question.options.length}`, g.question.options.map((text, i) => {
-      const s = SHAPES[i];
       const correct = reveal && i === g.question.correct;
-      return h(`div.oct-tile${reveal ? (correct ? '.correct' : '.dim') : ''}`, { style: { '--tile-bg': s.bg, '--tile-fg': s.fg } },
-        h('span.oct-tile-shape', { role: 'img', 'aria-label': s.name }, shapeIcon(i, 34)),
+      return h(`div.oct-tile.oc-fill.${shapeClass(i)}${reveal ? (correct ? '.correct' : '.dim') : ''}`,
+        h('span.oct-tile-shape.oc-oct', { role: 'img', 'aria-label': SHAPES[i].name }, shapeIcon(i, 34)),
         h('span.oct-tile-text', text),
         reveal ? h('span.oct-tile-count', correct ? icon('check', 22) : null, h('b', String(g.counts[i]))) : null,
         reveal ? h('span.oct-tile-bar', { style: { transform: `scaleX(${g.counts[i] / total})` } }) : null);
@@ -648,7 +717,7 @@ function hostView(root, pinParam) {
       qHead(g, h('span.oct-answered', { 'data-answered': '' }, T.answered(g.answered, g.connectedCount || g.playerCount))),
       h('div.oct-qrow',
         h('div.oct-qtext', { class: g.question.text.length > 160 ? 'long' : null }, g.question.text),
-        h('div.oct-ring', { 'data-ring': '' }, h('span', { 'data-countdown': '' }, String(g.timeLimit)))),
+        octRing()),
       tiles(g, false),
       h('div.oct-actions', h('button.btn.ghost', { type: 'button', onclick: () => act('skip') }, icon('skip', 16), T.skip)));
   }
@@ -659,41 +728,46 @@ function hostView(root, pinParam) {
       h('div.oct-qtext.small', g.question.text),
       tiles(g, true),
       h('div.oct-actions', h('button.btn.primary.lg', { type: 'button', onclick: () => act('next') }, T.showBoard, icon('right', 18)),
-        h('span.small.muted.hide-sm', T.keysHint)));
+        h('span.small.oct-dim.hide-sm', T.keysHint)));
+  }
+
+  function rankBadge(rank) {
+    return h(`span.oct-rank-n.oc-oct${rank <= 3 ? `.m${rank}` : ''}`, String(rank));
   }
 
   function boardScreen(g) {
     const last = g.index + 1 >= g.total;
     return h('div.oct-board',
       qHead(g),
-      h('h2.oct-board-title', icon('trophy', 26), T.leaderboard),
+      h('h2.oct-board-title', octagonMark(34), T.leaderboard),
       g.leaderboard.length
         ? h('ol.oct-rank', g.leaderboard.map((r) => h('li',
-          h('span.oct-rank-n', String(r.rank)),
+          rankBadge(r.rank),
           h('span.oct-rank-nick', r.nick),
           r.gained ? h('span.oct-rank-gain', `+${fmt(r.gained)}`) : null,
           h('b.oct-rank-score', fmt(r.score)))))
-        : h('p.muted', T.noPlayers),
+        : h('p.oct-dim', T.noPlayers),
       h('div.oct-actions', h('button.btn.primary.lg', { type: 'button', onclick: () => act('next') }, last ? T.finalResults : T.nextQuestion, icon('right', 18)),
-        h('span.small.muted.hide-sm', T.keysHint)));
+        h('span.small.oct-dim.hide-sm', T.keysHint)));
   }
 
   function podiumScreen(g) {
     const top = g.ranking.slice(0, 3);
     const order = [1, 0, 2].filter((i) => top[i]);
     return h('div.oct-podium-wrap',
-      h('h2.oct-board-title', icon('trophy', 28), T.podium),
-      g.endedEarly ? h('p.muted.center', `${T.endedEarly} · ${T.played(g.played, g.total)}`) : null,
+      h('h2.oct-board-title', octagonMark(38), T.podium),
+      g.endedEarly ? h('p.oct-dim.center', `${T.endedEarly} · ${T.played(g.played, g.total)}`) : null,
       top.length ? h('div.oct-podium', order.map((i) => h(`div.oct-step.place-${i + 1}`,
+        h(`div.oct-medal.oc-oct.m${i + 1}`, h('b', String(i + 1))),
         h('span.oct-step-nick', top[i].nick),
         h('span.oct-step-score', `${fmt(top[i].score)} ${T.points}`),
-        h('div.oct-step-block', h('b', String(i + 1)))))) : h('p.muted.center', T.noPlayers),
-      g.ranking.length > 3 ? h('details.card.oct-all', { open: g.ranking.length <= 12 },
+        h('div.oct-step-block')))) : h('p.oct-dim.center', T.noPlayers),
+      g.ranking.length > 3 ? h('details.oct-all', { open: g.ranking.length <= 12 },
         h('summary', T.fullRanking),
         h('ol.oct-rank.compact', g.ranking.map((r) => h('li',
-          h('span.oct-rank-n', String(r.rank)),
+          rankBadge(r.rank),
           h('span.oct-rank-nick', r.nick),
-          h('span.small.muted', T.correctShort(r.correct)),
+          h('span.small.oct-dim', T.correctShort(r.correct)),
           h('b.oct-rank-score', fmt(r.score)))))) : null,
       h('div.oct-actions',
         h('a.btn.primary', { href: '#/games/octagon' }, icon('sparkles', 16), T.newGame),
@@ -704,6 +778,7 @@ function hostView(root, pinParam) {
     lastPhaseKey = '';
     game = null;
     endBtn.hidden = true;
+    lockBtn.hidden = true;
     stage.replaceChildren(emptyState('flag', T.closedTitle, T.closedText, h('a.btn.primary', { href: '#/games/octagon' }, T.newGame)));
   }
 
@@ -727,8 +802,9 @@ function hostView(root, pinParam) {
       if (n.textContent !== String(secs)) n.textContent = String(secs);
     }
     const ring = stage.querySelector('[data-ring]');
-    if (ring) {
-      ring.style.setProperty('--p', String(Math.min(1, left / (game.timeLimit * 1000))));
+    if (ring && game.phase === 'question') {
+      const p = Math.min(1, left / (game.timeLimit * 1000));
+      ring.querySelector('.bar').style.strokeDashoffset = String(100 - p * 100);
       ring.classList.toggle('low', left < 5000);
     }
   }
@@ -795,4 +871,10 @@ function hostView(root, pinParam) {
     document.body.classList.remove('oct-immersive');
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   };
+}
+
+/** Konfetti uchun javob ranglari — mavzu faylidagi o'zgaruvchilardan (JS da hex qiymat yo'q). */
+function themeColors() {
+  const css = getComputedStyle(document.documentElement);
+  return ['--oc-red', '--oc-blue', '--oc-yellow', '--oc-green'].map((v) => css.getPropertyValue(v).trim()).filter(Boolean);
 }

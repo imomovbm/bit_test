@@ -57,10 +57,10 @@ yozadi.
 - Ism: 1–20 belgi, o'yinda yagona (katta-kichik harf va o'xshash harflar hisobga olinmaydi); HTML, ko'rinmas belgilar,
   emoji va oddiy so'kinishlar filtrlanadi.
 - Kech qo'shilish mumkin (o'yin o'rtasida ham) — 0 ball bilan joriy savoldan davom etadi.
-- Telefonda **faqat rangli shakllar** (qizil uchburchak, ko'k romb, sariq doira, yashil kvadrat) — savol va javob
+- Telefonda **faqat rangli shakllar** (qizil sakkizburchak, ko'k tomchi, sariq yulduz, yashil plyus) — savol va javob
   matni yuborilmaydi. Serverdan faqat savol raqami, variantlar soni, qolgan vaqt va shaxsiy natija keladi (xabarlar
   ~100 bayt); to'g'ri javob savol yopilgandan keyingina yuboriladi. O'quvchi sahifasi asosiy ilovani yuklamaydi
-  (jami ~34 KB).
+  (jami ~49 KB, gzip bilan ~16 KB; rasm, shrift va kutubxonalarsiz).
 - Har savoldan keyin: to'g'ri/noto'g'ri, olingan ball, umumiy ball va o'rin.
 - Birinchi qo'shilishda server o'yinchi ID va maxfiy token beradi — ular brauzerda (localStorage, bo'lmasa cookie)
   PIN bo'yicha saqlanadi. Sahifa yangilansa, aloqa uzilsa yoki oyna yopilib qayta ochilsa — o'sha o'yinchi (ism, ball,
@@ -79,6 +79,14 @@ javob serverga yetib kelgan paytgacha (mijoz yuborgan vaqtga ishonilmaydi).
   kechikishi o'quvchi hisobiga ketadi; shuning uchun telefondagi taymer o'lchangan kechikish (ping) bo'yicha biroz
   oldinroq tugaydi.
 - Reytingda teng ball: kam umumiy javob vaqti (javobsiz savol — to'liq vaqt hisoblanadi), so'ng ism bo'yicha.
+
+**Dizayn:** to'q dengiz ko'ki sahna, sakkizburchak motivi (logotip — to'rtta javob rangidan tuzilgan sakkizburchak,
+yuklanish belgisi, o'rin nishonlari va podium medallari). Ranglar va shakl ranglari bitta faylda —
+`static/css/octagon-theme.css` (JS da rang qiymatlari yo'q); har bir rang o'z shakli bilan (rang yagona belgi emas),
+kontrast WCAG AA bo'yicha tekshiriladi (`tests/test_octagon_theme.py`). Shakllar — inline SVG, ekranni o'quvchi
+dasturlar uchun nomlari bor («Qizil sakkizburchak» va h.k.). Animatsiyalar qisqa va «kamroq harakat» sozlamasida
+o'chadi. Ovoz standart holatda o'chiq (o'qituvchi ekranidagi tugma bilan yoqiladi; faqat brauzerda yaratiladigan
+oddiy signal tovushlari).
 
 **4 tadan ko'p variantli savollar** (o'yinda ko'pi bilan 4 ta shakl): o'qituvchi tanlaydi — **qisqartirish**
 (standart: to'g'ri javob + tasodifiy 3 ta noto'g'ri variant) yoki **o'yinga olmaslik**. 2 variantli (ha/yo'q) savollar

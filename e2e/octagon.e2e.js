@@ -126,13 +126,22 @@ async function studentPage(browser, width, tag) {
   return page;
 }
 
+/** Kirish animatsiyalari (masshtab) tugashini kutadi — o'lchamlar animatsiya o'rtasida o'lchanmasin. */
+async function settle(page) {
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter((a) => a.effect && a.effect.getTiming().iterations !== Infinity)
+    .map((a) => a.finished.catch(() => null))));
+}
+
 async function noOverflow(page, label) {
+  await settle(page);
   const extra = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   ok(extra <= 0, `${label}: gorizontal siljish yoʻq (${extra}px)`);
 }
 
 /** Yangi ekranlardagi bosiladigan elementlar kamida 48×48 px (telefon uchun). */
 async function tapTargets(page, scope, label) {
+  await settle(page);
   const small = await page.evaluate((sel) => {
     const out = [];
     for (const root of document.querySelectorAll(sel)) {
@@ -147,6 +156,44 @@ async function tapTargets(page, scope, label) {
     return out;
   }, scope);
   ok(small.length === 0, `${label}: bosiladigan elementlar ≥ 48px${small.length ? ` — kichik: ${small.join(', ')}` : ''}`);
+}
+
+/** Asosiy matnlar kesilmagan: mazmun o'z qutisiga sig'adi va ekran kengligidan chiqmaydi. */
+async function notClipped(page, selectors, label) {
+  await settle(page);
+  const bad = await page.evaluate((sel) => {
+    const out = [];
+    for (const el of document.querySelectorAll(sel)) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height || el.closest('[hidden]')) continue;
+      const cut = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+      const outside = r.left < -0.5 || r.right > window.innerWidth + 0.5;
+      if (cut || outside) out.push(`${el.tagName.toLowerCase()}.${[...el.classList].join('.')} «${el.textContent.trim().slice(0, 24)}»`);
+    }
+    return out;
+  }, selectors);
+  ok(bad.length === 0, `${label}: matnlar kesilmagan${bad.length ? ` — ${bad.join(', ')}` : ''}`);
+}
+
+/** O'qiladigan matn: ko'rinadigan matnlar kamida 12 px. */
+async function readableText(page, scope, label) {
+  await settle(page);
+  const small = await page.evaluate((sel) => {
+    const out = [];
+    for (const root of document.querySelectorAll(sel)) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const el = n.parentElement;
+        if (!n.textContent.trim() || !el || el.closest('[hidden]')) continue;
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        const size = parseFloat(getComputedStyle(el).fontSize);
+        if (size < 12) out.push(`«${n.textContent.trim().slice(0, 20)}» ${size}px`);
+      }
+    }
+    return out;
+  }, scope);
+  ok(small.length === 0, `${label}: matnlar ≥ 12px${small.length ? ` — kichik: ${small.join(', ')}` : ''}`);
 }
 
 async function shot(page, name) {
@@ -725,6 +772,80 @@ async function score(student) {
     await stale.click('button[type=submit]');
     await studentPhase(stale, 'reveal');
     ok((await stale.textContent('.pl-nick')) === 'Kechikkan', 'qoʻshilish qayta ochildi — oʻquvchi kirdi');
+
+    console.log('20) dizayn: barcha ekranlar 360 / 375 / 768 / 1280 px (oʻquvchi va oʻqituvchi)');
+    const dg = await t2.evaluate(async () => {
+      const { topics } = await (await fetch('/api/octagon/topics')).json();
+      const id = topics.find((x) => x.name === 'Octagon E2E').id;
+      return (await (await fetch('/api/octagon/games', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topicId: id, timeLimit: 120, questionCount: 2, shuffleQuestions: false, shuffleAnswers: false }) })).json()).game;
+    });
+    await t2.goto(`${BASE}/?app#/games/octagon/${dg.pin}`);
+    await t2.waitForSelector('.oct-lobby');
+    ok(await t2.getAttribute('.oct-sound', 'aria-pressed') === 'false', 'ovoz standart holatda oʻchiq (tugma bilan yoqiladi)');
+    const ds = await studentPage(browser, 360, 'Dizayn');
+    await ds.goto(`${BASE}/play/${dg.pin}`);
+    await ds.fill('input[autocomplete=nickname]', 'Madinabonu Rahimova');
+    await ds.click('button[type=submit]');
+    await studentPhase(ds, 'lobby');
+    const idle = await studentPage(browser, 375, 'Kuzatuvchi'); // javob bermaydi — savol ochiq qoladi
+    await idle.goto(`${BASE}/play/${dg.pin}`);
+    await idle.fill('input[autocomplete=nickname]', 'Kuzatuvchi');
+    await idle.click('button[type=submit]');
+    await studentPhase(idle, 'lobby');
+    const allWidths = async (label, hostSel, studentSel) => {
+      for (const w of WIDTHS) {
+        await t2.setViewportSize({ width: w, height: w < 700 ? 760 : 800 });
+        await ds.setViewportSize({ width: w, height: w < 700 ? 760 : 900 });
+        await sleep(350);
+        for (const [p, who, scope] of [[t2, 'oʻqituvchi', '.oct-host'], [ds, 'oʻquvchi', '#play']]) {
+          await noOverflow(p, `${label} ${who} ${w}px`);
+          await notClipped(p, who === 'oʻqituvchi' ? hostSel : studentSel, `${label} ${who} ${w}px`);
+          await readableText(p, scope, `${label} ${who} ${w}px`);
+          if (w <= 375) await tapTargets(p, scope, `${label} ${who} ${w}px`);
+        }
+        await shot(t2, `design-teacher-${label}-${w}`);
+        await shot(ds, `design-student-${label}-${w}`);
+      }
+      await t2.setViewportSize({ width: 1280, height: 800 });
+    };
+    await allWidths('lobby', '.oct-hero-pin, .oct-url b, .oct-pin b, .oct-start', '.pl-pin b, .pl-big-nick');
+    await t2.click('.oct-start');
+    await studentPhase(ds, 'question');
+    await hostPhase(t2, 'question');
+    const labels = await ds.$$eval('.pl-answer', (els) => els.map((e) => [e.getAttribute('aria-label'), e.className, !!e.querySelector('svg path')]));
+    ok(JSON.stringify(labels.map((l) => l[0])) === JSON.stringify(['Javob: Qizil sakkizburchak', 'Javob: Koʻk tomchi', 'Javob: Sariq yulduz', 'Javob: Yashil plyus']),
+      `shakllar: ${labels.map((l) => l[0].replace('Javob: ', '')).join(', ')}`);
+    ok(labels.every(([, cls, svg], i) => cls.includes(`oc-c${i}`) && svg), 'har bir tugmada rang va shakl (inline SVG) bor');
+    const tileLabels = await t2.$$eval('.oct-tile-shape', (els) => els.map((e) => e.getAttribute('aria-label')));
+    ok(tileLabels.join() === 'Qizil sakkizburchak,Koʻk tomchi,Sariq yulduz,Yashil plyus', 'proyektordagi variantlarda ham oʻsha rang va shakl');
+    await allWidths('question', '.oct-qtext, .oct-tile-text, .oct-pin b', '.pl-pin b, .pl-qlabel');
+    await ds.click('.pl-answer >> nth=2');
+    await ds.waitForSelector('.pl-lock-tag.on');
+    ok(/qabul qilindi/.test(await ds.textContent('.pl-locked h1')), 'javob qulflandi — aniq tasdiq koʻrsatildi');
+    await allWidths('locked', '.oct-qtext, .oct-pin b', '.pl-locked h1, .pl-lock-tag');
+    await t2.click('button:has-text("Savolni yakunlash")');
+    await hostPhase(t2, 'reveal');
+    await studentPhase(ds, 'reveal');
+    await allWidths('reveal', '.oct-tile-text, .oct-tile-count, .oct-pin b', '.pl-result h1, .pl-rank');
+    await t2.click('.oct-actions .btn.primary');
+    await hostPhase(t2, 'leaderboard');
+    await allWidths('leaderboard', '.oct-rank-score, .oct-board-title', '.pl-result h1, .pl-rank');
+    await t2.click('.oct-actions .btn.primary');
+    await hostPhase(t2, 'question');
+    await t2.click('button:has-text("Savolni yakunlash")');
+    await hostPhase(t2, 'reveal');
+    await t2.click('.oct-actions .btn.primary');
+    await t2.click('.oct-actions .btn.primary');
+    await hostPhase(t2, 'podium');
+    await studentPhase(ds, 'podium');
+    await sleep(800);
+    await allWidths('podium', '.oct-board-title, .oct-step-score', '.pl-place, .pl-points');
+    const rmCtx = await browser.newContext({ viewport: { width: 375, height: 760 }, reducedMotion: 'reduce' });
+    const rm = await rmCtx.newPage();
+    await rm.goto(`${BASE}/play`);
+    await rm.waitForSelector('.pl-card');
+    ok(await rm.$eval('.pl-card', (e) => getComputedStyle(e).animationName === 'none'), '«kamroq harakat» sozlamasida animatsiyalar oʻchadi');
+    await rmCtx.close();
 
     ok(twoChecked, 'ha/yoʻq (2 variantli) savol maketi tekshirildi');
     console.log(`\nbrauzer xatolari: ${errors.length ? `\n${errors.join('\n')}` : 'yoʻq'}`);

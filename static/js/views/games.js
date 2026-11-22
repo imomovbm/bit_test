@@ -1,7 +1,7 @@
 // «O'yinlar» paneli (faqat o'qituvchilar va administratorlar): Balloon Pop, Octagon va kelajakdagi o'yinlar.
 import { h, icon } from '../lib.js';
 import { api } from '../api.js';
-import { GAME_NAME, SHAPES, shapeIcon, formatPin } from '../octagon/common.js';
+import { GAME_NAME, SHAPES, formatPin, octagonMark, shapeClass, shapeIcon } from '../octagon/common.js';
 
 const T = {
   title: 'Oʻyinlar',
@@ -68,5 +68,6 @@ function gameCard({ href, art, title, tag, text, points, cls }) {
 }
 
 function octagonArt() {
-  return h('div.oct-art', SHAPES.map((s, i) => h('span', { style: { background: s.bg, color: s.fg } }, shapeIcon(i, 30))));
+  return h('div.oct-art', octagonMark(88),
+    h('div.oct-art-shapes', SHAPES.map((s, i) => h(`span.oc-fill.${shapeClass(i)}`, { role: 'img', 'aria-label': s.name }, shapeIcon(i, 22)))));
 }

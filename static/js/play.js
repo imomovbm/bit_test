@@ -1,7 +1,7 @@
 // O'quvchilar sahifasi (/play, /play/PIN): ro'yxatdan o'tmasdan — faqat PIN va ism. Telefonlar uchun yengil:
 // asosiy ilova (app.js, lib.js) yuklanmaydi, shakllar — inline SVG, serverdan faqat kichik xabarlar keladi
 // (savol matni va variantlar o'qituvchi ekranida; bu yerda faqat rangli shakllar).
-import { GAME_NAME, SHAPES, shapeIcon, formatPin } from './octagon/common.js';
+import { GAME_NAME, OCTAGON_RING, SHAPES, formatPin, octagonLoader, octagonMark, shapeClass, shapeIcon } from './octagon/common.js';
 
 const T = {
   pageTitle: `${GAME_NAME} — oʻyinga qoʻshilish`,
@@ -24,6 +24,9 @@ const T = {
   lookUp: 'Savol va javoblarni oʻqituvchi ekranidan oʻqing',
   chooseShape: 'Toʻgʻri javob shaklini bosing',
   sent: 'Javob yuborildi',
+  sending: 'Yuborilmoqda…',
+  locked: 'Javobingiz qabul qilindi',
+  lockedTag: 'Qulflandi',
   waitOthers: 'Boshqalar javob berishini kutamiz…',
   correct: 'Toʻgʻri!',
   wrong: 'Notoʻgʻri',
@@ -37,6 +40,7 @@ const T = {
   joinedLate: 'Siz oʻyinga qoʻshildingiz. Keyingi savol tez orada boshlanadi.',
   finished: 'Oʻyin tugadi!',
   place: (k) => `${k}-oʻrin`,
+  placeShort: 'oʻrin',
   winners: 'Gʻoliblar',
   kicked: 'Oʻqituvchi sizni oʻyindan chiqardi',
   kickedText: 'Boshqa ism bilan qayta qoʻshilishingiz mumkin.',
@@ -476,19 +480,63 @@ async function keepAwake() {
 }
 
 // --------------------------------------------------------------------- chizish
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const GLYPHS = {
+  check: 'M5 12.5l4.5 4.5L19 7.5',
+  cross: 'M6.5 6.5l11 11M17.5 6.5l-11 11',
+  clock: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18Z',
+  lock: 'M7 11V8a5 5 0 0 1 10 0v3M5.5 11h13v9.5h-13Z',
+  tabs: 'M3.5 9h11v11h-11ZM8.5 9V4h12v11h-6',
+};
+
+/** Chiziqli kichik belgi (inline SVG). */
+function glyph(name, size = 24) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('class', 'pl-glyph');
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', GLYPHS[name]);
+  svg.append(path);
+  return svg;
+}
+
+/** Sakkizburchak taymer halqasi (tayyorlanish sanog'i uchun). */
+function ring() {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const cls of ['track', 'bar']) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', OCTAGON_RING);
+    path.setAttribute('class', cls);
+    path.setAttribute('pathLength', '100');
+    svg.append(path);
+  }
+  return svg;
+}
+
 function topBar() {
-  const pin = st.pin && st.view !== 'pin' ? el('div.pl-pin', el('span', 'PIN'), el('b', formatPin(st.pin))) : el('div.pl-brand', GAME_NAME);
+  const left = st.pin && st.view !== 'pin'
+    ? el('div.pl-pin', el('span', 'PIN'), el('b', formatPin(st.pin)))
+    : el('div.pl-brand', octagonMark(26), el('span', GAME_NAME));
   const s = st.s;
   const me = st.me && st.view === 'game'
     ? el('div.pl-me', el('span.pl-nick', st.me.nick), s ? el('span.pl-score', fmt(s.sc), el('small', ` ${T.score}`)) : null)
     : null;
-  const conn = el('div.pl-conn', { role: 'status' }, el('span.pl-spin'), T.reconnecting);
+  const conn = el('div.pl-conn', { role: 'status' }, octagonLoader(true), T.reconnecting);
   conn.hidden = st.status === 'online' || st.view === 'closed' || st.view === 'pin';
-  return [el('header.pl-top', pin, me), conn];
+  return [el('header.pl-top', left, me), conn];
 }
 
 function errorLine() {
   return el('p.pl-error', { role: 'alert', hidden: !st.error }, st.error || '');
+}
+
+function brand() {
+  return el('div.pl-logo', octagonMark(52), el('span', GAME_NAME));
 }
 
 function viewPin() {
@@ -501,7 +549,7 @@ function viewPin() {
     input.value = digits.length > 3 ? `${digits.slice(0, 3)} ${digits.slice(3)}` : digits;
   });
   const form = el('form.pl-card', { novalidate: true },
-    el('h1', T.pinLabel), el('p.pl-muted', T.pinHint), input, errorLine(),
+    brand(), el('h1', T.pinLabel), el('p.pl-muted', T.pinHint), input, errorLine(),
     el('button.pl-btn', { type: 'submit' }, T.next));
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -512,7 +560,7 @@ function viewPin() {
 }
 
 function viewChecking() {
-  return el('div.pl-card.pl-center', el('div.pl-spin.lg'), el('p.pl-muted', T.checking), errorLine());
+  return el('div.pl-card.pl-center', octagonLoader(), el('p.pl-muted', T.checking), errorLine());
 }
 
 function viewNick() {
@@ -522,7 +570,7 @@ function viewNick() {
   });
   const waiting = pending && pending.t === 'join';
   const form = el('form.pl-card', { novalidate: true },
-    el('h1', T.nickLabel), el('p.pl-muted', T.nickHint), input, errorLine(),
+    brand(), el('h1', T.nickLabel), el('p.pl-muted', T.nickHint), input, errorLine(),
     el('button.pl-btn', { type: 'submit', disabled: waiting }, T.join),
     el('button.pl-link', { type: 'button', onclick: () => restart(false) }, T.changePin));
   form.addEventListener('submit', (e) => {
@@ -533,94 +581,104 @@ function viewNick() {
   return form;
 }
 
-function shapeBadge(o, size) {
-  const s = SHAPES[o];
-  return el('span.pl-shape', { style: { background: s.bg, color: s.fg }, role: 'img', 'aria-label': s.name }, shapeIcon(o, size));
+/** Tanlangan/to'g'ri javob belgisi: rang + shakl, sakkizburchak ramkada. */
+function shapeBadge(o, size, extra = '') {
+  return el(`span.pl-shape.oc-fill.${shapeClass(o)}${extra}`, { role: 'img', 'aria-label': SHAPES[o].name }, shapeIcon(o, size));
+}
+
+/** Sakkizburchak nishon (kutish, natija, podium). */
+function badge(kind, content) {
+  return el(`div.pl-badge.oc-oct.${kind}`, content);
+}
+
+function timerLine() {
+  return el('div.pl-timer', el('div.pl-timer-track', el('div.pl-timer-bar', { 'data-bar': '' })), el('span.pl-timer-num', { 'data-countdown': '' }, ''));
 }
 
 function viewGame() {
   const s = st.s;
-  if (!s) return el('div.pl-card.pl-center', el('div.pl-spin.lg'));
+  if (!s) return el('div.pl-card.pl-center', octagonLoader());
   const qLabel = s.q != null ? T.question(s.q + 1, s.n) : '';
   switch (s.p) {
     case 'lobby':
       return el('div.pl-wait',
-        el('div.pl-pulse', el('span', '✓')),
+        badge('ok breathe', glyph('check', 52)),
         el('h1', T.lobbyTitle),
         el('p.pl-big-nick', st.me ? st.me.nick : ''),
         el('p.pl-muted', T.lobbyText));
     case 'ready':
       return el('div.pl-wait',
         el('p.pl-qlabel', qLabel),
-        el('div.pl-count', { 'data-countdown': '' }, String(Math.max(1, Math.ceil((st.deadline - performance.now()) / 1000)))),
+        el('div.pl-count', ring(), el('span', { 'data-countdown': '' }, String(Math.max(1, Math.ceil((st.deadline - performance.now()) / 1000))))),
         el('h1', T.getReady),
         el('p.pl-muted', T.lookUp));
     case 'question': {
       const chosen = s.a != null ? s.a : st.picked ? st.picked.o : null;
-      const timer = el('div.pl-timer', el('div.pl-timer-bar', { 'data-bar': '' }), el('span.pl-timer-num', { 'data-countdown': '' }, ''));
       if (chosen != null) {
-        return el('div.pl-wait',
-          el('p.pl-qlabel', qLabel), timer,
-          shapeBadge(chosen, 64),
-          el('h1', T.sent),
-          el('p.pl-muted', st.queued ? T.queued : T.waitOthers));
+        const confirmed = s.a != null;
+        return el('div.pl-locked',
+          el('div.pl-qhead', el('span.pl-qlabel', qLabel), timerLine()),
+          el('div.pl-locked-card',
+            shapeBadge(chosen, 96, '.big'),
+            el(`p.pl-lock-tag${confirmed ? '.on' : ''}`, glyph(confirmed ? 'lock' : 'clock', 18), confirmed ? T.lockedTag : T.sending),
+            el('h1', confirmed ? T.locked : T.sent),
+            el('p.pl-muted', st.queued ? T.queued : T.waitOthers)));
       }
       if (st.late) {
-        return el('div.pl-wait', el('p.pl-qlabel', qLabel), el('div.pl-res-ic.bad', '⏱'), el('h1', T.late));
+        return el('div.pl-wait', el('p.pl-qlabel', qLabel), badge('none', glyph('clock', 52)), el('h1', T.late));
       }
       const grid = el(`div.pl-grid.n${s.o}`, { role: 'group', 'aria-label': T.chooseShape },
-        Array.from({ length: s.o }, (_, o) => {
-          const sh = SHAPES[o];
-          return el('button.pl-answer', {
-            type: 'button', style: { background: sh.bg, color: sh.fg }, 'aria-label': T.answer(sh.name),
-            onclick: () => pick(o),
-          }, shapeIcon(o, 72));
-        }));
-      return el('div.pl-question', el('div.pl-qhead', el('span.pl-qlabel', qLabel), timer), grid);
+        Array.from({ length: s.o }, (_, o) => el(`button.pl-answer.oc-fill.${shapeClass(o)}`, {
+          type: 'button', 'aria-label': T.answer(SHAPES[o].name), onclick: () => pick(o),
+        }, shapeIcon(o, 120))));
+      return el('div.pl-question', el('div.pl-qhead', el('span.pl-qlabel', qLabel), timerLine()), grid);
     }
     case 'reveal':
     case 'leaderboard': {
       const r = s.res;
-      if (!r) return el('div.pl-wait', el('div.pl-pulse', el('span', '…')), el('h1', T.joinedLate), rankLine(s));
+      if (!r) return el('div.pl-wait', badge('wait', octagonLoader()), el('h1', T.joinedLate), rankLine(s));
       const ok = r.ok === true;
-      return el(`div.pl-result.${ok ? 'good' : r.ok === false ? 'bad' : 'none'}`,
+      const kind = ok ? 'good' : r.ok === false ? 'bad' : 'none';
+      return el(`div.pl-result.${kind}`,
         el('p.pl-qlabel', qLabel),
-        el('div.pl-res-ic', ok ? '✓' : r.ok === false ? '✗' : '⏱'),
+        badge(kind, glyph(ok ? 'check' : r.ok === false ? 'cross' : 'clock', 56)),
         el('h1', ok ? T.correct : r.ok === false ? T.wrong : T.noAnswer),
-        ok ? el('p.pl-points', T.points(r.pts)) : el('div.pl-correct-was', el('span', T.correctWas), shapeBadge(r.co, 36)),
+        ok ? el('p.pl-points', T.points(r.pts)) : el('div.pl-correct-was', el('span', T.correctWas), shapeBadge(r.co, 34)),
         rankLine(s),
         el('p.pl-muted', s.q + 1 >= s.n ? T.waitFinal : T.waitNext));
     }
-    case 'podium':
+    case 'podium': {
+      const medal = s.k === 1 ? 'gold' : s.k === 2 ? 'silver' : s.k === 3 ? 'bronze' : 'rest';
       return el('div.pl-final',
         el('h1', T.finished),
-        el('div.pl-medal', s.k <= 3 ? ['🥇', '🥈', '🥉'][s.k - 1] : '🎉'),
+        el(`div.pl-medal.oc-oct.${medal}`, el('b', String(s.k)), el('small', T.placeShort)),
         el('p.pl-place', T.place(s.k)),
         el('p.pl-points', `${fmt(s.sc)} ${T.score}`),
         el('p.pl-muted', T.rank(s.k, s.pl)),
         s.top && s.top.length ? el('ol.pl-top3', { 'aria-label': T.winners }, s.top.map(([nick, score], i) => el('li', { class: st.me && nick === st.me.nick ? 'me' : null },
-          el('span.pl-top3-n', String(i + 1)), el('span.pl-top3-nick', nick), el('b', fmt(score))))) : null,
+          el(`span.pl-top3-n.oc-oct.m${i + 1}`, String(i + 1)), el('span.pl-top3-nick', nick), el('b', fmt(score))))) : null,
         el('button.pl-btn.ghost', { type: 'button', onclick: () => { forgetMe(st.pin); restart(false); } }, T.otherGame));
+    }
     default:
-      return el('div.pl-card.pl-center', el('div.pl-spin.lg'));
+      return el('div.pl-card.pl-center', octagonLoader());
   }
 }
 
 function rankLine(s) {
-  return el('p.pl-rank', el('b', `${fmt(s.sc)} ${T.score}`), ' · ', T.rank(s.k, s.pl));
+  return el('p.pl-rank', el('b', `${fmt(s.sc)} ${T.score}`), el('span', T.rank(s.k, s.pl)));
 }
 
 function viewClosed() {
   const reason = st.closed;
   if (reason === 'replaced') {
-    return el('div.pl-card.pl-center', el('div.pl-res-ic.none', '⧉'), el('h1', T.replaced), el('p.pl-muted', T.replacedText),
+    return el('div.pl-card.pl-center', badge('wait', glyph('tabs', 48)), el('h1', T.replaced), el('p.pl-muted', T.replacedText),
       el('button.pl-btn', { type: 'button', onclick: continueHere }, T.continueHere));
   }
   if (reason === 'kicked') {
-    return el('div.pl-card.pl-center', el('div.pl-res-ic.bad', '✗'), el('h1', T.kicked), el('p.pl-muted', T.kickedText),
+    return el('div.pl-card.pl-center', badge('bad', glyph('cross', 48)), el('h1', T.kicked), el('p.pl-muted', T.kickedText),
       el('button.pl-btn', { type: 'button', onclick: () => restart(true) }, T.rejoin));
   }
-  return el('div.pl-card.pl-center', el('div.pl-res-ic.none', '■'), el('h1', T.ended), el('p.pl-muted', T.endedText),
+  return el('div.pl-card.pl-center', octagonMark(64), el('h1', T.ended), el('p.pl-muted', T.endedText),
     el('button.pl-btn', { type: 'button', onclick: () => restart(false) }, T.otherGame));
 }
 
@@ -639,7 +697,7 @@ function render() {
   tick();
 }
 
-// Taymer: faqat sanoq va chiziq yangilanadi (butun sahifa emas)
+// Taymer: faqat sanoq, chiziq va halqa yangilanadi (butun sahifa emas)
 function tick() {
   const s = st.s;
   if (!s || st.view !== 'game' || (s.p !== 'ready' && s.p !== 'question')) return;
@@ -649,7 +707,10 @@ function tick() {
     if (n.textContent !== v) n.textContent = v;
   }
   const bar = root.querySelector('[data-bar]');
-  if (bar && s.t) bar.style.transform = `scaleX(${Math.min(1, left / s.t)})`;
+  if (bar && s.t) {
+    bar.style.transform = `scaleX(${Math.min(1, left / s.t)})`;
+    bar.classList.toggle('low', left < 5000);
+  }
 }
 setInterval(tick, 200);
 

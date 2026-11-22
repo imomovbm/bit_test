@@ -1,0 +1,116 @@
+/* Octagon — yagona mavzu fayli: ranglar, javob shakllari ranglari, sakkizburchak motivi, yuklanish belgisi.
+   O'quvchi sahifasi (play.html) va asosiy ilova (index.html — o'qituvchi ekrani, O'yinlar paneli) shu faylni yuklaydi.
+   Ranglar faqat shu yerda: JS da hex qiymatlar yo'q (sinflar orqali: .oc-c0 … .oc-c3).
+
+   Kontrast (WCAG AA) tests/test_octagon_theme.py da tekshiriladi:
+     javob rangi va uning belgisi/matni (--oc-*-ink) >= 4.5:1, to'qroq varianti (--oc-*-lo) bilan ham >= 4.5:1;
+     javob rangi to'q fonga nisbatan >= 3:1 (tugma chegarasi ko'rinadi); asosiy matn fonga nisbatan >= 7:1. */
+:root {
+  /* to'q dengiz ko'ki asos */
+  --oc-bg: #0c1733;
+  --oc-bg-deep: #070e22;
+  --oc-surface: #13234b;
+  --oc-surface-2: #1a2d5c;
+  --oc-line: rgba(170, 190, 240, 0.22);
+  --oc-line-strong: rgba(190, 205, 245, 0.42);
+  --oc-bar: rgba(7, 14, 34, 0.8);
+  --oc-ink: #f3f6fd;
+  --oc-ink-2: #b8c3e0;
+  --oc-ink-3: #93a0c4;
+  --oc-accent: #5b4bff;
+  --oc-accent-lo: #4434e0;
+  --oc-accent-2: #7b6dff;   /* faqat bezak (chegara, yuklanish belgisi) — matn foni emas */
+  --oc-accent-ink: #ffffff;
+  --oc-focus: #ffd447;
+  --oc-warn: #ffd447;
+  --oc-warn-ink: #241a00;
+
+  /* javoblar: rang + shakl (0 — qizil sakkizburchak, 1 — ko'k tomchi, 2 — sariq yulduz, 3 — yashil plyus) */
+  --oc-red: #c8323f;
+  --oc-red-ink: #ffffff;
+  --oc-red-hi: #f3828c;
+  --oc-red-lo: #9c2330;
+  --oc-blue: #2f62d9;
+  --oc-blue-ink: #ffffff;
+  --oc-blue-hi: #93b2ff;
+  --oc-blue-lo: #2449a8;
+  --oc-yellow: #f4be2c;
+  --oc-yellow-ink: #241a00;
+  --oc-yellow-hi: #ffe28f;
+  --oc-yellow-lo: #cf9a14;
+  --oc-green: #16804a;
+  --oc-green-ink: #ffffff;
+  --oc-green-hi: #74d9a6;
+  --oc-green-lo: #0f6036;
+
+  /* podium medallari */
+  --oc-gold: #f2c94c;
+  --oc-silver: #c7d0e2;
+  --oc-bronze: #d88d57;
+  --oc-medal-ink: #1b1400;
+  --oc-ring-light: rgba(255, 255, 255, 0.62);
+  --oc-hover: rgba(255, 255, 255, 0.08);   /* tugma ustiga kelganda */
+  --oc-shade: rgba(0, 0, 0, 0.2);          /* rangli fon ustidagi to'qroq belgi joyi */
+  --oc-qr-light: #ffffff;                  /* QR kod: skanerlar uchun oq fon va qora nuqtalar */
+  --oc-qr-dark: #000000;
+
+  /* natija ekranlari: yuqoridan tushadigan rangli nur */
+  --oc-glow-accent: rgba(91, 75, 255, 0.3);
+  --oc-glow-good: rgba(22, 128, 74, 0.78);
+  --oc-glow-bad: rgba(200, 50, 63, 0.72);
+  --oc-glow-none: rgba(147, 160, 196, 0.34);
+
+  --oc-radius: 20px;
+  --oc-shadow: 0 14px 40px rgba(2, 6, 20, 0.45);
+  --oc-shadow-sm: 0 4px 14px rgba(2, 6, 20, 0.35);
+  /* muntazam sakkizburchak (kvadrat ichida, burchaklar 29.3% dan kesiladi) */
+  --oc-octagon: polygon(29.3% 0, 70.7% 0, 100% 29.3%, 100% 70.7%, 70.7% 100%, 29.3% 100%, 0 70.7%, 0 29.3%);
+  /* kichik kesilgan burchakli kartochka (QR kod uchun: kesik bo'sh hoshiyadan chiqmaydi) */
+  --oc-chamfer: polygon(7% 0, 93% 0, 100% 7%, 100% 93%, 93% 100%, 7% 100%, 0 93%, 0 7%);
+  /* fon naqshi: juda xira sakkizburchaklar */
+  --oc-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cpath d='M20 4h16l12 12v16L36 44H20L8 32V16Z' fill='none' stroke='%23a9bdf0' stroke-opacity='.07' stroke-width='2'/%3E%3Cpath d='M68 52h12l9 9v12l-9 9H68l-9-9V61Z' fill='none' stroke='%23a9bdf0' stroke-opacity='.05' stroke-width='2'/%3E%3C/svg%3E");
+}
+
+/* javob ranglari: --c (to'ldirish), --c-ink (shakl/matn), --c-hi (chegara, yorug'), --c-lo (to'q) */
+.oc-c0 { --c: var(--oc-red); --c-ink: var(--oc-red-ink); --c-hi: var(--oc-red-hi); --c-lo: var(--oc-red-lo); }
+.oc-c1 { --c: var(--oc-blue); --c-ink: var(--oc-blue-ink); --c-hi: var(--oc-blue-hi); --c-lo: var(--oc-blue-lo); }
+.oc-c2 { --c: var(--oc-yellow); --c-ink: var(--oc-yellow-ink); --c-hi: var(--oc-yellow-hi); --c-lo: var(--oc-yellow-lo); }
+.oc-c3 { --c: var(--oc-green); --c-ink: var(--oc-green-ink); --c-hi: var(--oc-green-hi); --c-lo: var(--oc-green-lo); }
+
+/* javob "tugmasi" uslubi: qalin yorug' chegara, gradient + chiziqli naqsh (o'quvchi tugmalari va proyektordagi variantlar).
+   Naqsh va gradient faqat qoraytiradi (jami ~24%) — oq belgili ranglarda kontrast faqat oshadi, sariqda >= 5.8:1 qoladi. */
+.oc-fill {
+  background-color: var(--c);
+  background-image:
+    repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.07) 0 12px, rgba(0, 0, 0, 0) 12px 24px),
+    linear-gradient(160deg, rgba(0, 0, 0, 0) 35%, rgba(0, 0, 0, 0.18));
+  border: 4px solid var(--c-hi);
+  color: var(--c-ink);
+}
+
+/* sakkizburchak shaklidagi belgilar (o'rin, medal, avatar) */
+.oc-oct { clip-path: var(--oc-octagon); }
+
+/* logotip: to'rtta javob rangidan tuzilgan sakkizburchak */
+.oc-mark { display: inline-block; flex: none; }
+.oc-mark path { stroke: var(--oc-mark-gap, var(--oc-bg)); stroke-width: 1.4; stroke-linejoin: round; }
+.oc-mark .q0 { fill: var(--oc-red); }
+.oc-mark .q1 { fill: var(--oc-blue); }
+.oc-mark .q2 { fill: var(--oc-yellow); }
+.oc-mark .q3 { fill: var(--oc-green); }
+.oc-mark .hub { fill: var(--oc-mark-gap, var(--oc-bg)); }
+
+/* yuklanish belgisi: sakkizburchak bo'ylab yuguradigan chiziq */
+.oc-loader { display: inline-block; flex: none; width: 44px; height: 44px; color: var(--oc-accent-2); }
+.oc-loader.sm { width: 18px; height: 18px; }
+.oc-loader path { fill: none; stroke: currentColor; stroke-width: 12; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 30 70; animation: oc-dash 1.2s linear infinite; }
+.oc-loader .track { stroke-opacity: 0.22; stroke-dasharray: none; animation: none; }
+
+@keyframes oc-dash { to { stroke-dashoffset: -100; } }
+@keyframes oc-pop { from { transform: scale(0.9); opacity: 0; } }
+@keyframes oc-rise { from { transform: translateY(16px); opacity: 0; } }
+@keyframes oc-breathe { 50% { transform: scale(1.04); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-loader path { animation: none; }
+}
