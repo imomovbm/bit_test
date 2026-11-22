@@ -6,6 +6,7 @@ masalan:  set TD_PORT=9000  (Windows)  yoki  TD_PORT=9000 python run.py  (Linux)
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 
@@ -65,6 +66,20 @@ RESULT_TTL = 600.0      # aloqasiz qolgan ishtirokchi uchun natijani saqlab turi
 # ---- Octagon (jonli viktorina) ----
 OCTAGON_READY = _float("TD_OCTAGON_READY", 3.0)    # har bir savol oldidan "tayyorlaning" sanog'i (soniya)
 OCTAGON_TTL = _float("TD_OCTAGON_TTL", 7200.0)     # shuncha soniya faolsiz qolgan o'yin xotiradan o'chiriladi
+OCTAGON_MAX_SOCKETS = _int("TD_OCTAGON_MAX_SOCKETS", 5000)  # jami ochiq o'quvchi/o'qituvchi ulanishlari
+
+
+def _public_url() -> str | None:
+    """TD_PUBLIC_URL — saytning ommaviy manzili (masalan, https://quiz.maktab.uz). Berilsa, QR kod va qo'shilish
+    havolasi doim shu manzilga ishora qiladi (aks holda so'rovdagi Host sarlavhasidan olinadi)."""
+    value = os.environ.get("TD_PUBLIC_URL", "").strip().rstrip("/")
+    if value and not re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:[0-9]{1,5})?", value):
+        print(f"Ogohlantirish: TD_PUBLIC_URL noto'g'ri ({value!r}) — e'tiborga olinmadi", flush=True)
+        return None
+    return value or None
+
+
+PUBLIC_URL = _public_url()
 
 # ---- Yuklash cheklovlari ----
 MAX_UPLOAD_CHARS = 10_000_000

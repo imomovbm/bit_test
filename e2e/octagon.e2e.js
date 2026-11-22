@@ -337,10 +337,14 @@ async function score(student) {
     await noOverflow(vali, 'PIN kiritish 375px');
     await tapTargets(vali, '#play', 'PIN kiritish 375px');
     await shot(vali, 'student-pin-375');
-    await vali.fill('.pl-pin-input', '000000');
+    await vali.fill('.pl-pin-input', '012345');
     await vali.click('button[type=submit]');
     await vali.waitForSelector('.pl-error:not([hidden])');
-    ok(/topilmadi/.test(await vali.textContent('.pl-error')), 'notoʻgʻri PIN — tushunarli xato');
+    ok(/6 xonali/.test(await vali.textContent('.pl-error')), 'notoʻgʻri formatdagi PIN serverga yuborilmaydi');
+    await vali.fill('.pl-pin-input', pin === '999999' ? '999998' : '999999');
+    await vali.click('button[type=submit]');
+    await vali.waitForFunction(() => /topilmadi/.test(document.querySelector('.pl-error')?.textContent || ''));
+    ok(true, 'mavjud boʻlmagan PIN — tushunarli xato');
     await vali.fill('.pl-pin-input', pin);
     await vali.click('button[type=submit]');
     await vali.waitForSelector('input[autocomplete=nickname]');
@@ -631,6 +635,96 @@ async function score(student) {
     await hostPhase(t2, 'reveal', 35000);
     const st2 = await t2.evaluate(async (p) => (await (await fetch(`/api/octagon/games/${p}`)).json()).game, g2.pin);
     ok(st2.answered === 2 && st2.playerCount === 2, `navbatdagi javob yetib bordi: ${st2.answered}/2 javob, ${st2.playerCount} oʻyinchi`);
+
+    console.log('17) XSS: mavzu nomi, savol, variantlar va ismlardagi HTML faqat matn sifatida koʻrsatiladi');
+    const XSS = '<img src=x onerror="window.__xss=1">';
+    const xssContent = [`Savol ${XSS} <script>window.__xss=2</script>?`, `#Javob ${XSS}`,
+      '<b onmouseover="window.__xss=3">Qalin</b>', '"><svg onload=window.__xss=4>', 'Oddiy javob'].join('\n====\n');
+    const ownerCookie = (await apiAs('', 'POST', '/api/auth/login', { login: 'admin', password: 'owner123' })).cookie;
+    const xt = await apiAs(ownerCookie, 'POST', '/api/admin/topics', { name: `XSS ${XSS} sinov`, content: xssContent, shuffle: false });
+    ok(xt.status === 201, 'HTML li mavzu yaratildi');
+    const xg = await t2.evaluate(async (id) => (await (await fetch('/api/octagon/games', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topicId: id, timeLimit: 30, questionCount: 1, shuffleAnswers: false }),
+    })).json()).game, xt.data.topic.id);
+    await t2.goto(`${BASE}/?app#/games/octagon/${xg.pin}`);
+    await t2.waitForSelector('.oct-lobby');
+    const xs = await studentPage(browser, 375, 'xss');
+    await xs.goto(`${BASE}/play/${xg.pin}`);
+    await xs.fill('input[autocomplete=nickname]', '<img src=x>'); // maydon 20 belgigacha
+    await xs.click('button[type=submit]');
+    await xs.waitForSelector('.pl-error:not([hidden])');
+    const nickErr = await xs.textContent('.pl-error');
+    ok(/harf yoki raqam/.test(nickErr), `faqat HTML tegidan iborat ism rad etildi: «${nickErr}»`);
+    await xs.fill('input[autocomplete=nickname]', 'Ali"><svg onload=f>');
+    await xs.click('button[type=submit]');
+    await studentPhase(xs, 'lobby');
+    ok((await xs.textContent('.pl-nick')) === 'Ali', 'ismdan HTML tozalandi: «Ali»');
+    // brauzerdagi 20 belgilik cheklovni chetlab, uzun HTML ism to'g'ridan-to'g'ri WebSocket orqali
+    const rawNick = await xs.evaluate((p) => new Promise((resolve) => {
+      const sock = new WebSocket(`ws://${location.host}/ws/octagon`);
+      sock.onopen = () => sock.send(JSON.stringify({ t: 'join', d: { pin: p, nick: '<img src=x onerror="window.__xss=5">Bek' } }));
+      sock.onmessage = (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.t !== 'w' && m.t !== 'e') return;
+        sock.close(); // Bek aloqasiz qoladi — savol Ali javob berishi bilan yopiladi
+        resolve(m.t === 'w' ? m.d.nick : `xato: ${m.d.m}`);
+      };
+    }), xg.pin);
+    ok(rawNick === 'Bek', `WebSocket orqali yuborilgan HTML ism serverda tozalandi: «${rawNick}»`);
+    await t2.waitForFunction(() => document.querySelectorAll('.oct-player-nick').length === 2);
+    const nicks = await t2.$$eval('.oct-player-nick', (els) => els.map((e) => e.textContent).sort());
+    ok(JSON.stringify(nicks) === '["Ali","Bek"]', `oʻqituvchi lobbisida ismlar matn sifatida: ${nicks.join(', ')}`);
+    await t2.goto(`${BASE}/?app#/games/octagon`);
+    await t2.waitForSelector('.games-active .adm-row-title');
+    ok((await t2.textContent('.games-active')).includes(`XSS ${XSS} sinov`), 'mavzu nomidagi HTML matn sifatida koʻrsatildi (davom etayotgan oʻyinlar)');
+    await t2.goto(`${BASE}/?app#/games/octagon/${xg.pin}`);
+    await t2.waitForSelector('.oct-start:not([disabled])');
+    await t2.click('.oct-start');
+    await hostPhase(t2, 'question');
+    const qText = await t2.textContent('.oct-qtext');
+    const tiles = await tileTexts(t2);
+    ok(qText.includes(XSS) && qText.includes('<script>'), `savol matni oʻzgarishsiz koʻrsatildi: ${qText.slice(0, 40)}…`);
+    ok(tiles.includes('<b onmouseover="window.__xss=3">Qalin</b>') && tiles.includes('"><svg onload=window.__xss=4>'), 'variantlardagi HTML matn sifatida');
+    await t2.hover('.oct-tile >> nth=1');
+    const injected = await t2.evaluate(() => ({
+      flag: window.__xss,
+      nodes: document.querySelectorAll('.oct-stage img, .oct-stage script, .oct-stage svg[onload], .oct-stage b[onmouseover], .games-active img').length,
+    }));
+    ok(injected.flag === undefined && injected.nodes === 0, 'oʻqituvchi ekranida hech qanday skript ishlamadi, HTML element yaratilmadi');
+    await xs.click('.pl-answer >> nth=0');
+    await hostPhase(t2, 'reveal');
+    await t2.click('.oct-actions .btn.primary');
+    await hostPhase(t2, 'leaderboard');
+    await t2.click('.oct-actions .btn.primary');
+    await hostPhase(t2, 'podium');
+    await studentPhase(xs, 'podium');
+    ok(await xs.evaluate(() => window.__xss === undefined && !document.querySelector('#play img, #play script')), 'oʻquvchi sahifasida ham skript ishlamadi');
+    ok(await t2.evaluate(() => window.__xss === undefined), 'podiumda ham skript ishlamadi');
+
+    console.log('18) eskirgan (12 soatdan eski) saqlangan oʻyinchi maʼlumoti ishlatilmaydi va oʻchiriladi');
+    const stale = await studentPage(browser, 375, 'stale');
+    await stale.goto(`${BASE}/play`);
+    await stale.evaluate(([p, me]) => localStorage.setItem(`oct:${p}`, JSON.stringify(me)),
+      [g2.pin, { id: 'eski', tok: 'y'.repeat(32), nick: 'Eski', at: Date.now() - 13 * 3600 * 1000 }]);
+    await stale.goto(`${BASE}/play/${g2.pin}`);
+    await stale.waitForSelector('input[autocomplete=nickname]');
+    ok(await stale.evaluate((p) => localStorage.getItem(`oct:${p}`) === null, g2.pin), 'eskirgan ID/token eʼtiborsiz qoldirildi va oʻchirildi (ism soʻraladi)');
+
+    console.log('19) oʻqituvchi yangi qoʻshilishlarni yopadi va qayta ochadi');
+    await t2.goto(`${BASE}/?app#/games/octagon/${g2.pin}`);
+    await t2.waitForSelector('.oct-lock:not([hidden])');
+    await t2.click('.oct-lock');
+    await t2.waitForSelector('.oct-lock.on[aria-pressed=true]');
+    await stale.fill('input[autocomplete=nickname]', 'Kechikkan');
+    await stale.click('button[type=submit]');
+    await stale.waitForFunction(() => /toʻxtatgan/.test(document.querySelector('.pl-error')?.textContent || ''));
+    ok(true, 'qoʻshilish yopiq: yangi oʻquvchiga tushunarli xabar');
+    await t2.click('.oct-lock');
+    await t2.waitForSelector('.oct-lock:not(.on)');
+    await stale.fill('input[autocomplete=nickname]', 'Kechikkan');
+    await stale.click('button[type=submit]');
+    await studentPhase(stale, 'reveal');
+    ok((await stale.textContent('.pl-nick')) === 'Kechikkan', 'qoʻshilish qayta ochildi — oʻquvchi kirdi');
 
     ok(twoChecked, 'ha/yoʻq (2 variantli) savol maketi tekshirildi');
     console.log(`\nbrauzer xatolari: ${errors.length ? `\n${errors.join('\n')}` : 'yoʻq'}`);

@@ -8,8 +8,11 @@ from collections import deque
 
 from aiohttp import WSMsgType, web
 
+from . import config
 from .api import client_ip
-from .keys import HUB, OCTAGON, SOCKETS, USER
+from .keys import DB, HUB, OCTAGON, SOCKETS, USER
+from .octagon import HOST_ACTIONS
+from .security import token_hash
 
 log = logging.getLogger("testduel.ws")
 
@@ -22,6 +25,7 @@ class Conn:
         self.queue: asyncio.Queue = asyncio.Queue()
         self.closed = False
         self.ip = "?"
+        self.session: str | None = None  # sessiya tokenining xeshi (o'qituvchi oynasi uchun)
         self._separators = (",", ":") if compact else None
 
     def send(self, msg_type: str, data) -> None:
@@ -84,7 +88,7 @@ async def ws_handler(request: web.Request) -> web.StreamResponse:
             if msg.type == WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
-                except ValueError:
+                except (ValueError, RecursionError):  # buzilgan yoki juda chuqur JSON — e'tiborsiz
                     continue
                 if not isinstance(data, dict):
                     continue
@@ -120,7 +124,9 @@ async def octagon_ws_handler(request: web.Request) -> web.StreamResponse:
         raise
     conn = Conn(ws, compact=True)
     conn.ip = ip
-    user = request.get(USER)  # o'qituvchi sessiyasi (o'quvchilar uchun None)
+    cookie = request.cookies.get(config.SESSION_COOKIE)
+    conn.session = token_hash(cookie) if cookie else None
+    db = request.app[DB]
     request.app[SOCKETS].add(ws)
     writer = asyncio.create_task(conn.writer())
     loop = asyncio.get_running_loop()
@@ -137,13 +143,15 @@ async def octagon_ws_handler(request: web.Request) -> web.StreamResponse:
                     break
                 try:
                     data = json.loads(msg.data)
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue
                 if not isinstance(data, dict):
                     continue
-                payload = data.get("d")
+                msg_type, payload = data.get("t"), data.get("d")
+                # o'qituvchi amallari: sessiya har safar bazadan qayta tekshiriladi (chiqilgan/parol tiklangan bo'lishi mumkin)
+                user = db.session_user(conn.session) if conn.session and msg_type in ("host", *HOST_ACTIONS) else None
                 try:
-                    hub.handle(conn, data.get("t"), payload if isinstance(payload, dict) else {}, user)
+                    hub.handle(conn, msg_type, payload if isinstance(payload, dict) else {}, user)
                 except Exception:
                     log.exception("Octagon xabarida xato: %r", data.get("t"))
             elif msg.type == WSMsgType.ERROR:

@@ -65,6 +65,10 @@ class RateLimiter:
     def blocked(self, key: str) -> bool:
         return len(self._bucket(key)) >= self.limit
 
+    def count(self, key: str) -> int:
+        """Oxirgi `window` soniyadagi urinishlar soni."""
+        return len(self._bucket(key))
+
     def hit(self, key: str) -> None:
         self._bucket(key).append(time.monotonic())
 

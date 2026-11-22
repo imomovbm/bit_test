@@ -85,6 +85,10 @@ const T = {
   closedText: 'Bu oʻyin endi mavjud emas.',
   notFound: 'Oʻyin topilmadi',
   keysHint: 'Probel yoki Enter — keyingi bosqich',
+  lockOpen: 'Qoʻshilish ochiq',
+  lockClosed: 'Qoʻshilish yopiq',
+  lockTitle: (locked) => (locked ? 'Yangi oʻquvchilarga qoʻshilishga ruxsat berish' : 'Yangi oʻquvchilar qoʻshilishini toʻxtatish (qayta ulanish ishlayveradi)'),
+  lockedNote: 'Qoʻshilish yopiq: yangi oʻquvchilar kira olmaydi. Oʻyindagilar qayta ulana oladi.',
   points: 'ball',
   qrAlt: (url) => `QR kod: ${url}`,
 };
@@ -99,7 +103,8 @@ export function octagonView(root, params, ctx) {
 }
 
 function loadPrefs() {
-  const prefs = { topicId: null, count: 10, time: 20, shuffleQuestions: true, shuffleAnswers: true, longOptions: 'trim' };
+  // count/time: null — serverdagi standart qiymatlar (limits.defaultQuestions / defaultTime) ishlatiladi
+  const prefs = { topicId: null, count: null, time: null, shuffleQuestions: true, shuffleAnswers: true, longOptions: 'trim' };
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
     if (p && typeof p === 'object') Object.assign(prefs, p);
@@ -138,7 +143,7 @@ function chips(values, selected, label, onPick) {
 function setupView(root, ctx) {
   const prefs = loadPrefs();
   let topics = [];
-  let limits = { minTime: 5, maxTime: 120, defaultTime: 20, maxQuestions: 100 };
+  let limits = { minTime: 5, maxTime: 120, defaultTime: 20, maxQuestions: 100, defaultQuestions: 10 }; // serverdan yangilanadi
   let alive = true;
   const topicSelect = h('select', { 'aria-label': T.topic }, h('option', { value: '' }, T.topicsLoading));
   const topicInfo = h('span.field-hint');
@@ -192,7 +197,7 @@ function setupView(root, ctx) {
     const n = Math.min(available(), limits.maxQuestions);
     const values = COUNT_PRESETS.filter((v) => v < n).map((v) => [v, String(v)]);
     values.push([n, T.all(n)]);
-    if (!values.some(([v]) => v === prefs.count)) prefs.count = Math.min(10, n) || n;
+    if (!values.some(([v]) => v === prefs.count)) prefs.count = Math.min(limits.defaultQuestions, n) || n;
     countBox.replaceChildren(h('label.field', h('span.field-label', T.count),
       chips(values, prefs.count, T.count, (v) => {
         prefs.count = v;
@@ -201,6 +206,7 @@ function setupView(root, ctx) {
   }
 
   function paintTime() {
+    if (!Number.isInteger(prefs.time)) prefs.time = limits.defaultTime;
     const isPreset = TIME_PRESETS.includes(prefs.time);
     customTime.value = isPreset ? '' : String(prefs.time);
     const presets = chips(TIME_PRESETS.map((v) => [v, `${v} s`]), isPreset ? prefs.time : null, T.time, (v) => {
@@ -261,6 +267,7 @@ function setupView(root, ctx) {
     if (!alive) return;
     customTime.min = limits.minTime;
     customTime.max = limits.maxTime;
+    paintTime();
     if (!topics.length) {
       topicSelect.replaceChildren(h('option', { value: '' }, T.noTopics));
       topicSelect.disabled = true;
@@ -458,10 +465,11 @@ function hostView(root, pinParam) {
   const connPill = h('span.pill.conn-pill', { hidden: true }, icon('wifiOff', 14), h('span.hide-sm', T.reconnecting));
   const fsBtn = h('button.icon-btn', { type: 'button', title: T.fullscreen, 'aria-label': T.fullscreen, onclick: toggleFullscreen }, icon('maximize', 18));
   const endBtn = h('button.btn.ghost.sm', { type: 'button', onclick: endGame }, icon('flag', 14), h('span.hide-sm', T.end));
+  const lockBtn = h('button.btn.ghost.sm.oct-lock', { type: 'button', 'aria-pressed': 'false', onclick: () => game && act('lock', { locked: !game.locked }) });
   const bar = h('div.oct-bar',
     h('a.back-link', { href: '#/games/octagon', title: GAME_NAME }, icon('left', 16), h('span.hide-sm', GAME_NAME)),
     h('div.oct-bar-pin', pinBox, joinLine),
-    h('div.oct-bar-tools', connPill, countPill, fsBtn, endBtn));
+    h('div.oct-bar-tools', connPill, countPill, lockBtn, fsBtn, endBtn));
   const stage = h('div.oct-stage', spinner());
   const section = h('section.screen.oct-host', bar, stage);
   root.append(section);
@@ -501,6 +509,7 @@ function hostView(root, pinParam) {
     countPill.title = T.online(g.connectedCount, g.playerCount);
     joinLine.replaceChildren(h('span', T.joinAt), h('b', g.joinBase.replace(/^https?:\/\//, '') + '/play'));
     endBtn.hidden = g.phase === 'podium';
+    paintLock(g);
     if (typeof g.remainingMs === 'number') deadline = performance.now() + g.remainingMs;
     const key = `${g.phase}:${g.index}`;
     section.className = `screen oct-host phase-${g.phase}`;
@@ -524,6 +533,16 @@ function hostView(root, pinParam) {
       podium: podiumScreen,
     }[g.phase] || (() => spinner()))(g));
     tick();
+  }
+
+  function paintLock(g) {
+    lockBtn.hidden = g.phase === 'podium';
+    lockBtn.classList.toggle('on', !!g.locked);
+    lockBtn.setAttribute('aria-pressed', String(!!g.locked));
+    lockBtn.title = T.lockTitle(!!g.locked);
+    lockBtn.replaceChildren(icon(g.locked ? 'lock' : 'unlock', 14), h('span.hide-sm', g.locked ? T.lockClosed : T.lockOpen));
+    const note = stage.querySelector('[data-locked]');
+    if (note) note.hidden = !g.locked;
   }
 
   function update(g) {
@@ -567,6 +586,7 @@ function hostView(root, pinParam) {
           h('h2', { 'data-count': '' }, g.playerCount ? T.playersJoined(g.playerCount) : T.waitingPlayers),
           h('span.small.muted', `${g.topicName}`)),
         playersList(g),
+        h('p.alert.warning.oct-locked-note', { 'data-locked': '', hidden: !g.locked }, icon('lock', 16), h('span', T.lockedNote)),
         h('div.oct-lobby-foot',
           lobbyTime(g),
           h('div.oct-start-box', startBtn, h('span.small.muted', { 'data-start-hint': '', hidden: !!g.playerCount }, T.startNeedPlayers)))));
@@ -606,7 +626,7 @@ function hostView(root, pinParam) {
     return h('div.oct-ready',
       qHead(g),
       h('div.oct-qtext', { class: g.question.text.length > 160 ? 'long' : null }, g.question.text),
-      h('div.oct-ring.big', h('span', { 'data-countdown': '' }, '3')),
+      h('div.oct-ring.big', h('span', { 'data-countdown': '' }, String(Math.max(1, Math.ceil((g.remainingMs || 0) / 1000))))),
       h('p.muted', T.getReady));
   }
 

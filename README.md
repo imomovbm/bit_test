@@ -41,8 +41,10 @@ ichki nomlar — `/api/octagon`, `app/octagon.py` — o'zgarmaydi).
 **O'qituvchi:** «O'yinlar» → Octagon → mavzu, savollar soni va **har bir savol uchun vaqt** (10 / 20 / 30 / 60 s yoki
 5–120 s oralig'ida istalgan son, standart 20 s), savollar/variantlarni aralashtirish → **Lobbini ochish**.
 - Lobbida katta **PIN** (6 xonali) va **QR kod** (havola: `sayt/play/PIN`), qo'shilgan o'quvchilar (onlayn/oflayn) va
-  ularning soni. Nomaqbul ismli o'quvchini chiqarish mumkin. Savol vaqtini lobbida o'zgartirish mumkin, o'yin
-  boshlangach u qulflanadi (server ham tekshiradi).
+  ularning soni. Nomaqbul ismli o'quvchini chiqarish mumkin (o'sha ism bu o'yinda qayta ishlatilmaydi, boshqa ism
+  bilan qaytishi mumkin). **«Qo'shilish ochiq / yopiq»** tugmasi yangi o'quvchilar qo'shilishini to'xtatadi (o'yindagilar
+  qayta ulana oladi). Savol vaqtini lobbida o'zgartirish mumkin, o'yin boshlangach u qulflanadi (server ham
+  tekshiradi).
 - O'yin faqat **Boshlash** bosilganda boshlanadi. Har bir savol: «tayyorlaning» (3 s) → savol (savol matni va
   variantlar rang + shakl bilan) → natija (javoblar taqsimoti, to'g'ri javob) → eng yaxshi 5 talik → keyingi savol →
   yakunda podium. Hamma javob bersa, savol vaqt tugashini kutmasdan yopiladi. «Savolni yakunlash» va «Tugatish»
@@ -83,9 +85,22 @@ javob serverga yetib kelgan paytgacha (mijoz yuborgan vaqtga ishonilmaydi).
 2 ta katta tugma bilan ko'rsatiladi.
 
 **Cheklovlar:** o'yin holati server xotirasida (bitta server nusxasi uchun; Railway'da `numReplicas: 1`), ~2 soat
-faolsiz qolgan o'yinlar o'chiriladi, server qayta ishga tushsa davom etayotgan o'yinlar yo'qoladi. Bitta o'yinda
-300 tagacha o'quvchi, bitta o'qituvchida 5 tagacha tugallanmagan o'yin. Noto'g'ri PIN urinishlari IP bo'yicha
-cheklangan (5 daqiqada 20 ta), bitta IP dan qo'shilish — 10 daqiqada 200 ta (maktab tarmog'i uchun).
+faolsiz qolgan o'yinlar o'chiriladi. Bitta o'yinda 300 tagacha o'quvchi; bitta o'qituvchida 5 tagacha tugallanmagan
+va 5 tagacha tugagan (natijasi ko'rinadigan) o'yin — eskilari avtomatik yopiladi. Noto'g'ri PIN/token urinishlari
+IP bo'yicha cheklangan (5 daqiqada 20 ta); bir daqiqada barcha IP lardan 300 tadan ko'p noto'g'ri urinish bo'lsa
+(PIN taxmin qilish hujumi), har bir IP ga 5 ta qoladi. Bitta IP dan qo'shilish — 10 daqiqada 200 ta (maktab
+tarmog'i uchun); ochiq ulanishlar — bitta IP dan 500 ta, jami 5000 ta (`TD_OCTAGON_MAX_SOCKETS`). WebSocket xabari
+4 KB gacha, 10 soniyada 60 tagacha.
+
+**Server qayta ishga tushsa** davom etayotgan Octagon o'yinlari yo'qoladi (ular faqat xotirada). Ulanishlar «server
+to'xtadi» bilan yopiladi; o'quvchi telefoni qayta ulanib, «oldingi o'yindagi joyingiz topilmadi» va PIN topilmadi
+degan xabarni ko'radi, o'qituvchi ekrani — «O'yin topilmadi» va «Yangi o'yin» tugmasi. O'qituvchi yangi o'yin ochadi.
+
+**Xavfsizlik** (batafsil — [docs/octagon-audit.md](docs/octagon-audit.md)): o'yinni faqat egasi boshqaradi va har bir
+boshqaruv amalida sessiya qayta tekshiriladi (tizimdan chiqilsa yoki parol tiklansa ochiq oynalar uziladi); javob
+vaqti, to'g'riligi va ball faqat serverda; o'quvchi tokeni 192 bit, bazada emas, xotirada xesh ko'rinishida. Barcha
+javoblarda xavfsizlik sarlavhalari: `Content-Security-Policy` (skriptlar faqat shu saytdan), `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`.
 
 ## Balloon Pop — jamoaviy sinf o'yini
 
@@ -215,6 +230,8 @@ Keyingi savol
 | `TD_DISCONNECT_GRACE` | `10` | Aloqa uzilganda qaytish uchun vaqt (soniya) |
 | `TD_OCTAGON_READY` | `3` | Octagon: har bir savol oldidan «tayyorlaning» sanog'i (soniya) |
 | `TD_OCTAGON_TTL` | `7200` | Octagon: faolsiz o'yin xotiradan o'chiriladigan vaqt (soniya) |
+| `TD_OCTAGON_MAX_SOCKETS` | `5000` | Octagon: jami ochiq ulanishlar chegarasi |
+| `TD_PUBLIC_URL` | — | Saytning ommaviy manzili (masalan, `https://quiz.maktab.uz`). Berilsa, QR kod va qo'shilish havolasi doim shu manzilga ishora qiladi |
 
 Misol: `TD_PORT=9000 TD_ADMINS=bekzod python run.py`
 
@@ -268,6 +285,8 @@ python -m pytest
   dvigateli (soxta soat bilan: lobbi, vaqt, kech qo'shilish, qayta ulanish, ikkinchi oyna, band ism, o'quvchi
   xabarlarida matn yo'qligi, tozalash);
 - `tests/test_octagon_api.py` — rollar va 403/401 (REST va WebSocket), `/play`, haqiqiy WebSocket orqali to'liq o'yin;
+- `tests/test_octagon_security.py` va `tests/test_octagon.py` oxiridagi testlar — xavfsizlik auditi regressiyalari
+  (IDOR, sessiya, CSRF/CORS, sarlavhalar, cheklovlar, poyga holatlari, server qayta ishga tushishi);
 - `tests/test_qr.py` — QR kod kodlovchisi.
 
 Brauzerdagi to'liq tekshiruv (Playwright; ilovaning o'ziga kerak emas):
@@ -277,8 +296,10 @@ npm i -D playwright && npx playwright install chromium
 node e2e/octagon.e2e.js        # o'zi vaqtinchalik server ishga tushiradi; skrinshotlar: e2e/screenshots/
 ```
 
-U rollarni, to'liq o'yinni (PIN/QR, kech qo'shilish, qayta ulanish, ikkinchi oyna, band ism, tarmoq uzilishi),
-o'quvchi xabarlarini va 360 / 375 / 768 / 1280 px kengliklarni (gorizontal siljish yo'q, tugmalar ≥ 48 px) tekshiradi.
+U rollarni, to'liq o'yinni (PIN/QR, kech qo'shilish, qayta ulanish, ikkinchi oyna, band ism, tarmoq uzilishi,
+qo'shilishni yopish), o'quvchi xabarlarini, XSS (savol/variant/ism/mavzu nomidagi HTML faqat matn) va 360 / 375 / 768 /
+1280 px kengliklarni (gorizontal siljish yo'q, tugmalar ≥ 48 px) tekshiradi; brauzer konsolidagi har qanday xato
+(jumladan CSP buzilishi) testni yiqitadi.
 
 ## Loyiha tuzilishi
 

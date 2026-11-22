@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/
-.claudee2e/screenshots/
+.claude
+e2e/screenshots/
 node_modules/

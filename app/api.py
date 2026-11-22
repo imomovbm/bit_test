@@ -325,6 +325,7 @@ async def logout(request: web.Request):
     token = request.cookies.get(config.SESSION_COOKIE)
     if token:
         request.app[DB].delete_session(token_hash(token))
+        request.app[OCTAGON].drop_hosts(session=token_hash(token))  # shu sessiyadagi Octagon boshqaruv oynalari uziladi
     resp = ok()
     resp.del_cookie(config.SESSION_COOKIE, path="/")
     return resp
@@ -522,8 +523,11 @@ def octagon_call(fn, *args):
 
 
 def public_base_url(request: web.Request) -> str:
-    """O'quvchilar qo'shiladigan sayt manzili (QR kod uchun). Kompyuterning o'zida (localhost) ochilgan bo'lsa —
-    tarmoqdagi manzil (LAN IP), aks holda telefonlar localhost'ga ulana olmaydi."""
+    """O'quvchilar qo'shiladigan sayt manzili (QR kod uchun). TD_PUBLIC_URL berilgan bo'lsa — doim shu manzil.
+    Kompyuterning o'zida (localhost) ochilgan bo'lsa — tarmoqdagi manzil (LAN IP), aks holda telefonlar localhost'ga
+    ulana olmaydi. Host sarlavhasi tekshiriladi: noto'g'ri qiymat QR kodga tushmaydi."""
+    if config.PUBLIC_URL:
+        return config.PUBLIC_URL
     secure = request.secure or (config.TRUST_PROXY and request.headers.get("X-Forwarded-Proto", "").startswith("https"))
     host = request.host
     if config.TRUST_PROXY and request.headers.get("X-Forwarded-Host"):
@@ -1128,11 +1132,14 @@ async def admin_update_user(request: web.Request):
         if data["blocked"]:
             hub.kick_user(uid, "blocked")
             end_teacher_games(request.app, uid, "O'yin yakunlandi")
+            request.app[OCTAGON].drop_hosts(uid)
         log.info("%s %s — %s", target["login"], "bloklandi" if data["blocked"] else "blokdan chiqarildi", me_user["login"])
     if password_hash is not None:
         # o'z parolini o'zgartirgan administrator joriy qurilmada tizimda qoladi
         current = request.cookies.get(config.SESSION_COOKIE)
-        db.set_password(uid, password_hash, keep_session=token_hash(current) if is_self and current else None)
+        keep = token_hash(current) if is_self and current else None
+        db.set_password(uid, password_hash, keep_session=keep)
+        request.app[OCTAGON].drop_hosts(uid, keep=keep)  # eski sessiyalardagi Octagon boshqaruv oynalari uziladi
         if not is_self:
             hub.kick_user(uid, "password")
     return ok({"user": admin_user_json(db.user_by_id(uid), hub)})
@@ -1149,5 +1156,6 @@ async def admin_delete_user(request: web.Request):
         raise ApiError("Foydalanuvchi topilmadi", 404)
     request.app[HUB].purge_user(uid)
     end_teacher_games(request.app, uid, "O'yin yakunlandi")
+    request.app[OCTAGON].drop_hosts(uid)
     db.delete_user(uid)
     return ok()

@@ -13,7 +13,7 @@ const T = {
   nickPlaceholder: 'Masalan: Ali',
   join: 'Oʻyinga kirish',
   changePin: 'Boshqa PIN',
-  pinBad: 'PIN 6 ta raqamdan iborat boʻlishi kerak',
+  pinBad: 'PIN — 6 xonali son (masalan: 482 913)',
   nickEmpty: 'Ismingizni kiriting',
   checking: 'Tekshirilmoqda…',
   reconnecting: 'Aloqa uzildi — qayta ulanmoqda…',
@@ -55,6 +55,8 @@ const T = {
 };
 
 const PIN_KEY = (pin) => `oct:${pin}`;
+const PIN_RE = /^[1-9]\d{5}$/;             // serverdagi PIN_RE bilan bir xil
+const ME_TTL = 12 * 3600 * 1000;           // saqlangan o'yinchi (ID + token) 12 soatdan keyin unutiladi
 const root = document.getElementById('play');
 document.title = T.pageTitle;
 
@@ -100,35 +102,59 @@ function fmt(n) {
 }
 
 function urlPin() {
-  const m = location.pathname.match(/^\/play\/(\d{6})\/?$/) || location.search.match(/[?&]pin=(\d{6})/);
-  return m ? m[1] : '';
+  const m = location.pathname.match(/^\/play\/(\d{6})\/?$/) || location.search.match(/[?&]pin=(\d{6})(?:&|$)/);
+  return m && PIN_RE.test(m[1]) ? m[1] : '';
 }
 
 function saveMe(pin, me) {
-  const value = JSON.stringify(me);
+  const value = JSON.stringify({ ...me, at: Date.now() });
   try {
     localStorage.setItem(PIN_KEY(pin), value);
   } catch {
-    document.cookie = `oct_${pin}=${encodeURIComponent(value)}; path=/play; max-age=43200; samesite=lax`;
+    const secure = location.protocol === 'https:' ? '; secure' : '';
+    document.cookie = `oct_${pin}=${encodeURIComponent(value)}; path=/play; max-age=${ME_TTL / 1000}; samesite=strict${secure}`;
   }
+}
+
+function validMe(me) {
+  return me && typeof me.id === 'string' && typeof me.tok === 'string' && Date.now() - (me.at || 0) < ME_TTL ? me : null;
 }
 
 function loadMe(pin) {
   try {
     const v = localStorage.getItem(PIN_KEY(pin));
-    if (v) return JSON.parse(v);
+    if (v) return validMe(JSON.parse(v));
   } catch {
     /* localStorage yo'q — cookie */
   }
   const m = document.cookie.match(new RegExp(`(?:^|; )oct_${pin}=([^;]*)`));
   if (m) {
     try {
-      return JSON.parse(decodeURIComponent(m[1]));
+      return validMe(JSON.parse(decodeURIComponent(m[1])));
     } catch {
       /* buzilgan */
     }
   }
   return null;
+}
+
+// Eski o'yinlardan qolgan ID/tokenlar (umumiy kompyuterlarda) qurilmada to'planib qolmasin
+function pruneStored() {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('oct:')) continue;
+      let me = null;
+      try {
+        me = validMe(JSON.parse(localStorage.getItem(key)));
+      } catch {
+        /* buzilgan */
+      }
+      if (!me) localStorage.removeItem(key);
+    }
+  } catch {
+    /* localStorage yo'q */
+  }
 }
 
 function forgetMe(pin) {
@@ -288,7 +314,7 @@ function onState(s) {
 }
 
 function onError(e) {
-  if (['pin', 'rate', 'nick', 'taken', 'full', 'ended'].includes(e.c)) pending = null; // qayta ulanishda takrorlanmasin
+  if (['pin', 'rate', 'nick', 'taken', 'banned', 'full', 'ended', 'locked'].includes(e.c)) pending = null; // qayta ulanishda takrorlanmasin
   switch (e.c) {
     case 'pin':
     case 'rate':
@@ -296,8 +322,16 @@ function onError(e) {
       st.error = e.m;
       render();
       break;
+    case 'locked':  // o'qituvchi yangi qo'shilishlarni to'xtatgan
+      if (!st.me) {
+        st.view = st.view === 'nick' ? 'nick' : 'pin';
+        st.error = e.m;
+        render();
+      }
+      break;
     case 'nick':
     case 'taken':
+    case 'banned':
     case 'full':
       st.view = 'nick';
       st.error = e.m;
@@ -323,6 +357,10 @@ function onError(e) {
         render();
       }
       break;
+    case 'early':  // savol hali ochilmagan (soatlar farqi) — tanlov bekor, savol ochilganda qayta bosish mumkin
+      st.picked = null;
+      render();
+      break;
     default:
       break;
   }
@@ -346,7 +384,7 @@ function showClosed(reason) {
 // ------------------------------------------------------------------- amallar
 function submitPin(value) {
   const pin = String(value || '').replace(/\D/g, '');
-  if (pin.length !== 6) {
+  if (!PIN_RE.test(pin)) {
     st.error = T.pinBad;
     render();
     return;
@@ -617,6 +655,7 @@ setInterval(tick, 200);
 
 // ---------------------------------------------------------------------- start
 function boot() {
+  pruneStored();
   const pin = urlPin();
   if (pin) {
     st.pin = pin;

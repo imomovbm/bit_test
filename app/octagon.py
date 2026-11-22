@@ -1,4 +1,4 @@
-"""Octagon — jonli viktorina (Kahoot uslubida): o'qituvchi ekrani (proyektor) + o'quvchilar telefonlari.
+"""Octagon — jonli viktorina: o'qituvchi ekrani (proyektor) + o'quvchilar telefonlari.
 
 Oqim: o'qituvchi mavzu va sozlamalarni tanlaydi -> lobbi ochiladi (PIN + QR kod) -> o'quvchilar telefonda PIN va ism
 bilan qo'shiladi (ro'yxatdan o'tmasdan) -> o'qituvchi «Boshlash»ni bosadi -> har bir savol uchun:
@@ -15,7 +15,7 @@ javob hech qachon yuborilmaydi — faqat savol raqami, variantlar soni, qolgan v
 WebSocket /ws/octagon xabarlari — JSON ``{"t": tur, "d": ma'lumot}``:
   o'quvchi -> server: check {pin} | join {pin, nick} | resume {pin, id, tok} | a {q, o} | ping
   server -> o'quvchi: c {pin} | w {pin, id, nick, tok?} | s {holat} | e {c: kod, m: matn} | k {r: sabab} | pong
-  o'qituvchi -> server: host {pin} | start | next | skip | end | kick {id} | settings {timeLimit} | close
+  o'qituvchi -> server: host {pin} | start | next | skip | end | kick {id} | settings {timeLimit} | lock {locked} | close
   server -> o'qituvchi: h {to'liq holat} | closed {pin} | e {c, m, status}
 
 O'quvchi holati ``s``: p — bosqich, q — savol indeksi (0 dan), n — savollar soni, o — variantlar soni,
@@ -59,10 +59,18 @@ MAX_PLAYERS = 300
 MAX_GAMES_PER_OWNER = 5
 MAX_GAMES = 500
 MAX_SOCKETS_PER_IP = 500        # bitta IP ortida butun maktab bo'lishi mumkin
+MAX_SOCKETS = config.OCTAGON_MAX_SOCKETS     # barcha IP lardan jami ochiq ulanishlar (xotira himoyasi)
+FAIL_LIMIT, FAIL_WINDOW = 20, 300            # noto'g'ri PIN/token urinishlari: IP bo'yicha, 5 daqiqada
+GLOBAL_FAIL_LIMIT, GLOBAL_FAIL_WINDOW = 300, 60   # barcha IP lardan: shundan oshsa — PIN taxmin qilish hujumi
+SURGE_FAIL_LIMIT = 5                          # hujum paytida bitta IP ga ruxsat etilgan noto'g'ri urinishlar
+JOIN_LIMIT, JOIN_WINDOW = 200, 600           # yangi o'yinchilar: IP bo'yicha, 10 daqiqada
+MAX_FINISHED_PER_OWNER = 5                    # tugagan (podium) o'yinlar: o'qituvchi uchun xotirada saqlanadigan eng ko'p soni
 HOST_FLUSH = 0.25               # o'qituvchi ekranini yangilash oralig'i (o'quvchilar qo'shilganda, javob berganda)
 SWEEP_EVERY = 60.0
 PIN_RE = re.compile(r"^[1-9][0-9]{5}$")
+TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 LONG_OPTIONS = ("trim", "skip")  # 4 tadan ko'p variantli savollar: qisqartirish yoki o'tkazib yuborish
+HOST_ACTIONS = ("start", "next", "skip", "end", "kick", "settings", "lock", "close")  # faqat o'yin egasi (WebSocket)
 
 
 # =================================================================== ball
@@ -160,7 +168,7 @@ def clean_nickname(raw) -> str:
     if len(nick) > NICK_MAX:
         raise NicknameError(f"Ism {NICK_MAX} belgidan oshmasin")
     if is_profane(nick):
-        raise NicknameError("Bu ismni ishlatib bo'lmaydi. Boshqa ism tanlang")
+        raise NicknameError("Bu ismni ishlatib boʻlmaydi. Boshqa ism tanlang")
     return nick
 
 
@@ -188,13 +196,13 @@ def clean_settings(data: dict) -> dict:
     """O'yin oldidan tanlanadigan sozlamalarni tekshiradi (serverda)."""
     time_limit = data.get("timeLimit", DEFAULT_TIME)
     if _int(time_limit) is None or not MIN_TIME <= time_limit <= MAX_TIME:
-        raise OctagonError("settings", f"Savol vaqti {MIN_TIME}–{MAX_TIME} soniya oralig'ida butun son bo'lsin")
+        raise OctagonError("settings", f"Savol vaqti {MIN_TIME}–{MAX_TIME} soniya oraligʻida butun son boʻlsin")
     count = data.get("questionCount", DEFAULT_QUESTIONS)
     if _int(count) is None or count < 1:
-        raise OctagonError("settings", "Savollar soni noto'g'ri")
+        raise OctagonError("settings", "Savollar soni notoʻgʻri")
     long_options = data.get("longOptions", "trim")
     if long_options not in LONG_OPTIONS:
-        raise OctagonError("settings", "4 tadan ko'p variantli savollar uchun tanlov noto'g'ri")
+        raise OctagonError("settings", "4 tadan koʻp variantli savollar uchun tanlov notoʻgʻri")
     return {
         "timeLimit": time_limit,
         "questionCount": min(count, MAX_QUESTIONS),
@@ -236,7 +244,7 @@ def norm_pin(value) -> str | None:
 
 
 def _token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return hashlib.sha256(token.encode("ascii")).hexdigest()  # token doim TOKEN_RE ga mos (ASCII)
 
 
 def _cancel(handle) -> None:
@@ -251,7 +259,6 @@ class Player:
     token_hash: str
     nick: str
     key: str
-    joined_at: float
     score: int = 0
     time_ms: int = 0               # tenglikda: umumiy javob vaqti (javobsiz savol = to'liq vaqt), kam — yaxshi
     correct: int = 0
@@ -285,6 +292,9 @@ class Game:
     hosts: set = field(default_factory=set)
     stats: list = field(default_factory=list)    # har bir yopilgan savol: {counts, answered, correct}
     ended_early: bool = False
+    finished_seq: int = 0                        # tugash tartibi (eski natijalarni tozalash uchun)
+    locked: bool = False                         # o'qituvchi yangi o'quvchilar qo'shilishini to'xtatgan
+    banned: set = field(default_factory=set)     # o'yindan chiqarilganlarning ism kalitlari (shu ism bilan qaytib bo'lmaydi)
     qr: dict | None = None
 
     @property
@@ -298,17 +308,32 @@ class OctagonHub:
         self.clock = clock
         self.games: dict[str, Game] = {}
         self.conn_info: dict[Any, tuple] = {}  # ulanish -> ("player", pin, id) | ("host", pin, user_id)
-        self.failed = RateLimiter(limit=20, window=300)    # noto'g'ri PIN/token urinishlari (IP bo'yicha)
-        self.joins = RateLimiter(limit=200, window=600)    # yangi o'yinchilar (bitta IP ortida butun maktab bo'lishi mumkin)
+        self.failed = RateLimiter(limit=FAIL_LIMIT, window=FAIL_WINDOW)    # noto'g'ri PIN/token urinishlari (IP bo'yicha)
+        self.failed_all = RateLimiter(limit=GLOBAL_FAIL_LIMIT, window=GLOBAL_FAIL_WINDOW)  # barcha IP lardan
+        self.joins = RateLimiter(limit=JOIN_LIMIT, window=JOIN_WINDOW)     # yangi o'yinchilar (bitta IP ortida butun maktab bo'lishi mumkin)
         self.rng = random.SystemRandom()
         self.sockets: dict[str, int] = {}
+        self.socket_total = 0
+        self._finished = 0
         self._sweep_timer = None
+
+    def _later(self, delay: float, fn, *args):
+        """Taymer: xato bo'lsa ham jarayon va boshqa o'yinlar to'xtab qolmaydi (xato jurnalga yoziladi)."""
+        return self.clock.call_later(delay, self._guarded, fn, args)
+
+    @staticmethod
+    def _guarded(fn, args) -> None:
+        try:
+            fn(*args)
+        except Exception:
+            log.exception("Octagon taymerida xato: %s", getattr(fn, "__name__", fn))
 
     # ============================================================ ulanishlar
     def socket_opened(self, ip: str) -> bool:
-        if self.sockets.get(ip, 0) >= MAX_SOCKETS_PER_IP:
+        if self.socket_total >= MAX_SOCKETS or self.sockets.get(ip, 0) >= MAX_SOCKETS_PER_IP:
             return False
         self.sockets[ip] = self.sockets.get(ip, 0) + 1
+        self.socket_total += 1
         return True
 
     def socket_closed(self, ip: str) -> None:
@@ -317,17 +342,21 @@ class OctagonHub:
             self.sockets[ip] = n
         else:
             self.sockets.pop(ip, None)
+        self.socket_total = max(0, self.socket_total - 1)
 
     # ================================================================ o'qituvchi
     def create_game(self, owner: dict, topic: dict, rows: list[dict], settings: dict, join_base: str) -> Game:
         mine = [g for g in self.games.values() if g.owner_id == owner["id"] and g.phase != "podium"]
         if len(mine) >= MAX_GAMES_PER_OWNER:
-            raise OctagonError("limit", f"Sizda {len(mine)} ta tugallanmagan o'yin bor. Avval ularni yakunlang", 409)
+            raise OctagonError("limit", f"Sizda {len(mine)} ta tugallanmagan oʻyin bor. Avval ularni yakunlang", 409)
         if len(self.games) >= MAX_GAMES:
-            raise OctagonError("busy", "Serverda o'yinlar juda ko'p. Birozdan keyin qayta urinib ko'ring", 503)
+            finished = sorted((g for g in self.games.values() if g.phase == "podium"), key=lambda g: g.finished_seq)
+            if not finished:
+                raise OctagonError("busy", "Serverda oʻyinlar juda koʻp. Birozdan keyin qayta urinib koʻring", 503)
+            self.close_game(finished[0].pin, "expired")  # eng eski tugagan o'yin joy bo'shatadi
         questions, trimmed = prepare_questions(rows, settings, self.rng)
         if not questions:
-            raise OctagonError("empty", "Bu mavzuda o'yin uchun mos savol yo'q (2–4 variantli savollar kerak)")
+            raise OctagonError("empty", "Bu mavzuda oʻyin uchun mos savol yoʻq (2–4 variantli savollar kerak)")
         pin = self._new_pin()
         game = Game(
             pin=pin,
@@ -354,7 +383,7 @@ class OctagonHub:
             pin = str(100000 + secrets.randbelow(900000))
             if pin not in self.games:
                 return pin
-        raise OctagonError("busy", "Bo'sh PIN topilmadi. Birozdan keyin qayta urinib ko'ring", 503)
+        raise OctagonError("busy", "Boʻsh PIN topilmadi. Birozdan keyin qayta urinib koʻring", 503)
 
     def games_of(self, owner_id: int) -> list[Game]:
         return sorted((g for g in self.games.values() if g.owner_id == owner_id), key=lambda g: -g.created_ms)
@@ -363,10 +392,10 @@ class OctagonHub:
         """O'qituvchi o'z o'yinini boshqaradi. Huquq har safar bazadan qayta tekshiriladi (rol olib qo'yilgan bo'lishi mumkin)."""
         fresh = self.db.user_by_id(user["id"]) if user else None
         if not fresh or fresh.get("blocked") or not is_teacher(fresh):
-            raise OctagonError("forbidden", "Bu amal faqat o'qituvchi yoki administrator uchun", 403)
+            raise OctagonError("forbidden", "Bu amal faqat oʻqituvchi yoki administrator uchun", 403)
         game = self.games.get(norm_pin(pin) or "")
         if not game or game.owner_id != fresh["id"]:
-            raise OctagonError("notfound", "O'yin topilmadi — u tugagan yoki o'chirilgan bo'lishi mumkin", 404)
+            raise OctagonError("notfound", "Oʻyin topilmadi — u tugagan yoki oʻchirilgan boʻlishi mumkin", 404)
         return game
 
     def host_action(self, user: dict | None, pin, action: str, data: dict | None = None) -> Game | None:
@@ -392,11 +421,15 @@ class OctagonHub:
             self._kick(game, str(data.get("id", "")))
         elif action == "settings":
             self._update_settings(game, data)
+        elif action == "lock":
+            game.locked = data.get("locked") is True
+            self._touch(game)
+            self._host_changed(game, now=True)
         elif action == "close":
             self.close_game(game.pin, "closed")
             return None
         else:
-            raise OctagonError("bad", "Noma'lum amal")
+            raise OctagonError("bad", "Nomaʼlum amal")
         return game
 
     def end_games_of(self, owner_id: int, reason: str = "ended") -> None:
@@ -434,16 +467,16 @@ class OctagonHub:
 
     def _start(self, game: Game) -> None:
         if game.phase != "lobby":
-            raise OctagonError("phase", "O'yin allaqachon boshlangan", 409)
+            raise OctagonError("phase", "Oʻyin allaqachon boshlangan", 409)
         if not game.players:
-            raise OctagonError("empty", "Kamida bitta o'quvchi qo'shilishi kerak", 409)
+            raise OctagonError("empty", "Kamida bitta oʻquvchi qoʻshilishi kerak", 409)
         self._ready(game, 0)
 
     def _ready(self, game: Game, index: int) -> None:
         game.index = index
         self._set_phase(game, "ready")
         game.q_open_at = self.clock.now() + config.OCTAGON_READY
-        game.timer = self.clock.call_later(config.OCTAGON_READY, self._open_question, game.pin, index)
+        game.timer = self._later(config.OCTAGON_READY, self._open_question, game.pin, index)
         self._broadcast(game)
 
     def _open_question(self, pin: str, index: int) -> None:
@@ -453,7 +486,7 @@ class OctagonHub:
         self._set_phase(game, "question")
         game.q_open_at = self.clock.now()
         game.deadline = game.q_open_at + game.time_limit_ms / 1000
-        game.timer = self.clock.call_later(game.time_limit_ms / 1000, self._timeout, pin, index)
+        game.timer = self._later(game.time_limit_ms / 1000, self._timeout, pin, index)
         self._broadcast(game)
 
     def _timeout(self, pin: str, index: int) -> None:
@@ -489,7 +522,7 @@ class OctagonHub:
 
     def _next(self, game: Game) -> None:
         if game.phase == "lobby":
-            raise OctagonError("phase", "Avval o'yinni boshlang", 409)
+            raise OctagonError("phase", "Avval oʻyinni boshlang", 409)
         if game.phase == "question":
             self._end_question(game)
         elif game.phase == "reveal":
@@ -521,12 +554,20 @@ class OctagonHub:
         self._broadcast(game)
         top = self.standings(game)[:3]
         log.info("Octagon %s yakunlandi: %s", game.pin, ", ".join(f"{p.nick} {p.score}" for p in top) or "o'yinchilarsiz")
+        self._finished += 1
+        game.finished_seq = self._finished
+        # tugagan o'yinlar xotirada cheksiz to'planmasin: o'qituvchining eng avval tugagan natijalari yopiladi
+        others = sorted((g for g in self.games.values() if g.owner_id == game.owner_id and g.phase == "podium" and g is not game),
+                        key=lambda g: -g.finished_seq)
+        for old in others[MAX_FINISHED_PER_OWNER - 1:]:
+            self.close_game(old.pin, "expired")
 
     def _kick(self, game: Game, pid: str) -> None:
         p = game.players.pop(pid, None)
         if not p:
             return
         game.keys.pop(p.key, None)
+        game.banned.add(p.key)  # shu ism bilan qaytib qo'shilib bo'lmaydi (boshqa ism bilan — mumkin)
         if p.conn is not None:
             self.conn_info.pop(p.conn, None)
             p.conn.send("k", {"r": "kicked"})
@@ -536,10 +577,10 @@ class OctagonHub:
 
     def _update_settings(self, game: Game, data: dict) -> None:
         if game.phase != "lobby":
-            raise OctagonError("locked", "O'yin boshlangan — sozlamalarni o'zgartirib bo'lmaydi", 409)
+            raise OctagonError("locked", "Oʻyin boshlangan — sozlamalarni oʻzgartirib boʻlmaydi", 409)
         time_limit = data.get("timeLimit")
         if _int(time_limit) is None or not MIN_TIME <= time_limit <= MAX_TIME:
-            raise OctagonError("settings", f"Savol vaqti {MIN_TIME}–{MAX_TIME} soniya oralig'ida butun son bo'lsin")
+            raise OctagonError("settings", f"Savol vaqti {MIN_TIME}–{MAX_TIME} soniya oraligʻida butun son boʻlsin")
         game.time_limit_ms = time_limit * 1000
         game.settings["timeLimit"] = time_limit
         self._touch(game)
@@ -561,49 +602,67 @@ class OctagonHub:
                 self._resume(conn, data)
             elif msg_type == "host":
                 self._attach_host(conn, user, data.get("pin"))
-            elif msg_type in ("start", "next", "skip", "end", "kick", "settings", "close"):
+            elif msg_type in HOST_ACTIONS:
                 info = self.conn_info.get(conn)
                 if not info or info[0] != "host":
-                    raise OctagonError("forbidden", "Bu amal faqat o'yinni o'tkazayotgan o'qituvchi uchun", 403)
+                    raise OctagonError("forbidden", "Bu amal faqat oʻyinni oʻtkazayotgan oʻqituvchi uchun", 403)
+                if not user:  # sessiya tugagan (tizimdan chiqilgan, parol tiklangan): boshqaruv oynasi uziladi
+                    self.drop_host(conn, OctagonError("forbidden", "Sessiya tugagan — qaytadan tizimga kiring", 403))
+                    return
                 self.host_action(user, info[1], msg_type, data)
             else:
-                raise OctagonError("bad", "Noma'lum so'rov")
+                raise OctagonError("bad", "Nomaʼlum soʻrov")
         except OctagonError as e:
             conn.send("e", e.payload())
 
+    def _attempts_blocked(self, ip: str) -> bool:
+        """Noto'g'ri PIN/token urinishlari: odatda IP ga FAIL_LIMIT ta; ko'p IP dan hujum paytida — SURGE_FAIL_LIMIT ta."""
+        surge = self.failed_all.count("*") >= GLOBAL_FAIL_LIMIT
+        return self.failed.count(ip) >= (SURGE_FAIL_LIMIT if surge else FAIL_LIMIT)
+
+    def _failed_attempt(self, ip: str) -> None:
+        self.failed.hit(ip)
+        if self.failed_all.count("*") < GLOBAL_FAIL_LIMIT * 2:  # hujum aniqlanishi uchun shuning o'zi yetarli
+            self.failed_all.hit("*")
+
     def _lookup(self, conn, pin_value) -> Game:
         ip = getattr(conn, "ip", "?")
-        if self.failed.blocked(ip):
-            raise OctagonError("rate", "Juda ko'p noto'g'ri urinish. Bir necha daqiqadan keyin qayta urinib ko'ring", 429)
+        if self._attempts_blocked(ip):
+            raise OctagonError("rate", "Juda koʻp notoʻgʻri urinish. Bir necha daqiqadan keyin qayta urinib koʻring", 429)
         game = self.games.get(norm_pin(pin_value) or "")
         if not game:
-            self.failed.hit(ip)
-            raise OctagonError("pin", "Bunday PIN bilan o'yin topilmadi. PIN ni tekshiring", 404)
+            self._failed_attempt(ip)
+            raise OctagonError("pin", "Bunday PIN bilan oʻyin topilmadi. PIN ni tekshiring", 404)
         if game.phase == "podium":
-            raise OctagonError("ended", "Bu o'yin tugagan", 410)
+            self._failed_attempt(ip)  # tugagan o'yinlar PIN larini ham bepul "skanerlab" bo'lmaydi
+            raise OctagonError("ended", "Bu oʻyin tugagan", 410)
+        if game.locked:
+            raise OctagonError("locked", "Oʻqituvchi yangi oʻquvchilar qoʻshilishini toʻxtatgan", 423)
         return game
 
     def _join(self, conn, data: dict) -> None:
         if conn in self.conn_info:
-            raise OctagonError("bad", "Siz allaqachon o'yindasiz")
+            raise OctagonError("bad", "Siz allaqachon oʻyindasiz")
         game = self._lookup(conn, data.get("pin"))
         ip = getattr(conn, "ip", "?")
         if self.joins.blocked(ip):
-            raise OctagonError("rate", "Bu tarmoqdan juda ko'p qo'shilish urinishi. Birozdan keyin qayta urinib ko'ring", 429)
+            raise OctagonError("rate", "Bu tarmoqdan juda koʻp qoʻshilish urinishi. Birozdan keyin qayta urinib koʻring", 429)
         try:
             nick = clean_nickname(data.get("nick"))
         except NicknameError as e:
             raise OctagonError("nick", str(e))
         key = nickname_key(nick)
+        if key in game.banned:
+            raise OctagonError("banned", "Bu ism bilan qoʻshilib boʻlmaydi — boshqa ism tanlang", 403)
         if key in game.keys:
             raise OctagonError("taken", "Bu ism band. Boshqa ism tanlang", 409)
         if len(game.players) >= MAX_PLAYERS:
-            raise OctagonError("full", "O'yinda joy qolmadi", 409)
+            raise OctagonError("full", "Oʻyinda joy qolmadi", 409)
         pid = secrets.token_urlsafe(6)
         while pid in game.players:
             pid = secrets.token_urlsafe(6)
         token = secrets.token_urlsafe(24)
-        p = Player(id=pid, token_hash=_token_hash(token), nick=nick, key=key, joined_at=self.clock.now(), conn=conn)
+        p = Player(id=pid, token_hash=_token_hash(token), nick=nick, key=key, conn=conn)
         p.time_ms = len(game.stats) * game.time_limit_ms  # kech qo'shilgan: o'tib ketgan savollar javobsiz hisoblanadi
         game.players[pid] = p
         game.keys[key] = pid
@@ -617,17 +676,18 @@ class OctagonHub:
     def _resume(self, conn, data: dict) -> None:
         """Qayta ulanish: o'sha o'yinchi (ball, javoblar, ism, o'rin) davom etadi. Eng yangi ulanish eskisini almashtiradi."""
         ip = getattr(conn, "ip", "?")
-        if self.failed.blocked(ip):
-            raise OctagonError("rate", "Juda ko'p noto'g'ri urinish. Bir necha daqiqadan keyin qayta urinib ko'ring", 429)
+        if self._attempts_blocked(ip):
+            raise OctagonError("rate", "Juda koʻp notoʻgʻri urinish. Bir necha daqiqadan keyin qayta urinib koʻring", 429)
         game = self.games.get(norm_pin(data.get("pin")) or "")
         p = game.players.get(str(data.get("id", ""))) if game else None
         token = data.get("tok")
-        if not p or not isinstance(token, str) or not hmac.compare_digest(p.token_hash, _token_hash(token)):
-            self.failed.hit(ip)
-            raise OctagonError("gone", "O'yin topilmadi yoki siz undan chiqarilgansiz", 404)
+        valid = isinstance(token, str) and TOKEN_RE.fullmatch(token) is not None
+        if not p or not valid or not hmac.compare_digest(p.token_hash, _token_hash(token)):
+            self._failed_attempt(ip)
+            raise OctagonError("gone", "Oʻyin topilmadi yoki siz undan chiqarilgansiz", 404)
         info = self.conn_info.get(conn)
         if info and info[1:] != (game.pin, p.id):
-            raise OctagonError("bad", "Bu oynada boshqa o'yin ochiq")
+            raise OctagonError("bad", "Bu oynada boshqa oʻyin ochiq")
         old = p.conn
         if old is not None and old is not conn:
             self.conn_info.pop(old, None)
@@ -643,19 +703,21 @@ class OctagonHub:
     def _answer(self, conn, data: dict) -> None:
         info = self.conn_info.get(conn)
         if not info or info[0] != "player":
-            raise OctagonError("bad", "Avval o'yinga qo'shiling")
+            raise OctagonError("bad", "Avval oʻyinga qoʻshiling")
         game = self.games.get(info[1])
         p = game.players.get(info[2]) if game else None
         if not p:
-            raise OctagonError("gone", "O'yin topilmadi yoki siz undan chiqarilgansiz", 404)
+            raise OctagonError("gone", "Oʻyin topilmadi yoki siz undan chiqarilgansiz", 404)
         q, choice = _int(data.get("q")), _int(data.get("o"))
+        if game.phase == "ready" and q == game.index:
+            raise OctagonError("early", "Savol hali ochilmagan — javob qabul qilinmadi", 409)
         if game.phase != "question" or q != game.index:
             raise OctagonError("late", "Bu savol yopilgan — javob qabul qilinmadi", 409)
         if q in p.answers:  # birinchi javob hisoblanadi, takrorlari e'tiborsiz
             conn.send("s", self.student_state(game, p))
             return
         if choice is None or not 0 <= choice < len(game.questions[q]["options"]):
-            raise OctagonError("bad", "Noto'g'ri javob")
+            raise OctagonError("bad", "Notoʻgʻri javob")
         elapsed = round((self.clock.now() - game.q_open_at) * 1000)
         if elapsed > game.time_limit_ms:
             raise OctagonError("late", "Vaqt tugadi — javob qabul qilinmadi", 409)
@@ -672,7 +734,7 @@ class OctagonHub:
         game = self.owned_game(user, pin)
         info = self.conn_info.get(conn)
         if info and info[0] == "player":
-            raise OctagonError("bad", "Bu oyna o'yinchi sifatida ulangan")
+            raise OctagonError("bad", "Bu oyna oʻyinchi sifatida ulangan")
         if info and info[1] != game.pin:
             old = self.games.get(info[1])
             if old:
@@ -681,6 +743,29 @@ class OctagonHub:
         self.conn_info[conn] = ("host", game.pin, user["id"])
         self._touch(game)
         conn.send("h", self.host_state(game))
+
+    def drop_host(self, conn, error: OctagonError | None = None) -> None:
+        """Boshqaruv oynasini o'yindan uzadi va ulanishni yopadi (4401 — qaytadan tizimga kirish kerak)."""
+        info = self.conn_info.pop(conn, None)
+        game = self.games.get(info[1]) if info and info[0] == "host" else None
+        if game:
+            game.hosts.discard(conn)
+        if error:
+            conn.send("e", error.payload())
+        conn.close("session", 4401)
+
+    def drop_hosts(self, user_id: int | None = None, session: str | None = None, keep: str | None = None) -> None:
+        """Sessiyasi bekor bo'lgan boshqaruv oynalarini uzadi: tizimdan chiqish (session) yoki parol tiklanishi
+        (user_id, keep — parolni o'zi almashtirgan foydalanuvchining joriy sessiyasi saqlanadi)."""
+        for conn, info in list(self.conn_info.items()):
+            if info[0] != "host":
+                continue
+            conn_session = getattr(conn, "session", None)
+            if (user_id is not None and info[2] != user_id) or (session is not None and conn_session != session):
+                continue
+            if keep is not None and conn_session == keep:
+                continue
+            self.drop_host(conn)
 
     def disconnect(self, conn) -> None:
         info = self.conn_info.pop(conn, None)
@@ -746,6 +831,7 @@ class OctagonHub:
             "playerCount": len(game.players),
             "connectedCount": sum(1 for p in game.players.values() if p.conn is not None),
             "endedEarly": game.ended_early,
+            "locked": game.locked,
             "createdAt": game.created_ms,
         }
         if game.phase == "lobby":
@@ -801,7 +887,7 @@ class OctagonHub:
             game.host_timer = None
             self._flush_hosts(game.pin)
         elif game.host_timer is None:
-            game.host_timer = self.clock.call_later(HOST_FLUSH, self._flush_hosts, game.pin)
+            game.host_timer = self._later(HOST_FLUSH, self._flush_hosts, game.pin)
 
     def _flush_hosts(self, pin: str) -> None:
         game = self.games.get(pin)
@@ -815,17 +901,22 @@ class OctagonHub:
     # ============================================================ tozalash
     def _ensure_sweep(self) -> None:
         if self._sweep_timer is None:
-            self._sweep_timer = self.clock.call_later(SWEEP_EVERY, self._sweep)
+            self._sweep_timer = self._later(SWEEP_EVERY, self._sweep)
 
     def _sweep(self) -> None:
-        """~2 soat faolsiz qolgan o'yinlar xotiradan o'chiriladi."""
+        """~2 soat faolsiz qolgan o'yinlar xotiradan o'chiriladi (bitta o'yindagi xato qolganlarini to'xtatmaydi)."""
         self._sweep_timer = None
-        now = self.clock.now()
-        for pin, game in list(self.games.items()):
-            if now - game.activity > config.OCTAGON_TTL:
-                self.close_game(pin, "expired")
-        if self.games:
-            self._ensure_sweep()
+        try:
+            now = self.clock.now()
+            for pin, game in list(self.games.items()):
+                if now - game.activity > config.OCTAGON_TTL:
+                    try:
+                        self.close_game(pin, "expired")
+                    except Exception:
+                        log.exception("Octagon %s: tozalashda xato", pin)
+        finally:
+            if self.games:
+                self._ensure_sweep()
 
 
 def _wall_ms() -> int:

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app import config, octagon
+from app import config, octagon, security
 from app.db import Database
 from app.octagon import OctagonError, OctagonHub, calculate_score, clean_nickname, nickname_key
 
@@ -514,7 +514,7 @@ def test_kick_player(env):
     c = FakeConn()
     env.hub.handle(c, "resume", {"pin": game.pin, "id": pid, "tok": a.last("w")["tok"]})
     assert c.errors()[-1]["c"] == "gone"
-    join(env, game, "Yomon")  # ism bo'shadi
+    join(env, game, "Yaxshi")  # boshqa ism bilan qaytishi mumkin (o'sha ism band — audit testiga qarang)
 
 
 def test_stale_host_action_is_ignored(env):
@@ -598,3 +598,242 @@ def test_teacher_game_limit(env):
     with pytest.raises(OctagonError) as e:
         make_game(env)
     assert e.value.status == 409
+
+
+# ============================================ xavfsizlik auditi (docs/octagon-audit.md)
+def test_forged_answer_fields_are_ignored(env):
+    """Javob vaqti, to'g'riligi va ball faqat serverda aniqlanadi — mijoz yuborgan qo'shimcha maydonlar e'tiborsiz."""
+    game = make_game(env, timeLimit=10)
+    a = join(env, game, "Ali")
+    act(env, game, "start")
+    to_question(env, game)
+    env.clock.advance(4)
+    env.hub.handle(a, "a", {"q": 0, "o": 1, "ms": 0, "t": 0, "time": 1, "score": 99999, "pts": 1000, "ok": True, "correct": 1})
+    p = next(iter(game.players.values()))
+    assert p.answers == {0: (1, 4000)}
+    env.clock.advance(6)
+    assert a.last("s")["res"] == {"ok": False, "pts": 0, "co": 0} and p.score == 0
+
+
+@pytest.mark.parametrize("bad", [
+    {"q": 0, "o": -1}, {"q": 0, "o": 4}, {"q": 0, "o": 10**30}, {"q": 0, "o": 1.0}, {"q": 0, "o": "1"}, {"q": 0, "o": True},
+    {"q": 0, "o": None}, {"q": 0, "o": [1]}, {"q": True, "o": 1}, {"q": "0", "o": 1}, {"q": -1, "o": 1}, {"q": 1, "o": 1},
+    {"o": 1}, {},
+])
+def test_malformed_answers_rejected(env, bad):
+    game = make_game(env)
+    a = join(env, game, "Ali")
+    join(env, game, "Vali")
+    act(env, game, "start")
+    to_question(env, game)
+    env.hub.handle(a, "a", bad)
+    assert a.errors() and all(not p.answers for p in game.players.values()) and game.phase == "question"
+
+
+def test_answer_before_question_opens_is_rejected(env):
+    game = make_game(env)
+    a = join(env, game, "Ali")
+    act(env, game, "start")  # «tayyorlaning» — savol hali ochilmagan
+    env.hub.handle(a, "a", {"q": 0, "o": 0})
+    assert a.errors()[-1]["c"] == "early" and not game.players[a.last("w")["id"]].answers
+    to_question(env, game)
+    answer(env, a, 0, 0)
+    assert a.last("s")["res"]["ok"] is True
+
+
+def test_player_tokens_never_reach_host_or_other_players(env):
+    game = make_game(env, questionCount=2, timeLimit=5)
+    conns = [join(env, game, n) for n in ("Ali", "Vali", "Olim")]
+    tokens = [c.last("w")["tok"] for c in conns]
+    host = FakeConn()
+    env.hub.handle(host, "host", {"pin": game.pin}, env.owner)
+    env.hub.disconnect(conns[1])
+    again = FakeConn()
+    env.hub.handle(again, "resume", {"pin": game.pin, "id": conns[1].last("w")["id"], "tok": tokens[1]})
+    act(env, game, "start")
+    for i in range(2):
+        to_question(env, game)
+        answer(env, conns[0], i, 0)
+        env.clock.advance(5)
+        act(env, game, "next")
+        act(env, game, "next")
+    assert game.phase == "podium"
+    host_blob = json.dumps([host.msgs, env.hub.host_state(game), env.hub.game_summary(game)])
+    for i, tok in enumerate(tokens):
+        assert len(tok) >= 32 and tok not in host_blob
+        for c in conns + [again]:
+            if c is not conns[i]:  # token faqat o'ziga, birinchi "w" xabarida yuboriladi
+                assert tok not in json.dumps(c.msgs)
+    assert all(p.token_hash not in tokens for p in game.players.values())
+
+
+def test_resume_cannot_impersonate_another_player(env):
+    game = make_game(env)
+    a, b = join(env, game, "Ali"), join(env, game, "Vali")
+    wa, wb = a.last("w"), b.last("w")
+    attempts = [
+        {"id": wb["id"], "tok": wa["tok"]},   # boshqa o'yinchining ID si + o'z tokeni
+        {"id": wb["id"]},                     # tokensiz (faqat ID ni bilish yetmaydi)
+        {"id": wb["id"], "tok": None},
+        {"id": wb["id"], "tok": "\ud800"},    # UTF-8 ga o'tmaydigan satr
+        {"id": wb["id"], "tok": 12345},
+        {"id": "Vali", "tok": wb["tok"]},     # ism bilan
+    ]
+    for data in attempts:
+        c = FakeConn(ip="10.1.1.1")
+        env.hub.handle(c, "resume", {"pin": game.pin, **data})
+        assert c.errors() and c.errors()[-1]["c"] == "gone", data
+    assert game.players[wb["id"]].conn is b and len(game.players) == 2
+    assert env.hub.failed.count("10.1.1.1") == len(attempts)  # har bir urinish hisoblanadi
+
+
+def test_join_at_start_and_reconnect_during_question_change(env):
+    game = make_game(env, timeLimit=10)
+    a = join(env, game, "Ali")
+    act(env, game, "start")
+    b = join(env, game, "Vali")  # aynan «Boshlash» paytida
+    assert b.last("s")["p"] == "ready" and b.last("s")["q"] == 0
+    to_question(env, game)
+    answer(env, b, 0, 0)
+    wa = a.last("w")
+    env.hub.disconnect(a)        # savol almashayotganda aloqa uzildi
+    env.clock.advance(10)
+    act(env, game, "next")
+    act(env, game, "next")
+    to_question(env, game)
+    env.clock.advance(1.5)
+    a2 = FakeConn()
+    env.hub.handle(a2, "resume", {"pin": game.pin, "id": wa["id"], "tok": wa["tok"]})
+    s = a2.last("s")
+    assert s["p"] == "question" and s["q"] == 1 and s["r"] == 8500 and s["a"] is None
+    answer(env, a2, 0, 0)        # oldingi savolga kechikkan javob
+    assert a2.errors()[-1]["c"] == "late"
+    answer(env, a2, 1, 1)
+    assert game.players[wa["id"]].answers == {1: (1, 1500)} and len(game.players) == 2
+
+
+def test_ended_game_pin_checks_count_as_failed_attempts(env):
+    game = make_game(env)
+    join(env, game, "Ali")
+    act(env, game, "start")
+    act(env, game, "end")
+    c = FakeConn(ip="10.2.2.2")
+    for _ in range(octagon.FAIL_LIMIT):
+        env.hub.handle(c, "check", {"pin": game.pin})
+    assert {e["c"] for e in c.errors()} == {"ended"}
+    env.hub.handle(c, "check", {"pin": game.pin})
+    assert c.errors()[-1]["c"] == "rate"
+
+
+def test_global_failure_surge_tightens_per_ip_limit(env, monkeypatch):
+    game = make_game(env)
+    wrong = "123456" if game.pin != "123456" else "654321"
+    t = [5000.0]
+    monkeypatch.setattr(security.time, "monotonic", lambda: t[0])
+    for i in range(octagon.GLOBAL_FAIL_LIMIT):  # ko'p IP dan PIN taxmin qilish (botnet)
+        env.hub.handle(FakeConn(ip=f"10.50.{i // 200}.{i % 200}"), "check", {"pin": wrong})
+    c = FakeConn(ip="10.60.0.1")
+    for _ in range(octagon.SURGE_FAIL_LIMIT):
+        env.hub.handle(c, "check", {"pin": wrong})
+    env.hub.handle(c, "check", {"pin": game.pin})
+    assert c.errors()[-1]["c"] == "rate"  # odatda FAIL_LIMIT (20) tagacha ruxsat bor
+    fresh = FakeConn(ip="10.60.0.2")      # xato qilmagan IP (masalan, boshqa sinf) qo'shila oladi
+    env.hub.handle(fresh, "check", {"pin": game.pin})
+    assert fresh.last("c") == {"pin": game.pin}
+    t[0] += octagon.GLOBAL_FAIL_WINDOW + 1  # hujum to'xtadi — oddiy chegara qaytadi
+    env.hub.handle(c, "check", {"pin": game.pin})
+    assert c.last("c") == {"pin": game.pin}
+
+
+def test_kicked_nickname_stays_reserved_and_join_lock(env):
+    game = make_game(env)
+    a = join(env, game, "Yomon")
+    act(env, game, "kick", id=a.last("w")["id"])
+    for nick in ("Yomon", "YOMON", "yo mon"):
+        c = FakeConn()
+        env.hub.handle(c, "join", {"pin": game.pin, "nick": nick})
+        assert c.errors() and c.errors()[-1]["c"] == "banned", nick
+    b = join(env, game, "Boshqa")  # boshqa ism bilan — mumkin
+    act(env, game, "lock", locked=True)
+    assert env.hub.host_state(game)["locked"] is True
+    c = FakeConn()
+    env.hub.handle(c, "check", {"pin": game.pin})
+    env.hub.handle(c, "join", {"pin": game.pin, "nick": "Yangi"})
+    assert [e["c"] for e in c.errors()] == ["locked", "locked"] and len(game.players) == 1
+    wb = b.last("w")
+    env.hub.disconnect(b)
+    b2 = FakeConn()
+    env.hub.handle(b2, "resume", {"pin": game.pin, "id": wb["id"], "tok": wb["tok"]})  # qayta ulanishga qulf ta'sir qilmaydi
+    assert b2.last("w")["id"] == wb["id"]
+    act(env, game, "lock", locked=False)
+    join(env, game, "Yangi")
+
+
+def test_finished_games_do_not_exhaust_server_capacity(env, monkeypatch):
+    monkeypatch.setattr(octagon, "MAX_GAMES", 8)
+    for _ in range(12):  # o'qituvchi o'yin ochib, tugatib turadi
+        g = make_game(env)
+        join(env, g, "Ali")
+        act(env, g, "start")
+        act(env, g, "end")
+    assert len(env.hub.games_of(env.owner["id"])) <= octagon.MAX_FINISHED_PER_OWNER
+    other = env.db.user_by_id(env.db.create_user("boshqa", "x", False, True))
+    settings = octagon.clean_settings({"timeLimit": 20, "questionCount": 5})
+    for _ in range(octagon.MAX_GAMES_PER_OWNER):
+        env.hub.create_game(other, env.topic, env.rows, settings, "http://x")
+    assert len(env.hub.games) <= octagon.MAX_GAMES
+
+
+def test_sweep_keeps_running_after_an_error(env, monkeypatch):
+    g1, g2 = make_game(env), make_game(env)
+    real = env.hub.close_game
+
+    def flaky(pin, reason="closed"):
+        if pin == g1.pin:
+            raise RuntimeError("boom")
+        real(pin, reason)
+
+    monkeypatch.setattr(env.hub, "close_game", flaky)
+    env.clock.advance(config.OCTAGON_TTL + 120)
+    assert g2.pin not in env.hub.games  # bitta o'yindagi xato boshqalarini tozalashga to'sqinlik qilmaydi
+    monkeypatch.setattr(env.hub, "close_game", real)
+    env.clock.advance(120)
+    assert not env.hub.games
+
+
+def test_no_state_left_after_game_closed(env):
+    game = make_game(env, questionCount=1, timeLimit=5)
+    conns = [join(env, game, n) for n in ("Ali", "Vali")]
+    host = FakeConn()
+    env.hub.handle(host, "host", {"pin": game.pin}, env.owner)
+    act(env, game, "start")
+    to_question(env, game)
+    answer(env, conns[0], 0, 0)
+    env.clock.advance(5)
+    act(env, game, "next")
+    act(env, game, "next")
+    for c in conns:
+        env.hub.disconnect(c)
+    act(env, game, "close")
+    assert not env.hub.games and not env.hub.conn_info and not env.hub.sockets
+    live = [h for *_, h in env.clock.heap if not h.cancelled]
+    assert len(live) <= 1  # faqat umumiy tozalash taymeri
+    env.hub.disconnect(host)
+    assert not env.hub.conn_info
+
+
+def test_player_cap_and_join_flood_limit(env, monkeypatch):
+    monkeypatch.setattr(octagon, "MAX_PLAYERS", 3)
+    game = make_game(env)
+    for n in ("Ali", "Vali", "Olim"):
+        join(env, game, n, ip="10.3.3.3")
+    c = FakeConn(ip="10.3.3.4")
+    env.hub.handle(c, "join", {"pin": game.pin, "nick": "Toshmat"})
+    assert c.errors()[-1]["c"] == "full"
+    monkeypatch.setattr(octagon, "MAX_PLAYERS", 1000)
+    game2 = make_game(env)
+    for i in range(octagon.JOIN_LIMIT):  # bitta IP ortida butun maktab bo'lishi mumkin — chegara keng
+        join(env, game2, f"Bot {i}", ip="10.4.4.4")
+    c = FakeConn(ip="10.4.4.4")
+    env.hub.handle(c, "join", {"pin": game2.pin, "nick": "Yana"})
+    assert c.errors()[-1]["c"] == "rate"

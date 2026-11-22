@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import html
 import logging
 import mimetypes
@@ -16,7 +18,7 @@ from . import config
 from .api import ensure_superadmin, error_middleware, guard_middleware, routes, session_middleware
 from .db import Database
 from .hub import DuelHub, LoopClock
-from .keys import DB, HUB, OCTAGON, SOCKETS
+from .keys import CSP, DB, HUB, OCTAGON, SOCKETS
 from .octagon import OctagonHub
 from .ws import octagon_ws_handler, ws_handler
 
@@ -53,6 +55,29 @@ INVITE_HTML = """<!doctype html>
 """
 
 
+def content_security_policy(*inline_scripts: str) -> str:
+    """Brauzer uchun xavfsizlik siyosati: skriptlar faqat shu saytdan (va sanab o'tilgan ichki skriptlar — xesh orqali),
+    boshqa saytlar sahifani <iframe> ichiga ololmaydi, plaginlar va <base> o'zgartirish taqiqlangan."""
+    hashes = " ".join(f"'sha256-{base64.b64encode(hashlib.sha256(code.encode()).digest()).decode()}'" for code in inline_scripts)
+    return "; ".join((
+        "default-src 'self'",
+        f"script-src 'self' {hashes}".strip(),
+        "style-src 'self'",  # uslublar faqat .css fayllardan (JS dan CSSOM orqali — ruxsat etilgan)
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "media-src 'self' data: blob:",
+        "connect-src 'self' ws: wss:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ))
+
+
+def inline_scripts(page: str) -> list[str]:
+    return re.findall(r"<script>(.*?)</script>", page, re.S)
+
+
 def detect_lan_ip() -> str | None:
     """Kompyuterning lokal tarmoqdagi IP manzilini aniqlaydi (paket yuborilmaydi)."""
     try:
@@ -73,7 +98,8 @@ def detect_lan_ip() -> str | None:
 
 
 async def index(request: web.Request) -> web.StreamResponse:
-    return web.FileResponse(config.STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+    # index.html dagi kichik ichki skript (mavzuni tiklash) CSP da xeshi bilan ruxsat etilgan
+    return web.FileResponse(config.STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache", "Content-Security-Policy": request.app[CSP]})
 
 
 async def play_page(request: web.Request) -> web.StreamResponse:
@@ -95,12 +121,27 @@ async def invite_page(request: web.Request) -> web.Response:
         title = "TestDuel — testlar dueli"
         desc = "Bilimingizni duelda sinang!"
     body = INVITE_HTML.format(title=html.escape(title), desc=html.escape(desc), code=code)
-    return web.Response(text=body, content_type="text/html", charset="utf-8", headers={"Cache-Control": "no-store"})
+    csp = content_security_policy(*inline_scripts(body))
+    return web.Response(text=body, content_type="text/html", charset="utf-8", headers={"Cache-Control": "no-store", "Content-Security-Policy": csp})
 
 
-async def _cache_headers(request: web.Request, response: web.StreamResponse) -> None:
+DEFAULT_CSP = content_security_policy()
+
+
+async def _response_headers(request: web.Request, response: web.StreamResponse) -> None:
+    """Kesh va xavfsizlik sarlavhalari (barcha javoblarga)."""
+    headers = response.headers
     if request.path.startswith(("/js/", "/css/", "/img/")):
-        response.headers["Cache-Control"] = "no-cache"
+        headers["Cache-Control"] = "no-cache"
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "DENY")
+    headers.setdefault("Referrer-Policy", "same-origin")
+    headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+    if headers.get("Content-Type", response.content_type or "").startswith("text/html"):
+        headers.setdefault("Content-Security-Policy", DEFAULT_CSP)
+    if request.secure or (config.TRUST_PROXY and request.headers.get("X-Forwarded-Proto", "").startswith("https")):
+        headers.setdefault("Strict-Transport-Security", "max-age=15552000")
 
 
 async def _on_startup(app: web.Application) -> None:
@@ -128,10 +169,11 @@ def create_app(db_path: Path | str | None = None, lan_url: str | None = None, cl
     app[HUB] = DuelHub(db, clock, lan_url=lan_url)
     app[OCTAGON] = OctagonHub(db, clock)
     app[SOCKETS] = set()
+    app[CSP] = content_security_policy(*inline_scripts((config.STATIC_DIR / "index.html").read_text(encoding="utf-8")))
     app.on_startup.append(_on_startup)
     app.on_shutdown.append(_on_shutdown)
     app.on_cleanup.append(_on_cleanup)
-    app.on_response_prepare.append(_cache_headers)
+    app.on_response_prepare.append(_response_headers)
     app.add_routes(routes)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/ws/octagon", octagon_ws_handler)

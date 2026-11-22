@@ -18,7 +18,6 @@ export function h(tag, attrs, ...children) {
       }
       else if (k === 'dataset') Object.assign(el.dataset, v);
       else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
-      else if (k === 'html') el.innerHTML = v; // faqat ishonchli (ichki) matn uchun
       else if (k === 'value' || k === 'checked' || k === 'disabled' || k === 'hidden') el[k] = v;
       else el.setAttribute(k, v === true ? '' : String(v));
     }
