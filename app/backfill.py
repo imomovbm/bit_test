@@ -1,10 +1,11 @@
-"""Mavzular faolligini (oxirgi o'yin, duellar soni, kunlik yig'indi) duellar tarixidan qayta hisoblash.
+"""Mavzular faolligini (oxirgi o'yin, duellar soni, kunlik yig'indi) va reyting yig'indisini (user_duel_stats)
+duellar tarixidan qayta hisoblash.
 
     python -m app.backfill --db data/testduel.db --dry-run     # bazaning nusxasida hisoblaydi, asl faylga tegmaydi
     python -m app.backfill --db nusxa.db                        # berilgan bazaga yozadi (avval nusxa oling)
 
-Odatda kerak emas: ustunlar birinchi marta qo'shilganda (yangilangan ilova ishga tushganda) to'ldirish avtomatik
-bajariladi. Hisob idempotent — necha marta ishga tushirilsa ham natija bir xil, bitta tranzaksiyada yoziladi.
+Odatda kerak emas: ustunlar/jadval birinchi marta qo'shilganda (yangilangan ilova ishga tushganda) to'ldirish
+avtomatik bajariladi. Hisob idempotent — necha marta ishga tushirilsa ham natija bir xil, bitta tranzaksiyada yoziladi.
 Tarixda faqat tugagan duellar bor, shuning uchun skriptni duellar o'ynalmayotgan paytda ishga tushirgan ma'qul.
 """
 from __future__ import annotations
@@ -32,6 +33,7 @@ def run(path: Path) -> dict:
     try:
         started = time.perf_counter()
         summary = db.backfill_activity()
+        summary["players"] = db.backfill_user_stats()
         summary["seconds"] = round(time.perf_counter() - started, 2)
         summary["top"] = db._all("SELECT name, total_duels, last_played_at FROM topics ORDER BY total_duels DESC LIMIT 5")
     finally:
@@ -61,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = run(src)
         print(f"Yozildi: {src}")
     print(f"  duellar: {summary['duels']}, o'ynalgan mavzular: {summary['topicsPlayed']}, kunlar: {summary['days']}, "
-          f"kunlik qatorlar: {summary['dailyRows']}, vaqt: {summary['seconds']} s")
+          f"kunlik qatorlar: {summary['dailyRows']}, reytingdagi o'yinchilar: {summary['players']}, vaqt: {summary['seconds']} s")
     for t in summary["top"]:
         print(f"  {t['total_duels']:>7}  {t['name']}")
     return 0

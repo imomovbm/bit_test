@@ -758,6 +758,37 @@ textarea.adm-q-text { min-height: 84px; resize: vertical; line-height: 1.45; }
 
 .adm-sm-only { display: none; }
 
+/* mavzular faolligi: ko'rinishlar, saralanadigan ustunlar, tavsiya, jurnal */
+.adm-views { align-self: flex-start; }
+.adm-sort-sm { display: none; }
+.adm-filter-n:empty { display: none; }
+.adm-topics-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.th-sort { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; white-space: nowrap; }
+.th-sort:hover { color: var(--primary); }
+.th-arrow { color: var(--muted); font-size: 12px; }
+th[aria-sort] .th-arrow { color: var(--primary); }
+th.num .th-sort { flex-direction: row-reverse; }
+.adm-th-check, .adm-td-check { width: 40px; }
+.adm-activity-table td.adm-td-main, .adm-suggest-table td.adm-td-main { min-width: 140px; }
+.adm-activity-table th, .adm-activity-table td { padding-left: 8px; padding-right: 8px; }
+.adm-activity-table th:first-child, .adm-activity-table td:first-child { padding-left: 14px; }
+.adm-activity-table th:last-child, .adm-activity-table td:last-child { padding-right: 12px; }
+.adm-activity-table .topic-cell, .adm-suggest-table .topic-cell { overflow-wrap: break-word; }
+.adm-td-actions { width: 1%; }
+.table tr.is-selected td { background: var(--primary-soft); }
+.adm-live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--accent); }
+.adm-suggest-head p { margin: 0 0 12px; max-width: 760px; }
+.adm-days-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.adm-days-label { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text-2); }
+input.adm-days { width: 92px; min-height: 40px; padding: 8px 10px; border: 1.5px solid var(--border-strong); border-radius: 11px; background: var(--surface); color: var(--text); font: inherit; font-size: 15px; font-variant-numeric: tabular-nums; }
+input.adm-days:disabled { opacity: 0.55; }
+.adm-suggest-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.adm-suggest-summary:empty { display: none; }
+.adm-suggest-summary p { margin: 0; }
+.adm-auto { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
+.adm-auto .adm-reg-text { flex: 1 1 320px; }
+.adm-td-time { color: var(--text-2); }
+
 /* --------------------------------------------------- sahifalash, bank */
 .pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; }
 .pager:empty { display: none; }
@@ -822,6 +853,27 @@ select.adm-select { width: auto; max-width: 100%; min-height: 40px; padding: 8px
   .adm-table td.adm-td-role, .adm-table td.adm-td-count { flex: 1; text-align: left; }
   .adm-table td.right { margin-left: auto; }
   .adm-sm-only { display: inline; }
+  .adm-table td.adm-td-check { flex: none; width: auto; }
+  .adm-toolbar select.adm-sort-sm { display: block; }
+  .adm-activity-table td.adm-td-main { flex: 1 1 calc(100% - 64px); }
+  .adm-table td.adm-td-played { flex: 1 1 100%; }
+  /* telefonda: nom / oxirgi o'yin / duellar soni / holat + amallar — har biri o'z qatorida */
+  .adm-activity-table td.adm-td-check { order: 1; }
+  .adm-activity-table td.adm-td-main { order: 2; }
+  .adm-activity-table td.adm-td-played { order: 3; }
+  .adm-activity-table td.adm-td-count { order: 4; flex: 0 0 auto; }
+  .adm-activity-table td.adm-td-count + td.adm-td-count { flex: 1 1 calc(100% - 140px); }
+  .adm-activity-table td.adm-td-role { order: 5; }
+  .adm-table td.adm-td-actions { order: 6; width: auto; margin-left: auto; }
+  .adm-views, .adm-views .adm-filter { flex: 1 1 auto; justify-content: center; }
+  /* telefonda bosiladigan elementlar kamida 48px */
+  .adm-topics-panel .adm-filter, .adm-views .adm-filter { min-height: 48px; }
+  .adm-topics-panel .btn.sm, .adm-topics-panel select.adm-select, .adm-topics-panel .adm-search input, .adm-topics-panel input.adm-days { min-height: 48px; }
+  .adm-topics-panel .icon-btn { width: 48px; height: 48px; }
+  .adm-topics-panel .bank-check { min-width: 48px; min-height: 48px; align-items: center; justify-content: center; }
+  .adm-topics-panel .pager-btn { min-width: 48px; height: 48px; }
+  .adm-topics-panel .switch { min-height: 48px; }
+  .adm-topics-panel .link-btn { min-height: 48px; }
   .bank-src { margin-left: 0; flex-basis: 100%; }
   .pager-info { flex-basis: 100%; text-align: center; margin: 2px 0 0; }
 }

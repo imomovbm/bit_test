@@ -1,7 +1,7 @@
 // O'rganish (bir kishilik mashq) rejimi: 10, 30, 50 yoki barcha savollar, vaqt chegarasisiz.
 import { h, icon, toast, openModal, confirmDialog, spinner, emptyState, progressRing, shuffleArray, beep, LETTERS } from '../lib.js';
 import { api } from '../api.js';
-import { live } from '../live.js';
+import { topicBrowser } from '../topic-browser.js';
 
 const STORE_KEY = 'td-practice';
 let session = restore();
@@ -36,15 +36,15 @@ export function practiceView(root, params, ctx, query) {
 
 // ============================================================ mavzular
 function listView(root, ctx) {
-  const grid = h('div.topic-grid', spinner('Mavzular yuklanmoqda…'));
   const resume = h('div');
+  // katalog serverdan sahifalab olinadi (qidiruv, davr bo'yicha tartib) — barcha mavzular birdaniga yuklanmaydi
+  const browser = topicBrowser({ user: ctx.user, variant: 'practice', onPick: (t) => openSetup(t, ctx), storageKey: 'td-practice-tab', title: 'Mavzuni tanlang' });
   root.append(h('section.screen.practice-list',
     h('div.page-head', h('div',
       h('h1', 'Oʻrganish'),
       h('p.muted', 'Bir kishilik mashq: vaqt chegarasi yoʻq, har bir javobdan keyin toʻgʻri javob koʻrsatiladi.'))),
     resume,
-    h('h2.section-title', 'Mavzuni tanlang'),
-    grid));
+    browser.el));
 
   if (session && !session.finished) {
     const answered = session.answers.filter(Boolean).length;
@@ -55,24 +55,7 @@ function listView(root, ctx) {
       h('button.btn.ghost.sm', { type: 'button', onclick: () => { session = null; persist(); resume.replaceChildren(); } }, 'Bekor qilish')));
   }
 
-  async function load() {
-    try {
-      const { topics } = await api('/api/topics');
-      if (!topics.length) {
-        grid.replaceChildren(emptyState('file', 'Hozircha test mavzulari yoʻq', 'Administrator test faylini yuklaganidan keyin mavzular shu yerda paydo boʻladi.'));
-        return;
-      }
-      grid.replaceChildren(...topics.map((t) => h('button.topic-card.practice', { type: 'button', onclick: () => openSetup(t, ctx) },
-        h('div.topic-top', h('span.topic-icon.green', icon('book', 22))),
-        h('div.topic-name', t.name),
-        h('div.topic-meta', `${t.questionCount} ta savol`),
-        h('div.topic-cta', 'Mashq qilish', icon('right', 16)))));
-    } catch (e) {
-      grid.replaceChildren(emptyState('wifiOff', 'Mavzularni yuklab boʻlmadi', e.message));
-    }
-  }
-  load();
-  return live.on('topics', load);
+  return () => browser.destroy();
 }
 
 function openSetup(topic, ctx) {

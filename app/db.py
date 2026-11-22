@@ -147,6 +147,19 @@ CREATE TABLE IF NOT EXISTS settings (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
 );
+
+-- Reyting (leaderboard) uchun o'yinchi bo'yicha yig'indi: duel saqlanganda o'sha tranzaksiyada yangilanadi.
+-- Reyting sahifasi duels jadvalini sanamaydi (550 ming duelda bu har so'rovda ~2.5 soniya edi).
+CREATE TABLE IF NOT EXISTS user_duel_stats (
+    user_id   INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    played    INTEGER NOT NULL DEFAULT 0,
+    wins      INTEGER NOT NULL DEFAULT 0,
+    losses    INTEGER NOT NULL DEFAULT 0,
+    draws     INTEGER NOT NULL DEFAULT 0,
+    correct   INTEGER NOT NULL DEFAULT 0,
+    questions INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_user_stats_rank ON user_duel_stats(wins DESC, played);
 """
 
 # Eski bazalarga keyinroq qo'shilgan ustunlar (jadval nomi, ustun, ta'rif).
@@ -169,6 +182,8 @@ INDEXES = (
     # "N kundan beri o'ynalmagan": oxirgi o'yin, hech o'ynalmagan bo'lsa — yaratilgan payt
     "CREATE INDEX IF NOT EXISTS idx_topics_idle ON topics(active, COALESCE(last_played_at, created_at))",
     "CREATE INDEX IF NOT EXISTS idx_topics_idle_all ON topics(COALESCE(last_played_at, created_at))",
+    # boshqaruv paneli: oxirgi duellar va "shu hafta" soni (duels jadvalini to'liq o'qimaslik uchun)
+    "CREATE INDEX IF NOT EXISTS idx_duels_finished ON duels(finished_at)",
 )
 
 
@@ -210,8 +225,13 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA busy_timeout=5000")
+        had_user_stats = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_duel_stats'").fetchone() is not None
         self.conn.executescript(SCHEMA)
         self._migrate()
+        if not had_user_stats:
+            # reyting yig'indisi endi paydo bo'ldi: mavjud duellar tarixidan bir marta to'ldiriladi
+            self.backfill_user_stats()
 
     def _migrate(self) -> None:
         added = set()
@@ -615,20 +635,50 @@ class Database:
 
     # ------------------------------------------------------------ duels
     def save_duel(self, *, topic_id, topic_name, p1, p2, total, winner, reason, started_at, finished_at) -> int:
-        """p1/p2: {'id', 'login', 'correct', 'time_ms'}; winner: 0 durang, 1 yoki 2."""
+        """p1/p2: {'id', 'login', 'correct', 'time_ms'}; winner: 0 durang, 1 yoki 2.
+        Duel va ikkala o'yinchining reyting yig'indisi (user_duel_stats) bitta tranzaksiyada yoziladi."""
         if topic_id is not None and not self.get_topic(topic_id):
             topic_id = None
         ids = [p["id"] if self.user_by_id(p["id"]) else None for p in (p1, p2)]
-        cur = self.conn.execute(
-            """INSERT INTO duels (topic_id, topic_name, p1_id, p2_id, p1_login, p2_login, p1_correct, p2_correct,
-                                  p1_time_ms, p2_time_ms, total, winner, reason, started_at, finished_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                topic_id, topic_name, ids[0], ids[1], p1["login"], p2["login"], p1["correct"], p2["correct"],
-                p1["time_ms"], p2["time_ms"], total, winner, reason, started_at, finished_at,
-            ),
-        )
+        with self.tx():
+            cur = self.conn.execute(
+                """INSERT INTO duels (topic_id, topic_name, p1_id, p2_id, p1_login, p2_login, p1_correct, p2_correct,
+                                      p1_time_ms, p2_time_ms, total, winner, reason, started_at, finished_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    topic_id, topic_name, ids[0], ids[1], p1["login"], p2["login"], p1["correct"], p2["correct"],
+                    p1["time_ms"], p2["time_ms"], total, winner, reason, started_at, finished_at,
+                ),
+            )
+            for k, (uid, p) in enumerate(zip(ids, (p1, p2)), start=1):
+                if uid is None:
+                    continue
+                won, lost = int(winner == k), int(winner not in (0, k))
+                self.conn.execute(
+                    """INSERT INTO user_duel_stats (user_id, played, wins, losses, draws, correct, questions)
+                       VALUES (?, 1, ?, ?, ?, ?, ?)
+                       ON CONFLICT(user_id) DO UPDATE SET played = played + 1, wins = wins + excluded.wins,
+                           losses = losses + excluded.losses, draws = draws + excluded.draws,
+                           correct = correct + excluded.correct, questions = questions + excluded.questions""",
+                    (uid, won, lost, int(winner == 0), p["correct"], total),
+                )
         return cur.lastrowid
+
+    def backfill_user_stats(self) -> int:
+        """Reyting yig'indisini duellar tarixidan qaytadan hisoblaydi (idempotent, bitta tranzaksiya). O'yinchilar soni."""
+        with self.tx():
+            self.conn.execute("DELETE FROM user_duel_stats")
+            self.conn.execute("""
+                INSERT INTO user_duel_stats (user_id, played, wins, losses, draws, correct, questions)
+                SELECT uid, COUNT(*), SUM(w), SUM(l), SUM(d), SUM(c), SUM(t) FROM (
+                    SELECT p1_id AS uid, winner = 1 AS w, winner = 2 AS l, winner = 0 AS d, p1_correct AS c, total AS t
+                    FROM duels WHERE p1_id IS NOT NULL
+                    UNION ALL
+                    SELECT p2_id, winner = 2, winner = 1, winner = 0, p2_correct, total
+                    FROM duels WHERE p2_id IS NOT NULL
+                ) JOIN users u ON u.id = uid
+                GROUP BY uid""")
+            return self._scalar("SELECT COUNT(*) FROM user_duel_stats")
 
     # ---------------------------------------------------- mavzular faolligi
     def record_duel_start(self, topic_id: int, user_ids, at_ms: int | None = None) -> None:
@@ -667,11 +717,19 @@ class Database:
         offset = int(config.TZ_OFFSET_HOURS * 3600)
         today = day_key(now_ms())
         with self.tx():
+            # duels jadvalini bir marta o'qib (GROUP BY), natijani indeksli vaqtinchalik jadvalga yozamiz: har bir mavzu
+            # uchun duels bo'ylab alohida qidirish (duels.topic_id da indeks yo'q) katta bazada daqiqalab davom etardi.
+            self.conn.execute("CREATE TEMP TABLE IF NOT EXISTS backfill_totals (topic_id INTEGER PRIMARY KEY, n INTEGER, last INTEGER)")
+            self.conn.execute("DELETE FROM backfill_totals")
+            self.conn.execute(
+                """INSERT INTO backfill_totals (topic_id, n, last)
+                   SELECT topic_id, COUNT(*), MAX(started_at) FROM duels WHERE topic_id IS NOT NULL GROUP BY topic_id""")
             self.conn.execute("""
                 UPDATE topics SET
-                    total_duels = (SELECT COUNT(*) FROM duels d WHERE d.topic_id = topics.id),
-                    last_played_at = (SELECT MAX(started_at) FROM duels d WHERE d.topic_id = topics.id)
+                    total_duels = COALESCE((SELECT n FROM backfill_totals b WHERE b.topic_id = topics.id), 0),
+                    last_played_at = (SELECT last FROM backfill_totals b WHERE b.topic_id = topics.id)
             """)
+            self.conn.execute("DROP TABLE backfill_totals")
             self.conn.execute("DELETE FROM topic_activity_daily")
             self.conn.execute("DELETE FROM topic_day_players")
             self.conn.execute("CREATE TEMP TABLE IF NOT EXISTS backfill_players (topic_id INTEGER, day TEXT, user_id INTEGER)")
@@ -896,28 +954,13 @@ class Database:
         return row
 
     def leaderboard(self, limit: int = 100) -> list[dict]:
+        """Reyting: user_duel_stats yig'indisidan (indeks bo'yicha g'alabalar tartibida), duels jadvali sanalmaydi."""
         return self._all(
             """
-            WITH parts AS (
-                SELECT p1_id AS uid,
-                       CASE WHEN winner = 1 THEN 1 ELSE 0 END AS w,
-                       CASE WHEN winner = 2 THEN 1 ELSE 0 END AS l,
-                       CASE WHEN winner = 0 THEN 1 ELSE 0 END AS d,
-                       p1_correct AS c, total AS t
-                FROM duels WHERE p1_id IS NOT NULL
-                UNION ALL
-                SELECT p2_id,
-                       CASE WHEN winner = 2 THEN 1 ELSE 0 END,
-                       CASE WHEN winner = 1 THEN 1 ELSE 0 END,
-                       CASE WHEN winner = 0 THEN 1 ELSE 0 END,
-                       p2_correct, total
-                FROM duels WHERE p2_id IS NOT NULL
-            )
-            SELECT u.id, u.login, COUNT(*) AS played, SUM(w) AS wins, SUM(l) AS losses, SUM(d) AS draws,
-                   SUM(c) AS correct, SUM(t) AS questions
-            FROM parts JOIN users u ON u.id = parts.uid
-            GROUP BY u.id
-            ORDER BY wins DESC, (wins * 1.0 / played) DESC, (SUM(c) * 1.0 / MAX(SUM(t), 1)) DESC, u.login_key
+            SELECT u.id, u.login, s.played, s.wins, s.losses, s.draws, s.correct, s.questions
+            FROM user_duel_stats s INDEXED BY idx_user_stats_rank JOIN users u ON u.id = s.user_id
+            WHERE s.played > 0
+            ORDER BY s.wins DESC, (s.wins * 1.0 / s.played) DESC, (s.correct * 1.0 / MAX(s.questions, 1)) DESC, u.login_key
             LIMIT ?
             """,
             (limit,),

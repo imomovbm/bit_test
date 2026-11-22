@@ -78,7 +78,7 @@ class TopicCatalog:
                        SUM(CASE WHEN day >= ? THEN duels_started ELSE 0 END),
                        SUM(CASE WHEN day >= ? THEN duels_started ELSE 0 END),
                        SUM(duels_started * (CASE day {cases} ELSE 0 END))
-                FROM topic_activity_daily WHERE day >= ? GROUP BY topic_id""",
+                FROM topic_activity_daily INDEXED BY idx_activity_day WHERE day >= ? GROUP BY topic_id""",
             [today, week_from, month_from, *args, oldest],
         ).fetchall()
         topics = {t["id"]: t for t in self.db.playable_topics()}

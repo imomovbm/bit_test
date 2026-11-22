@@ -791,9 +791,8 @@ class DuelHub:
         self.last_opponent[a], self.last_opponent[b] = b, a
         for uid in (a, b):
             self.user_duel[uid] = duel.id
-        for uid in (a, b):  # ikkalasi birga duelga yuboriladi
-            self._send(uid, "queue", None)
-            self._send(uid, "duel:start", self.duel_state(uid))
+        for uid in (a, b):  # ikkalasi birga duelga yuboriladi; duel:start navbatni ham yopadi (alohida queue:null yo'q —
+            self._send(uid, "duel:start", self.duel_state(uid))  # aks holda brauzer bir lahzaga lobbini chizib, qayta obuna bo'lardi)
         duel.start_timer = self.clock.call_later(config.COUNTDOWN, self._begin, duel.id)
         log.info("Duel %s juftlandi: %s vs %s (%s)", duel.id, self.logins.get(a), self.logins.get(b), topic["name"])
         self._lobby_changed()

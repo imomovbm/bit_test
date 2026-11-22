@@ -64,6 +64,20 @@ def test_two_joins_on_one_seek_exactly_one_wins(env):
     assert len(env.hub.duels) == 1 and env.hub.stats["joinRaces"] == 1
 
 
+def test_pairing_sends_duel_start_without_a_separate_queue_reset(env):
+    """Juftlanganda egaga faqat duel:start boradi (u navbatni ham yopadi) — oraliq queue:null brauzerda lobbini
+    bir lahzaga chizib, ortiqcha obuna va katalog so'rovini keltirib chiqarardi."""
+    t = env.topics[0]
+    a, v = online(env, "ali"), online(env, "vali")
+    seek(env, "ali", a, t)
+    sid = a.last("queue")["seekId"]
+    before = len(a.msgs)
+    act(env, "vali", v, "seek:join", seekId=sid)
+    after = [m[0] for m in a.msgs[before:]]
+    assert after[0] == "duel:start" and "queue" not in after
+    assert env.hub.queue_state(env.users["ali"]["id"]) is None and not env.hub.seeks
+
+
 def test_quick_pairing_on_topic(env):
     t = env.topics[1]
     a, v = online(env, "ali"), online(env, "vali")

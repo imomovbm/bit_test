@@ -192,7 +192,7 @@ function registrationSwitch(open, editable = true) {
 }
 
 // ============================================================== mavzular
-function topicsSection(body, ctx, state) {
+function topicsSection(body, ctx, state, query) {
   const input = h('input', { type: 'file', accept: '.txt,text/plain', multiple: true, hidden: true });
   const drop = h('label.dropzone',
     input,
@@ -214,12 +214,11 @@ function topicsSection(body, ctx, state) {
   }));
   drop.addEventListener('drop', (e) => handleFiles([...(e.dataTransfer?.files || [])]));
 
-  let page = 1;
-  const search = searchBox('Mavzu nomi boʻyicha qidirish', () => {
-    page = 1;
-    paint();
-  });
-  const list = h('div', spinner());
+  const VIEWS = [['list', 'Barcha mavzular', 'file'], ['suggested', 'Oʻchirishga tavsiya', 'alert'], ['log', 'Jurnal', 'history']];
+  let view = VIEWS.some(([k]) => k === query.get('view')) ? query.get('view') : 'list';
+  const suggestCount = h('span.adm-filter-n');
+  const tabs = h('div.adm-filters.adm-views', { role: 'tablist', 'aria-label': 'Mavzular boʻlimi' });
+  const panel = h('div.adm-topics-panel');
   body.append(
     h('div.card.adm-quick',
       h('div.adm-reg-text', h('b', 'Mavzu yarating va savollarni qoʻlda qoʻshing'), h('span.small.muted', 'Yoki quyida .txt faylni yuklang — mavzu savollari bilan birga yaratiladi.')),
@@ -233,10 +232,33 @@ function topicsSection(body, ctx, state) {
           h('li', 'Savol va variantlar ', h('code', '===='), ' bilan ajratiladi'),
           h('li', 'Toʻgʻri javob oldiga ', h('code', '#'), ' qoʻyiladi')),
         h('pre.format-example', FORMAT_EXAMPLE))),
-    h('div.adm-toolbar', search.el, h('button.btn.ghost.sm', { type: 'button', onclick: () => load() }, icon('refresh', 16), 'Yangilash')),
-    list);
+    tabs,
+    panel);
 
-  let topics = null;
+  let current = null;
+  function show(next) {
+    view = next;
+    tabs.replaceChildren(...VIEWS.map(([key, label, ic]) => h('button', {
+      type: 'button',
+      role: 'tab',
+      class: `adm-filter${key === view ? ' active' : ''}`,
+      'aria-selected': key === view ? 'true' : 'false',
+      onclick: () => key !== view && show(key),
+    }, icon(ic, 15), label, key === 'suggested' ? suggestCount : null)));
+    if (current && current.destroy) current.destroy();
+    panel.replaceChildren();
+    const make = { list: topicActivityList, suggested: suggestedTopics, log: statusLog }[view];
+    current = make(panel, { state, refresh: refreshSuggested });
+  }
+
+  async function refreshSuggested() {
+    try {
+      const data = await api('/api/admin/topic-activity/suggested?per=5');
+      if (state.alive) suggestCount.textContent = data.total ? String(data.total) : '';
+    } catch {
+      /* hisoblagich — ixtiyoriy */
+    }
+  }
 
   async function handleFiles(files) {
     const txt = files.filter((f) => /\.txt$/i.test(f.name) || f.type === 'text/plain');
@@ -252,72 +274,278 @@ function topicsSection(body, ctx, state) {
       if (res === 'stop') break;
     }
     if (saved && state.alive) {
-      load();
+      if (view === 'list') current.reload();
+      else show('list');
       state.loadOverview();
     }
   }
 
-  async function load() {
-    try {
-      topics = (await api('/api/admin/topics')).topics;
-    } catch (e) {
-      if (state.alive) list.replaceChildren(emptyState('wifiOff', 'Roʻyxatni yuklab boʻlmadi', e.message));
+  show(view);
+  refreshSuggested();
+  state.cleanups.push(() => current && current.destroy && current.destroy());
+}
+
+// ------------------------------------------- mavzular faolligi (server tomonida)
+const TOPIC_COLUMNS = [
+  // [saralash kaliti, sarlavha, ustun klassi]
+  ['name', 'Mavzu', 'adm-th-main'],
+  ['status', 'Holat', ''],
+  ['lastPlayed', 'Oxirgi oʻyin', ''],
+  ['total', 'Jami duel', 'num'],
+  ['recent', '30 kunda', 'num'],
+];
+// telefonda jadval sarlavhasi yashiriladi — saralash ro'yxatdan tanlanadi
+const SORT_OPTIONS = [
+  ['name:asc', 'Saralash: nomi (A–Z)'],
+  ['lastPlayed:desc', 'Oxirgi oʻyin: yangilari'],
+  ['lastPlayed:asc', 'Oxirgi oʻyin: eskilari'],
+  ['total:desc', 'Jami duel: koʻpi'],
+  ['recent:desc', '30 kunda: koʻpi'],
+  ['recent:asc', '30 kunda: kami'],
+  ['status:asc', 'Holat: yopiqlari oldin'],
+  ['created:desc', 'Yangi qoʻshilganlar'],
+];
+const IDLE_OPTIONS = [[0, 'Oxirgi oʻyin: istalgan'], [30, '30+ kun oʻynalmagan'], [60, '60+ kun oʻynalmagan'], [90, '90+ kun oʻynalmagan'], [180, '180+ kun oʻynalmagan']];
+const LOG_REASON = { manual: 'qoʻlda', bulk: 'ommaviy', suggested: 'tavsiya boʻyicha' };
+const TOPICS_PER = 25;
+
+function reasonLabel(reason) {
+  if (reason && reason.startsWith('auto:')) return `avtomatik (${reason.slice(5)} kun)`;
+  return LOG_REASON[reason] || reason || '—';
+}
+
+function lastPlayedCell(t) {
+  if (!t.lastPlayedAt) return h('span.muted', 'hech oʻynalmagan');
+  return h('span', { title: fmtDate(t.lastPlayedAt) }, fmtAgo(t.lastPlayedAt));
+}
+
+function liveNote(t) {
+  if (!t.waiting && !t.playing) return null;
+  return h('span.adm-live', h('span.pulse-dot'), [t.waiting ? `${t.waiting} kutmoqda` : '', t.playing ? `${t.playing} duel` : ''].filter(Boolean).join(' · '));
+}
+
+/** Ko'plab mavzuni yopish/ochish (soni bilan tasdiqlash). Muvaffaqiyatli bo'lsa — o'zgargan mavzular soni. */
+async function bulkStatus(ids, active, source) {
+  const n = ids.length;
+  const ok = await confirmDialog({
+    title: active ? 'Mavzularni ochish' : 'Mavzularni yopish',
+    message: active
+      ? `${n} ta mavzu yana foydalanuvchilarga ochiladi.`
+      : `${n} ta mavzu yopiladi: bosh sahifa va lobbida koʻrinmaydi, ulardagi kutishlar bekor qilinadi, boshlangan duellar oxirigacha davom etadi. Savollar va tarix saqlanadi — istalgan vaqtda qayta ochish mumkin.`,
+    okText: active ? `${n} ta mavzuni ochish` : `${n} ta mavzuni yopish`,
+    danger: !active,
+  });
+  if (!ok) return null;
+  try {
+    const res = await api('/api/admin/topic-activity/status', { method: 'POST', body: { ids, active, source } });
+    toast(active ? `${res.changed} ta mavzu ochildi` : `${res.changed} ta mavzu yopildi`, 'success');
+    return res.changed;
+  } catch (e) {
+    toast(e.message, 'error');
+    return null;
+  }
+}
+
+function sortHeader(key, label, cls, sort, onSort) {
+  const activeSort = sort.key === key;
+  return h(`th${cls ? `.${cls}` : ''}`, { 'aria-sort': activeSort ? (sort.desc ? 'descending' : 'ascending') : null },
+    h('button.th-sort', { type: 'button', onclick: () => onSort(key), title: `${label} boʻyicha saralash` },
+      label, h('span.th-arrow', { 'aria-hidden': 'true' }, activeSort ? (sort.desc ? '↓' : '↑') : '↕')));
+}
+
+function topicActivityList(panel, { state, refresh }) {
+  const params = { status: 'all', q: '', idle: 0, page: 1 };
+  const sort = { key: 'name', desc: false };
+  const selected = new Map(); // id -> {id, name, active} (sahifalar orasida saqlanadi)
+  let data = null;
+  let req = 0;
+  let searchTimer = 0;
+
+  const search = searchBox('Mavzu nomi boʻyicha qidirish', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      if (search.value() === params.q) return;
+      params.q = search.value();
+      params.page = 1;
+      load();
+    }, 300);
+  });
+  const statusTabs = h('div.adm-filters', { role: 'group', 'aria-label': 'Holat' });
+  const idle = h('select.adm-select', { 'aria-label': 'Oʻynalmagan muddat', onchange: () => { params.idle = Number(idle.value); params.page = 1; load(); } },
+    IDLE_OPTIONS.map(([v, label]) => h('option', { value: String(v) }, label)));
+  const sortSelect = h('select.adm-select.adm-sort-sm', {
+    'aria-label': 'Saralash',
+    onchange: () => {
+      const [key, dir] = sortSelect.value.split(':');
+      sort.key = key;
+      sort.desc = dir === 'desc';
+      params.page = 1;
+      load();
+    },
+  });
+  const selbar = h('div.bank-selbar.adm-selbar');
+  const list = h('div', spinner());
+  panel.append(
+    h('div.adm-toolbar', search.el, statusTabs, idle, sortSelect,
+      h('button.btn.ghost.sm', { type: 'button', onclick: () => load() }, icon('refresh', 16), 'Yangilash')),
+    selbar,
+    list);
+
+  function paintStatusTabs() {
+    const c = data ? data.counts : { active: 0, inactive: 0 };
+    const items = [['all', 'Hammasi', c.active + c.inactive], ['active', 'Faol', c.active], ['inactive', 'Yopiq', c.inactive]];
+    statusTabs.replaceChildren(...items.map(([key, label, n]) => h('button', {
+      type: 'button',
+      class: `adm-filter${params.status === key ? ' active' : ''}`,
+      'aria-pressed': params.status === key ? 'true' : 'false',
+      onclick: () => {
+        if (params.status === key) return;
+        params.status = key;
+        params.page = 1;
+        load();
+      },
+    }, label, data ? h('span.adm-filter-n', String(n)) : null)));
+  }
+
+  function paintSelbar() {
+    if (!selected.size) {
+      selbar.replaceChildren();
+      selbar.classList.remove('has-sel');
       return;
     }
-    if (state.alive) paint();
+    const all = [...selected.values()];
+    const toClose = all.filter((t) => t.active).map((t) => t.id);
+    const toOpen = all.filter((t) => !t.active).map((t) => t.id);
+    selbar.classList.add('has-sel');
+    selbar.replaceChildren(
+      h('b.bank-sel-n', `${selected.size} ta mavzu tanlandi`),
+      h('div.bank-sel-actions',
+        toClose.length ? h('button.btn.danger.sm', { type: 'button', onclick: () => bulk(toClose, false) }, icon('lock', 15), `Yopish (${toClose.length})`) : null,
+        toOpen.length ? h('button.btn.ghost.sm', { type: 'button', onclick: () => bulk(toOpen, true) }, icon('unlock', 15), `Ochish (${toOpen.length})`) : null,
+        h('button.btn.ghost.sm', { type: 'button', onclick: () => { selected.clear(); paint(); } }, icon('x', 15), 'Bekor qilish')));
+  }
+
+  async function bulk(ids, active) {
+    const changed = await bulkStatus(ids, active, 'bulk');
+    if (changed === null) return;
+    selected.clear();
+    load();
+    refresh();
+    state.loadOverview();
+  }
+
+  async function load() {
+    const my = ++req;
+    const qs = new URLSearchParams({ status: params.status, idle: String(params.idle), sort: sort.key, dir: sort.desc ? 'desc' : 'asc', page: String(params.page), per: String(TOPICS_PER) });
+    if (params.q) qs.set('q', params.q);
+    list.setAttribute('aria-busy', 'true');
+    if (!data) list.replaceChildren(spinner());
+    try {
+      const res = await api(`/api/admin/topic-activity?${qs}`);
+      if (my !== req || !state.alive) return;
+      data = res;
+      if (params.page > res.pages) {
+        params.page = res.pages;
+        load();
+        return;
+      }
+      paint();
+    } catch (e) {
+      if (my !== req || !state.alive) return;
+      list.replaceChildren(emptyState('wifiOff', 'Roʻyxatni yuklab boʻlmadi', e.message,
+        h('button.btn.primary', { type: 'button', onclick: () => load() }, icon('refresh', 16), 'Qayta urinish')));
+    } finally {
+      if (my === req) list.removeAttribute('aria-busy');
+    }
+  }
+
+  function onSort(key) {
+    if (sort.key === key) sort.desc = !sort.desc;
+    else {
+      sort.key = key;
+      sort.desc = key !== 'name' && key !== 'status'; // sonlar va sanalar — avval kattasi/yangisi
+    }
+    params.page = 1;
+    load();
+  }
+
+  function paintSort() {
+    const value = `${sort.key}:${sort.desc ? 'desc' : 'asc'}`;
+    const opts = SORT_OPTIONS.some(([v]) => v === value) ? SORT_OPTIONS : [[value, `Saralash: ${value}`], ...SORT_OPTIONS];
+    sortSelect.replaceChildren(...opts.map(([v, label]) => h('option', { value: v }, label)));
+    sortSelect.value = value;
   }
 
   function paint() {
-    if (!topics) return;
-    if (!topics.length) {
-      list.replaceChildren(emptyState('file', 'Hali mavzu yoʻq', 'Yuqoridagi maydon orqali birinchi test faylini yuklang.'));
+    paintStatusTabs();
+    paintSelbar();
+    paintSort();
+    if (!data) return;
+    if (!data.total) {
+      const filtered = params.q || params.idle || params.status !== 'all';
+      list.replaceChildren(filtered
+        ? h('div.card.muted.center', 'Bu shartlarga mos mavzu topilmadi.')
+        : emptyState('file', 'Hali mavzu yoʻq', 'Yuqoridagi maydon orqali birinchi test faylini yuklang.'));
       return;
     }
-    const q = search.value().toLocaleLowerCase();
-    const shown = q ? topics.filter((t) => t.name.toLocaleLowerCase().includes(q) || (t.sourceFile || '').toLocaleLowerCase().includes(q)) : topics;
-    const active = topics.filter((t) => t.active).length;
-    const cut = slicePage(shown, page, PER_PAGE);
-    page = cut.page;
+    const pageIds = data.items.map((t) => t.id);
+    const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+    const checkAll = h('input', {
+      type: 'checkbox', checked: allOnPage, 'aria-label': 'Sahifadagi hammasini tanlash',
+      onchange: () => {
+        for (const t of data.items) {
+          if (checkAll.checked) selected.set(t.id, { id: t.id, name: t.name, active: t.active });
+          else selected.delete(t.id);
+        }
+        paint();
+      },
+    });
+    const first = (data.page - 1) * data.per + 1;
     list.replaceChildren(
-      h('p.small.muted.adm-summary', `${topics.length} ta mavzu · ${active} tasi faol${q ? ` · topildi: ${shown.length}` : ''}`),
-      shown.length
-        ? h('div.card.table-card', h('div.table-wrap', h('table.table.adm-table.adm-topics',
-          h('thead', h('tr', h('th', 'Mavzu'), h('th', 'Holat'), h('th.num', 'Savollar'), h('th.hide-sm', 'Variantlar'), h('th.hide-sm', 'Yaratilgan'), h('th.right', 'Amallar'))),
-          h('tbody', cut.items.map(topicRow)))))
-        : h('div.card.muted.center', 'Hech narsa topilmadi.'),
-      pager({ ...cut, onChange: (p) => { page = p; paint(); scrollToTop(list); } }));
+      h('p.small.muted.adm-summary', `${data.total} ta mavzu · ${first}–${first + data.items.length - 1} koʻrsatilmoqda`),
+      h('div.card.table-card', h('div.table-wrap', h('table.table.adm-table.adm-topics.adm-activity-table',
+        h('thead', h('tr',
+          h('th.adm-th-check', h('label.bank-check.bank-check-all', checkAll)),
+          ...TOPIC_COLUMNS.map(([key, label, cls]) => sortHeader(key, label, cls, sort, onSort)),
+          h('th.right', 'Amallar'))),
+        h('tbody', data.items.map(row))))),
+      pager({ page: data.page, pages: data.pages, total: data.total, per: data.per, onChange: (p) => { params.page = p; load(); scrollToTop(list); } }));
   }
 
-  function topicRow(t) {
-    const sw = h('input', { type: 'checkbox', checked: t.shuffle, 'aria-label': 'Variantlarni aralashtirish' });
-    sw.addEventListener('change', async () => {
-      try {
-        await api(`/api/admin/topics/${t.id}`, { method: 'PATCH', body: { shuffle: sw.checked } });
-        t.shuffle = sw.checked;
-        toast(sw.checked ? 'Variantlar endi aralashtiriladi' : 'Variantlar fayldagi tartibda beriladi', 'success');
-      } catch (e) {
-        sw.checked = !sw.checked;
-        toast(e.message, 'error');
-      }
+  function row(t) {
+    const check = h('input', {
+      type: 'checkbox', checked: selected.has(t.id), 'aria-label': `Tanlash: ${t.name}`,
+      onchange: () => {
+        if (check.checked) selected.set(t.id, { id: t.id, name: t.name, active: t.active });
+        else selected.delete(t.id);
+        paint();
+      },
     });
-    const btn = (ic, title, onclick, cls = '') => h(`button.icon-btn${cls}`, { type: 'button', title, 'aria-label': title, onclick }, icon(ic, 17));
     const href = `#/admin/topics/${t.id}`;
-    return h(`tr${t.active ? '' : '.is-inactive'}`,
-      h('td.adm-td-main', h('div.topic-cell', h('a.adm-topic-link', { href }, t.name), h('span.small.muted', t.sourceFile || (t.questionCount ? 'qoʻlda kiritilgan' : 'savol qoʻshilmagan')))),
-      h('td.adm-td-role', activeSwitch(t, () => paint())),
-      h('td.num.adm-td-count', String(t.questionCount), h('span.adm-sm-only', ' ta savol')),
-      h('td.hide-sm', h('label.switch', { title: 'Javob variantlarini har safar aralashtirish' }, sw, h('span.slider'), h('span.small', 'aralash'))),
-      h('td.hide-sm.small.nowrap', fmtDate(t.createdAt), t.createdBy ? h('div.muted', t.createdBy) : null),
-      h('td.right.nowrap',
+    return h(`tr${t.active ? '' : '.is-inactive'}${selected.has(t.id) ? '.is-selected' : ''}`,
+      h('td.adm-td-check', h('label.bank-check', check)),
+      h('td.adm-td-main', h('div.topic-cell',
+        h('a.adm-topic-link', { href }, t.name),
+        h('span.small.muted', t.questionCount ? `${t.questionCount} ta savol · ${t.sourceFile || 'qoʻlda kiritilgan'}` : 'savol qoʻshilmagan'),
+        liveNote(t))),
+      h('td.adm-td-role', activeSwitch(t, () => {
+        selected.delete(t.id);
+        load();
+        refresh();
+      })),
+      h('td.adm-td-played.small.nowrap', h('span.adm-sm-only', 'oxirgi oʻyin: '), lastPlayedCell(t)),
+      h('td.num.adm-td-count', String(t.totalDuels), h('span.adm-sm-only', ' ta duel')),
+      h('td.num.adm-td-count', String(t.duels30), h('span.adm-sm-only', ' ta 30 kunda')),
+      h('td.right.nowrap.adm-td-actions',
         h('a.icon-btn', { href, title: 'Savollarni boshqarish', 'aria-label': `Savollarni boshqarish: ${t.name}` }, icon('edit', 17)),
         h('a.icon-btn', { href: `/api/admin/topics/${t.id}/export`, download: `${t.name}.txt`, title: '.txt fayl sifatida yuklab olish', 'aria-label': 'Yuklab olish' }, icon('download', 17)),
-        btn('trash', 'Oʻchirish', () => remove(t), '.danger')));
+        h('button.icon-btn.danger', { type: 'button', title: 'Oʻchirish', 'aria-label': `Oʻchirish: ${t.name}`, onclick: () => remove(t) }, icon('trash', 17))));
   }
 
   async function remove(t) {
     const ok = await confirmDialog({
       title: 'Mavzuni oʻchirish',
-      message: `«${t.name}» mavzusi oʻchiriladi. Undagi ${t.questionCount} ta savol savollar bankida qoladi — ularni boshqa mavzularga qoʻshish mumkin. Duel va oʻyinlar tarixi ham saqlanadi.`,
+      message: `«${t.name}» mavzusi butunlay oʻchiriladi. Undagi ${t.questionCount} ta savol savollar bankida qoladi — ularni boshqa mavzularga qoʻshish mumkin. Duel va oʻyinlar tarixi ham saqlanadi. Vaqtincha yashirish uchun oʻchirish oʻrniga «Holat» tugmasi bilan yoping.`,
       okText: 'Oʻchirish',
       danger: true,
     });
@@ -325,15 +553,242 @@ function topicsSection(body, ctx, state) {
     try {
       await api(`/api/admin/topics/${t.id}`, { method: 'DELETE' });
       toast('Mavzu oʻchirildi', 'success');
+      selected.delete(t.id);
       load();
+      refresh();
       state.loadOverview();
     } catch (e) {
       toast(e.message, 'error');
     }
   }
 
+  paintStatusTabs();
   load();
-  state.cleanups.push(live.on('topics', load));
+  return { reload: load, destroy: () => clearTimeout(searchTimer) };
+}
+
+function suggestedTopics(panel, { state, refresh }) {
+  let days = null;
+  let page = 1;
+  let data = null;
+  let settings = null;
+  let req = 0;
+  const daysInput = h('input.adm-days', { type: 'number', min: '1', max: '3650', step: '1', inputmode: 'numeric', 'aria-label': 'Kunlar soni' });
+  const intro = h('div.card.adm-suggest-head',
+    h('h2.card-title', icon('alert', 18), 'Oʻchirishga tavsiya etilgan mavzular'),
+    h('p.small.muted', 'Faol, lekin uzoq vaqtdan beri hech kim oʻynamagan mavzular (hech oʻynalmaganlari uchun yaratilgan sana hisobga olinadi). ',
+      'Yopish yumshoq: mavzu bosh sahifa va lobbidan yashiriladi, savollar va tarix saqlanadi, istalgan vaqtda qayta ochish mumkin. Hech narsa avtomatik yopilmaydi (quyidagi sozlama yoqilmagan boʻlsa).'),
+    h('form.adm-days-row', {
+      onsubmit: (e) => {
+        e.preventDefault();
+        const v = Number(daysInput.value);
+        if (!Number.isInteger(v) || v < 1 || v > 3650) {
+          toast('Kunlar soni 1 dan 3650 gacha boʻlishi kerak', 'error');
+          return;
+        }
+        days = v;
+        page = 1;
+        load();
+      },
+    },
+    h('label.adm-days-label', 'Oʻynalmaganiga kamida', daysInput, 'kun'),
+    h('button.btn.primary.sm', { type: 'submit' }, 'Koʻrsatish'),
+    h('button.link-btn', { type: 'button', onclick: saveDefault }, 'Standart qilib saqlash')));
+  const summary = h('div.adm-suggest-summary');
+  const list = h('div', spinner());
+  const auto = h('div.card.adm-auto');
+  panel.append(intro, summary, list, auto);
+
+  async function saveDefault() {
+    const v = Number(daysInput.value);
+    if (!Number.isInteger(v) || v < 1 || v > 3650) {
+      toast('Kunlar soni 1 dan 3650 gacha boʻlishi kerak', 'error');
+      return;
+    }
+    try {
+      const res = await api('/api/admin/topic-activity/settings', { method: 'PATCH', body: { suggestDays: v } });
+      settings = res.settings;
+      toast(`Tavsiya chegarasi: ${v} kun`, 'success');
+      days = v;
+      load();
+      refresh();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  async function load() {
+    const my = ++req;
+    const qs = new URLSearchParams({ page: String(page), per: String(TOPICS_PER) });
+    if (days) qs.set('days', String(days));
+    list.setAttribute('aria-busy', 'true');
+    try {
+      const [res, s] = await Promise.all([
+        api(`/api/admin/topic-activity/suggested?${qs}`),
+        settings ? Promise.resolve(null) : api('/api/admin/topic-activity?per=5'),
+      ]);
+      if (my !== req || !state.alive) return;
+      data = res;
+      if (s) settings = s.settings;
+      if (days == null) {
+        days = res.days;
+        daysInput.value = String(days);
+      }
+      paint();
+      paintAuto();
+    } catch (e) {
+      if (my !== req || !state.alive) return;
+      list.replaceChildren(emptyState('wifiOff', 'Roʻyxatni yuklab boʻlmadi', e.message,
+        h('button.btn.primary', { type: 'button', onclick: () => load() }, icon('refresh', 16), 'Qayta urinish')));
+    } finally {
+      if (my === req) list.removeAttribute('aria-busy');
+    }
+  }
+
+  async function deactivateAll() {
+    let ids;
+    try {
+      ids = (await api(`/api/admin/topic-activity/suggested/ids?days=${days}`)).ids;
+    } catch (e) {
+      toast(e.message, 'error');
+      return;
+    }
+    if (!ids.length) {
+      load();
+      return;
+    }
+    const changed = await bulkStatus(ids, false, 'suggested');
+    if (changed === null) return;
+    page = 1;
+    load();
+    refresh();
+    state.loadOverview();
+  }
+
+  async function deactivateOne(t, btn) {
+    btn.disabled = true;
+    try {
+      await api('/api/admin/topic-activity/status', { method: 'POST', body: { ids: [t.id], active: false, source: 'suggested' } });
+      toast(`«${t.name}» yopildi — «Jurnal» va «Barcha mavzular»dan qayta ochish mumkin`, 'success');
+      load();
+      refresh();
+      state.loadOverview();
+    } catch (e) {
+      btn.disabled = false;
+      toast(e.message, 'error');
+    }
+  }
+
+  function paint() {
+    if (!data.total) {
+      summary.replaceChildren();
+      list.replaceChildren(emptyState('check', 'Tavsiya yoʻq', `Barcha faol mavzular oxirgi ${days} kun ichida oʻynalgan.`));
+      return;
+    }
+    summary.replaceChildren(
+      h('p', h('b', `${data.total} ta faol mavzu`), ` ${days} kundan beri oʻynalmagan`),
+      h('button.btn.danger', { type: 'button', onclick: deactivateAll }, icon('lock', 16), `Hammasini yopish (${data.total})`));
+    list.replaceChildren(
+      h('div.card.table-card', h('div.table-wrap', h('table.table.adm-table.adm-suggest-table',
+        h('thead', h('tr', h('th', 'Mavzu'), h('th', 'Oxirgi oʻyin'), h('th.num', 'Jami duel'), h('th.num.hide-sm', 'Savollar'), h('th.right', 'Amal'))),
+        h('tbody', data.items.map((t) => {
+          const btn = h('button.btn.ghost.sm.adm-close-btn', { type: 'button' }, icon('lock', 15), 'Yopish');
+          btn.addEventListener('click', () => deactivateOne(t, btn));
+          return h('tr',
+            h('td.adm-td-main', h('div.topic-cell', h('a.adm-topic-link', { href: `#/admin/topics/${t.id}` }, t.name),
+              h('span.small.muted', `yaratilgan: ${fmtDate(t.createdAt)}`), liveNote(t))),
+            h('td.adm-td-played.small.nowrap', h('span.adm-sm-only', 'oxirgi oʻyin: '), lastPlayedCell(t)),
+            h('td.num.adm-td-count', String(t.totalDuels), h('span.adm-sm-only', ' ta duel')),
+            h('td.num.hide-sm', String(t.questionCount)),
+            h('td.right', btn));
+        }))))),
+      pager({ page: data.page, pages: data.pages, total: data.total, per: data.per, onChange: (p) => { page = p; load(); scrollToTop(list); } }));
+  }
+
+  function paintAuto() {
+    if (!settings) return;
+    const on = settings.autoDeactivateDays > 0;
+    const toggle = h('input', { type: 'checkbox', checked: on, 'aria-label': 'Avtomatik yopish' });
+    const autoDays = h('input.adm-days', { type: 'number', min: '7', max: '3650', step: '1', inputmode: 'numeric', value: String(on ? settings.autoDeactivateDays : 180), 'aria-label': 'Avtomatik yopish chegarasi (kun)', disabled: !on });
+    toggle.addEventListener('change', () => {
+      autoDays.disabled = !toggle.checked;
+      if (!toggle.checked) save(0);
+    });
+    async function save(value) {
+      try {
+        const res = await api('/api/admin/topic-activity/settings', { method: 'PATCH', body: { autoDeactivateDays: value } });
+        settings = res.settings;
+        toast(value ? `Avtomatik yopish yoqildi: ${value} kundan beri oʻynalmagan mavzular` : 'Avtomatik yopish oʻchirildi', 'success');
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+      paintAuto();
+    }
+    auto.replaceChildren(
+      h('div.adm-reg-text',
+        h('b', 'Avtomatik yopish'),
+        h('span.small.muted', on
+          ? `Yoqilgan: ${settings.autoDeactivateDays} kundan beri oʻynalmagan faol mavzular har soatda avtomatik yopiladi va jurnalga yoziladi.`
+          : 'Oʻchiq (standart). Yoqilsa, belgilangan kundan beri oʻynalmagan faol mavzular har soatda avtomatik yopiladi va jurnalga yoziladi.')),
+      h('form.adm-days-row', {
+        onsubmit: (e) => {
+          e.preventDefault();
+          const v = Number(autoDays.value);
+          if (!Number.isInteger(v) || v < 7 || v > 3650) {
+            toast('Avtomatik yopish uchun 7 dan 3650 gacha kun kiriting', 'error');
+            return;
+          }
+          save(v);
+        },
+      },
+      h('label.switch', toggle, h('span.slider'), h('span.small', 'yoqish')),
+      h('label.adm-days-label', autoDays, 'kun'),
+      h('button.btn.ghost.sm', { type: 'submit', disabled: !on && !toggle.checked }, 'Saqlash')));
+    toggle.addEventListener('change', () => {
+      auto.querySelector('button[type="submit"]').disabled = !toggle.checked;
+    });
+  }
+
+  load();
+  return { reload: load };
+}
+
+function statusLog(panel, { state }) {
+  let page = 1;
+  let req = 0;
+  const list = h('div', spinner());
+  panel.append(
+    h('p.small.muted.adm-summary', 'Mavzular holatining har bir oʻzgarishi: kim, qachon va qanday sabab bilan yopgan yoki ochgan.'),
+    list);
+
+  async function load() {
+    const my = ++req;
+    try {
+      const data = await api(`/api/admin/topic-activity/log?page=${page}&per=${TOPICS_PER}`);
+      if (my !== req || !state.alive) return;
+      if (!data.total) {
+        list.replaceChildren(emptyState('history', 'Jurnal boʻsh', 'Mavzu yopilganda yoki ochilganda shu yerda yozuv paydo boʻladi.'));
+        return;
+      }
+      list.replaceChildren(
+        h('div.card.table-card', h('div.table-wrap', h('table.table.adm-table.adm-log-table',
+          h('thead', h('tr', h('th', 'Vaqt'), h('th', 'Mavzu'), h('th', 'Amal'), h('th', 'Kim'), h('th', 'Sabab'))),
+          h('tbody', data.items.map((e) => h('tr',
+            h('td.small.nowrap.adm-td-time', fmtDate(e.at)),
+            h('td.adm-td-main', h('a.adm-topic-link', { href: `#/admin/topics/${e.topicId}` }, e.topicName)),
+            h('td', e.active ? h('span.badge.good', icon('unlock', 11), 'ochildi') : h('span.badge.bad', icon('lock', 11), 'yopildi')),
+            h('td.small', e.by || h('span.muted', 'tizim')),
+            h('td.small.muted', reasonLabel(e.reason)))))))),
+        pager({ page: data.page, pages: data.pages, total: data.total, per: data.per, onChange: (p) => { page = p; load(); scrollToTop(list); } }));
+    } catch (e) {
+      if (my !== req || !state.alive) return;
+      list.replaceChildren(emptyState('wifiOff', 'Jurnalni yuklab boʻlmadi', e.message,
+        h('button.btn.primary', { type: 'button', onclick: () => load() }, icon('refresh', 16), 'Qayta urinish')));
+    }
+  }
+
+  load();
+  return { reload: load };
 }
 
 function suggestName(fileName) {
@@ -1162,14 +1617,15 @@ function usersSection(body, ctx, state, query) {
         h('div.alert.info.adm-readonly-note', icon('shield', 18), h('span',
           'Foydalanuvchilarni (bloklash, parolni tiklash, admin yoki oʻqituvchi qilish) faqat bosh administrator boshqaradi. Siz roʻyxatni koʻrishingiz mumkin.')),
         regBox),
-    h('div.adm-toolbar', search.el, filters),
+    h('div.adm-toolbar', search.el, filters,
+      h('button.btn.ghost.sm', { type: 'button', onclick: () => load() }, icon('refresh', 16), 'Yangilash')),
     list);
 
   state.overview.then((data) => {
     if (state.alive) regBox.replaceChildren(registrationSwitch(data.settings.registrationOpen, manage));
   }).catch(() => {});
 
-  const isOnline = (u) => (live.presence.users || []).some((p) => p.id === u.id) || (live.status !== 'online' && u.online);
+  const isOnline = (u) => u.online; // ro'yxat yuklangan paytdagi holat («Yangilash» — qayta so'raydi)
   const match = {
     all: () => true,
     admins: (u) => u.isAdmin,
@@ -1396,9 +1852,6 @@ function usersSection(body, ctx, state, query) {
 
   load();
   if (manage && query.get('new')) createUser();
-  state.cleanups.push(live.on('change', (kind) => {
-    if (kind === 'presence' && users) paint();
-  }));
 }
 
 // ============================================================ yordamchilar

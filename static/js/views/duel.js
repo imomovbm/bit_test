@@ -1,7 +1,7 @@
 // Duel bo'limi: lobbi (kutayotganlar + mavzular katalogi) -> raqib kutish (taklif havolasi) -> sanoq -> savollar -> natija.
-import { h, icon, avatar, toast, copyText, fmtMs, fmtClock, fmtAgo, confirmDialog, spinner, emptyState, LETTERS } from '../lib.js';
-import { api } from '../api.js';
+import { h, icon, avatar, toast, copyText, fmtMs, fmtClock, confirmDialog, spinner, LETTERS } from '../lib.js';
 import { live } from '../live.js';
+import { topicBrowser, fill } from '../topic-browser.js';
 
 export function duelView(root, params, ctx) {
   let screen = null;
@@ -55,70 +55,9 @@ function rulesStrip() {
 
 // ================================================================== lobby
 // Bosh sahifa: raqib kutayotganlar (lobbi), hozir faol mavzular va mavzular katalogi (davrlar, qidiruv, cheksiz aylantirish).
-const PERIOD_TABS = [
-  ['hot', 'Qizgʻin'],
-  ['today', 'Bugun'],
-  ['week', 'Hafta'],
-  ['month', 'Oy'],
-  ['all', 'Hammasi'],
-];
-const PERIOD_LABEL = { today: 'Bugun', week: 'Shu hafta', month: 'Shu oy', all: 'Jami' };
-const TOPICS_PAGE = 24;
-const TAB_KEY = 'td-topic-tab';
 const ANY_TOPIC = 'Istalgan mavzu';
 
-function savedTab() {
-  try {
-    const v = localStorage.getItem(TAB_KEY);
-    return PERIOD_TABS.some(([k]) => k === v) ? v : 'hot';
-  } catch {
-    return 'hot';
-  }
-}
-
-function saveTab(v) {
-  try {
-    localStorage.setItem(TAB_KEY, v);
-  } catch {
-    /* e'tiborsiz: maxfiy oyna */
-  }
-}
-
-function debounce(fn, ms) {
-  let t = 0;
-  const wrapped = (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
-  };
-  wrapped.cancel = () => clearTimeout(t);
-  return wrapped;
-}
-
 const waitClock = (since) => fmtClock(Math.max(0, (Date.now() - since) / 1000));
-
-/** replaceChildren — null/false bolalarsiz (aks holda brauzer ularni "null" matni sifatida qo'yadi). */
-const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false));
-
-/** Kartochkadagi izoh: tanlangan davrdagi duellar soni va oxirgi o'yin vaqti. */
-function topicHint(t, period) {
-  let main = null;
-  if (period === 'hot') {
-    if (t.today) main = `Bugun ${t.today} ta duel`;
-    else if (t.week) main = `Shu hafta ${t.week} ta duel`;
-  } else if (t.periodCount) {
-    main = `${PERIOD_LABEL[period]} ${t.periodCount} ta duel`;
-  }
-  const last = t.lastPlayedAt ? `oxirgi oʻyin: ${fmtAgo(t.lastPlayedAt)}` : 'hali oʻynalmagan';
-  return { main, last };
-}
-
-/** Jonli belgi: "N kutmoqda · M oʻynamoqda" (ikkalasi 0 bo'lsa — yashirin). */
-function liveBadge(el, waiting, playing) {
-  fill(el,
-    waiting ? h('span.lb-wait', h('span.pulse-dot'), `${waiting} kutmoqda`) : null,
-    playing ? h('span.lb-play', icon('swords', 13), `${playing} oʻynamoqda`) : null);
-  el.hidden = !waiting && !playing;
-}
 
 /** Raqib kutayotganlar ro'yxati (eng yangi LOBBY_LIMIT tasi, mavzu bo'yicha saralash). */
 function seeksPanel({ title, filterable = true, hideWhenEmpty = false, excludeMine = false, onFilter }) {
@@ -258,235 +197,6 @@ function liveTopicsPanel() {
   return { el, paint };
 }
 
-function skeletonCards(n) {
-  return Array.from({ length: n }, () => h('div.topic-card.skeleton', { 'aria-hidden': 'true' },
-    h('span.sk.sk-icon'), h('span.sk.sk-title'), h('span.sk.sk-line'), h('span.sk.sk-line.short')));
-}
-
-/** Mavzular katalogi: davr yorliqlari, qidiruv (kechiktirilgan), server tomonida sahifalash va cheksiz aylantirish. */
-function topicBrowser(ctx, { onWatch }) {
-  let period = savedTab();
-  let query = '';
-  let items = [];
-  let total = 0;
-  let nextOffset = 0;
-  let loading = false;
-  let error = null;
-  let req = 0;
-  const cards = new Map();
-  const visible = new Set();
-
-  const tabs = h('div.period-tabs', { role: 'tablist', 'aria-label': 'Davr' });
-  const search = h('input', {
-    type: 'search', placeholder: 'Mavzu qidirish…', maxlength: '100', 'aria-label': 'Mavzu qidirish', autocomplete: 'off',
-    oninput: () => onSearch(),
-  });
-  const summary = h('p.small.muted.browse-summary', { 'aria-live': 'polite' });
-  const grid = h('div.topic-grid');
-  const more = h('div.browse-more');
-  const sentinel = h('div.browse-sentinel', { 'aria-hidden': 'true' });
-  const el = h('section.browse',
-    h('div.browse-head',
-      h('h2', 'Mavzular'),
-      h('div.browse-search', icon('search', 17), search)),
-    tabs,
-    summary,
-    grid,
-    more,
-    sentinel);
-
-  const onSearch = debounce(() => {
-    const v = search.value.trim();
-    if (v === query) return;
-    query = v;
-    load(true);
-  }, 300);
-
-  function paintTabs() {
-    tabs.replaceChildren(...PERIOD_TABS.map(([key, label]) => h('button.period-tab', {
-      type: 'button',
-      role: 'tab',
-      'aria-selected': key === period ? 'true' : 'false',
-      class: key === period ? 'active' : '',
-      onclick: () => {
-        if (key === period) return;
-        period = key;
-        saveTab(key);
-        paintTabs();
-        load(true);
-      },
-    }, label)));
-  }
-
-  const watchChanged = debounce(() => onWatch([...visible].slice(0, 60)), 400);
-  const cardObserver = 'IntersectionObserver' in window
-    ? new IntersectionObserver((entries) => {
-      let changed = false;
-      for (const e of entries) {
-        const id = Number(e.target.dataset.tid);
-        if (e.isIntersecting && !visible.has(id)) {
-          visible.add(id);
-          changed = true;
-        } else if (!e.isIntersecting && visible.has(id)) {
-          visible.delete(id);
-          changed = true;
-        }
-      }
-      if (changed) watchChanged();
-    }, { rootMargin: '120px 0px' })
-    : null;
-  const moreObserver = 'IntersectionObserver' in window
-    ? new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) loadMore();
-    }, { rootMargin: '400px 0px' })
-    : null;
-  if (moreObserver) moreObserver.observe(sentinel);
-
-  function counts(t) {
-    const c = live.lobby.counts[String(t.id)];
-    return c ? c : [t.waiting || 0, t.playing || 0];
-  }
-
-  function makeCard(t) {
-    const n = Math.min(t.questionCount, live.rules.duelQuestions);
-    const hint = topicHint(t, period);
-    const badge = h('span.topic-live');
-    const cta = h('span.topic-cta');
-    const card = h('button.topic-card', {
-      type: 'button',
-      dataset: { tid: String(t.id) },
-      onclick: () => live.seek(t.id),
-    },
-    h('div.topic-top', h('span.topic-icon', icon('swords', 22)), badge),
-    h('div.topic-name', t.name),
-    h('div.topic-hint', hint.main ? h('b', hint.main) : null, h('span', hint.last)),
-    h('div.topic-meta', `${t.questionCount} ta savol · duelda ${n} ta`),
-    cta);
-    const api = {
-      card,
-      paint() {
-        const [w, p] = counts(t);
-        liveBadge(badge, w, p);
-        card.classList.toggle('hot', w > 0);
-        cta.replaceChildren(w > 0 ? 'Hoziroq bellashish' : 'Raqib topish', icon('right', 16));
-      },
-    };
-    api.paint();
-    cards.set(t.id, api);
-    if (cardObserver) cardObserver.observe(card);
-    return card;
-  }
-
-  function paintSummary() {
-    if (!items.length) {
-      summary.textContent = '';
-      return;
-    }
-    summary.textContent = query
-      ? `«${query}» boʻyicha ${total} ta mavzu topildi`
-      : `${total} ta mavzu · ${items.length} tasi koʻrsatilmoqda`;
-  }
-
-  function paintMore() {
-    if (error && items.length) {
-      more.replaceChildren(h('div.alert.error', icon('wifiOff', 18), h('span', error),
-        h('button.btn.ghost.sm', { type: 'button', onclick: () => loadMore(true) }, 'Qayta urinish')));
-    } else if (loading && items.length) {
-      more.replaceChildren(spinner('Yana yuklanmoqda…'));
-    } else if (nextOffset != null && items.length) {
-      more.replaceChildren(h('button.btn.ghost.block.browse-more-btn', { type: 'button', onclick: () => loadMore(true) },
-        `Yana yuklash (${total - items.length})`));
-    } else {
-      more.replaceChildren();
-    }
-  }
-
-  function paintEmpty() {
-    if (error) {
-      grid.replaceChildren(emptyState('wifiOff', 'Mavzularni yuklab boʻlmadi', error,
-        h('button.btn.primary', { type: 'button', onclick: () => load(true) }, icon('refresh', 16), 'Qayta urinish')));
-    } else if (query) {
-      grid.replaceChildren(emptyState('search', 'Hech narsa topilmadi', `«${query}» boʻyicha mavzu yoʻq. Boshqa soʻz bilan qidirib koʻring.`,
-        h('button.btn.ghost', { type: 'button', onclick: () => { search.value = ''; query = ''; load(true); } }, 'Qidiruvni tozalash')));
-    } else {
-      grid.replaceChildren(emptyState('file', 'Hozircha test mavzulari yoʻq',
-        ctx.user.isAdmin ? 'Test faylini yuklang — u shu yerda paydo boʻladi.' : 'Administrator test faylini yuklaganidan keyin mavzular shu yerda paydo boʻladi.',
-        ctx.user.isAdmin ? h('a.btn.primary', { href: '#/admin' }, icon('upload', 16), 'Test yuklash') : null));
-    }
-  }
-
-  async function load(reset) {
-    if (reset) {
-      req += 1;
-      items = [];
-      total = 0;
-      nextOffset = 0;
-      error = null;
-      cards.clear();
-      visible.clear();
-      if (cardObserver) cardObserver.disconnect();
-      grid.replaceChildren(...skeletonCards(6));
-      grid.setAttribute('aria-busy', 'true');
-      summary.textContent = '';
-    }
-    if (nextOffset == null) return;
-    const my = req;
-    loading = true;
-    paintMore();
-    const qs = new URLSearchParams({ period, offset: String(nextOffset), limit: String(TOPICS_PAGE) });
-    if (query) qs.set('q', query);
-    try {
-      const page = await api(`/api/topics/browse?${qs}`);
-      if (my !== req) return;
-      error = null;
-      if (!items.length) grid.replaceChildren();
-      total = page.total;
-      nextOffset = page.nextOffset;
-      const fresh = page.items.filter((t) => !cards.has(t.id));
-      items = items.concat(fresh);
-      grid.append(...fresh.map(makeCard));
-      if (!items.length) paintEmpty();
-    } catch (e) {
-      if (my !== req) return;
-      error = e.message || 'Tarmoq xatosi';
-      if (!items.length) paintEmpty();
-    } finally {
-      if (my === req) {
-        loading = false;
-        grid.removeAttribute('aria-busy');
-        paintSummary();
-        paintMore();
-      }
-    }
-  }
-
-  function loadMore(force = false) {
-    if (loading || nextOffset == null || !items.length) return;
-    if (error && !force) return;
-    error = null;
-    load(false);
-  }
-
-  paintTabs();
-  load(true);
-  return {
-    el,
-    paintCounts() {
-      for (const c of cards.values()) c.paint();
-    },
-    reload() {
-      if (items.length <= TOPICS_PAGE) load(true); // foydalanuvchi pastga aylantirgan bo'lsa — joyini buzmaymiz
-    },
-    destroy() {
-      onSearch.cancel();
-      watchChanged.cancel();
-      if (cardObserver) cardObserver.disconnect();
-      if (moreObserver) moreObserver.disconnect();
-      req += 1;
-    },
-  };
-}
-
 function lobbyScreen(ctx) {
   const status = h('div.lobby-status');
   let watch = [];
@@ -504,7 +214,10 @@ function lobbyScreen(ctx) {
     },
   });
   const liveTopics = liveTopicsPanel();
-  const browser = topicBrowser(ctx, {
+  const browser = topicBrowser({
+    user: ctx.user,
+    variant: 'duel',
+    onPick: (t) => live.seek(t.id),
     onWatch: (ids) => {
       watch = ids;
       resubscribe();
