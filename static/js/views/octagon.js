@@ -4,7 +4,8 @@
 import { h, icon, toast, confirmDialog, spinner, emptyState, beep, confetti } from '../lib.js';
 import { api } from '../api.js';
 import {
-  GAME_NAME, OCTAGON_RING, PROTOCOL_VERSION, SHAPES, avatarEmoji, formatPin, octagonLoader, octagonMark, serverClock, shapeClass, shapeIcon,
+  GAME_NAME, OCTAGON_RING, PROTOCOL_VERSION, SHAPES, avatarEmoji, countdownSeconds, formatPin, octagonLoader, octagonMark, serverClock,
+  shapeClass, shapeIcon,
 } from '../octagon/common.js';
 
 const T = {
@@ -388,7 +389,8 @@ function hostSocket(pin, clock, { onMessage, onStatus }) {
     sock.onopen = () => {
       retry = 0;
       onStatus('online');
-      clock.request((t, d) => sock.send(JSON.stringify({ t, d })));
+      // kechiktirilgan soat namunalari: ulanish yopilgan bo'lsa (boshqa o'yinga o'tildi) — yuborilmaydi
+      clock.request((t, d) => sock.readyState === WebSocket.OPEN && ws === sock && sock.send(JSON.stringify({ t, d })));
       sock.send(JSON.stringify({ t: 'host', d: { v: PROTOCOL_VERSION, pin } }));
     };
     sock.onmessage = (ev) => {
@@ -836,7 +838,8 @@ function hostView(root, pinParam) {
     const left = Math.max(0, game.phaseEnd - clock.now());
     const span = Math.max(1, game.phaseEnd - (game.phaseStart || game.phaseEnd));
     const active = game.phase === 'question_active';
-    const secs = active ? Math.ceil(left / 1000) : Math.max(1, Math.ceil(left / 1000));
+    const n = countdownSeconds(left, game.phaseStart || game.phaseEnd, game.phaseEnd);
+    const secs = active ? n : Math.max(1, n);
     for (const n of stage.querySelectorAll('[data-countdown]')) {
       if (n.textContent !== String(secs)) n.textContent = String(secs);
     }

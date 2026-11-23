@@ -7,7 +7,7 @@
 // Qurilmada faqat: shu o'yindagi joy (id + token, PIN bo'yicha, 12 soatdan keyin o'chiriladi) va oxirgi ism/avatar.
 import {
   AVATARS, GAME_NAME, OCTAGON_RING, PHASES, PROTOCOL_VERSION, SHAPES, avatarEmoji, formatPin, octagonLoader, octagonMark,
-  serverClock, shapeClass, shapeIcon,
+  countdownSeconds, serverClock, shapeClass, shapeIcon,
 } from './octagon/common.js';
 import { reportErrors } from './report.js';
 
@@ -839,7 +839,7 @@ function msLeft(s) {
 }
 
 function secondsLeft(s) {
-  return s && typeof s.pe === 'number' ? Math.ceil(msLeft(s) / 1000) : 0;
+  return s && typeof s.pe === 'number' ? countdownSeconds(msLeft(s), s.ps || s.pe, s.pe) : 0;
 }
 
 function tick() {
@@ -847,7 +847,7 @@ function tick() {
   if (!s || st.view !== 'game' || typeof s.pe !== 'number') return;
   const left = msLeft(s);
   const span = Math.max(1, s.pe - (s.ps || s.pe));
-  const secs = String(s.phase === 'question_active' ? Math.ceil(left / 1000) : Math.max(1, Math.ceil(left / 1000)));
+  const secs = String(s.phase === 'question_active' ? secondsLeft(s) : Math.max(1, secondsLeft(s)));
   for (const n of root.querySelectorAll('[data-countdown]')) {
     if (n.textContent !== secs) n.textContent = secs;
   }

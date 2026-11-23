@@ -1578,7 +1578,7 @@ input.oct-custom-time:focus { outline: none; border-color: var(--primary); box-s
 .oct-ready { align-items: center; justify-content: center; text-align: center; }
 .oct-intro { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; text-align: center; animation: oc-rise 0.3s ease-out; }
 .oct-intro-label { margin: 0; font-weight: 900; font-size: clamp(14px, 1.6vw, 22px); letter-spacing: 0.24em; text-transform: uppercase; color: var(--oc-ink-2); }
-.oct-intro-topic { margin: 0; max-width: 100%; font-size: clamp(34px, 7vw, 110px); line-height: 1.05; overflow-wrap: anywhere; }
+.oct-intro-topic { margin: 0; max-width: 100%; font-size: clamp(34px, 7vw, 110px); line-height: 1.2; overflow-wrap: anywhere; }
 .oct-intro-topic.long { font-size: clamp(26px, 4.6vw, 76px); }
 .oct-intro-topic.xlong { font-size: clamp(22px, 3.6vw, 60px); }
 .oct-ready .oct-qtext { width: 100%; flex: none; }
@@ -1623,7 +1623,7 @@ input.oct-custom-time:focus { outline: none; border-color: var(--primary); box-s
 .oct-step.place-1 { animation-delay: 0.5s; }
 .oct-step.place-2 { animation-delay: 0.25s; }
 .oct-medal { width: clamp(64px, 7vw, 120px); aspect-ratio: 1; display: grid; place-items: center; font-size: clamp(28px, 3.4vw, 58px); font-weight: 900; }
-.oct-step-nick { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 900; font-size: clamp(16px, 2.4vw, 38px); }
+.oct-step-nick { max-width: 100%; overflow-wrap: anywhere; line-height: 1.15; text-align: center; font-weight: 900; font-size: clamp(16px, 2.4vw, 38px); } /* uzun ism o'raladi */
 .oct-step-score { color: var(--oc-ink-2); font-weight: 750; font-size: clamp(13px, 1.4vw, 22px); font-variant-numeric: tabular-nums; }
 .oct-step-block { width: 100%; border-radius: 18px 18px 6px 6px; border: 1px solid var(--oc-line); border-top: 6px solid var(--medal); background: linear-gradient(180deg, var(--oc-surface-2), var(--oc-surface)); }
 .oct-step.place-1 .oct-step-block { --medal: var(--oc-gold); height: clamp(120px, 22vh, 250px); }
@@ -1670,6 +1670,9 @@ body.oct-immersive .oct-bar { top: 8px; }
   .oct-ring span { font-size: 28px; }
   .oct-ring.big { width: 112px; }
   .oct-ring.big span { font-size: 44px; }
+  /* tor ekranda uzun ismlar (20 belgigacha) kesilmasin — qator o'raladi */
+  .oct-rank li { gap: 8px; padding: 6px 12px 6px 6px; }
+  .oct-rank-nick, .oct-step-nick { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.15; }
   .oct-intro, .oct-ready { gap: 12px; }
   .oct-tiles { grid-template-columns: 1fr; gap: 10px; }
   .oct-tiles.n3 > :last-child { grid-column: auto; }

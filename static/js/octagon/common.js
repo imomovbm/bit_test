@@ -96,9 +96,13 @@ export function avatarEmoji(index) {
 export function serverClock() {
   let offset = 0;
   let best = Infinity;
+  let timers = [];
   return {
+    // Har ulanishda 3 ta namuna (darhol, 0,8 va 2,5 s dan keyin): sahifa band paytida kelgan javob kechikib qayta
+    // ishlansa, farq noto'g'ri chiqadi — eng kichik aylanish vaqtli namuna olinadi (audit V2-F13).
     request(send) {
-      send('sync', { c: Date.now() });
+      for (const t of timers) clearTimeout(t);
+      timers = [0, 800, 2500].map((ms) => setTimeout(() => send('sync', { c: Date.now() }), ms));
     },
     onSync(d) {
       const now = Date.now();
@@ -112,4 +116,10 @@ export function serverClock() {
       return Date.now() + offset;
     },
   };
+}
+
+/** Sanoq (soniya): bosqich davomiyligidan hech qachon ko'p emas (soatlar farqi o'lchovidagi xato ko'rinmasin). */
+export function countdownSeconds(left, start, end) {
+  const span = Math.max(1, Math.ceil((end - start) / 1000));
+  return Math.min(span, Math.ceil(Math.max(0, left) / 1000));
 }

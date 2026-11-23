@@ -366,7 +366,7 @@ body {
 .pl-medal.silver { --fill: var(--oc-silver); }
 .pl-medal.bronze { --fill: var(--oc-bronze); }
 .pl-medal.rest { --ring: var(--oc-accent-2); --fill: var(--oc-accent); color: var(--oc-accent-ink); }
-.pl-place { margin: 0; font-size: clamp(32px, 10vw, 48px); font-weight: 900; }
+.pl-place { margin: 0; font-size: clamp(32px, 10vw, 48px); line-height: 1.25; font-weight: 900; }
 
 .pl-top3 {
   list-style: none;
@@ -392,7 +392,7 @@ body {
 .pl-top3-n { width: 34px; height: 34px; display: grid; place-items: center; flex: none; font-weight: 900; color: var(--oc-medal-ink); background: var(--oc-gold); }
 .pl-top3-n.m2 { background: var(--oc-silver); }
 .pl-top3-n.m3 { background: var(--oc-bronze); }
-.pl-top3-nick { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
+.pl-top3-nick { flex: 1; min-width: 0; text-align: left; overflow-wrap: anywhere; line-height: 1.2; font-weight: 800; } /* uzun ism o'raladi, kesilmaydi */
 .pl-top3 b { font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------------ avatarlar (emoji — rasm fayllarisiz) */
@@ -400,7 +400,7 @@ body {
 .pl-avatar.xl { width: 112px; height: 112px; font-size: 64px; border-radius: 32px; background: var(--oc-surface); border: 1px solid var(--oc-line); box-shadow: var(--oc-shadow); }
 .pl-me .pl-avatar { font-size: 22px; }
 .pl-me-big { display: grid; place-items: center; animation: oc-pop 0.25s ease-out; }
-.pl-rank .pl-avatar, .pl-place .pl-avatar { margin-right: 4px; }
+.pl-rank .pl-avatar, .pl-place .pl-avatar { margin-right: 4px; line-height: 1.25; } /* rangli emoji ~1.17em baland — qatordan chiqmasin */
 .pl-top3 .pl-avatar { font-size: 22px; }
 
 .pl-join { gap: 10px; }
@@ -442,7 +442,7 @@ body {
   animation: oc-rise 0.3s ease-out;
 }
 .pl-intro-label { margin: 0; font-weight: 900; font-size: 14px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--oc-ink-2); }
-.pl-intro-topic { margin: 0; max-width: 100%; font-size: clamp(30px, 9vw, 56px); line-height: 1.1; overflow-wrap: anywhere; }
+.pl-intro-topic { margin: 0; max-width: 100%; font-size: clamp(30px, 9vw, 56px); line-height: 1.2; overflow-wrap: anywhere; }
 .pl-intro-topic.long { font-size: clamp(24px, 6.5vw, 40px); }
 .pl-intro-topic.xlong { font-size: clamp(20px, 5.2vw, 32px); }
 .pl-reading .pl-read-count .pl-count { width: 64px; }
