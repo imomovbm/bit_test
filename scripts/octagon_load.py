@@ -288,6 +288,9 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
         await asyncio.gather(*(answer(p) for p in game.players))
         await host_wait(lambda h: PHASE.get(h.get("phase")) == "result", timeout=30)
         await broadcast("next", "board")
+        # o'qituvchi amali qaysi bosqichga tegishli ekanini yuboradi (eskirgan amal e'tiborsiz — ikki marta bosishdan
+        # himoya): o'qituvchi ekrani reytingni ko'rmaguncha keyingi amal yuborilmaydi
+        await host_wait(lambda h: PHASE.get(h.get("phase")) == "board", timeout=30)
         last = qi + 1 >= opts.questions
         await broadcast("next", "podium" if last else ("read"))
     # o'yin oxiri: hamma podiumni ko'rdi; o'yinchilar soni o'zgarmagan (dublikat yo'q)

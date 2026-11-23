@@ -1,11 +1,12 @@
 // Sahifalar hajmi va yuklanish tezligi (Playwright): har bir marshrut uchun yuklangan JS/CSS/HTML (xom va gzip),
 // sekin mobil tarmoq + sekin protsessorda birinchi va takroriy ochilish vaqti, kesh sarlavhalari.
 //
-// Ishga tushirish (loyiha ildizidan):  node scripts/perf-routes.js [--json natija.json] [--port 8771]
+// Ishga tushirish (loyiha ildizidan):  node scripts/perf-routes.js [--json natija.json] [--port 8771] [--runs 3] [--route teacher]
 // Skript o'zi vaqtinchalik baza bilan server ishga tushiradi (o'qituvchi, mavzu va bitta Octagon o'yini yaratiladi).
 //
 // Tarmoq: "Slow 4G" (Lighthouse): 150 ms RTT, 1.6 Mbit/s yuklab olish, 750 kbit/s yuborish; protsessor — 4x sekin
-// (o'rta darajali telefon). "Foydalanishga tayyor" — sahifaning asosiy kiritish maydoni/tugmasi ko'ringan payt.
+// (o'rta darajali telefon). "Foydalanishga tayyor" — sahifaning asosiy kiritish maydoni/tugmasi ko'ringan payt
+// (sahifa ichida, har kadrda tekshiriladi).
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -23,6 +24,7 @@ const PORT = Number(opt('--port', 8771));
 const BASE = `http://127.0.0.1:${PORT}`;
 const JSON_OUT = opt('--json', null);
 const RUNS = Number(opt('--runs', 3));
+const ONLY = opt('--route', null);   // masalan: --route teacher (faqat nomida shu so'z bor marshrut)
 const SLOW_4G = { offline: false, latency: 150, downloadThroughput: (1.6 * 1024 * 1024) / 8, uploadThroughput: (750 * 1024) / 8 };
 const CPU_SLOWDOWN = 4;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -83,14 +85,28 @@ async function measure(browser, route, cookie) {
     await ctx.addCookies([{ name, value, domain: '127.0.0.1', path: '/', httpOnly: true }]);
   }
   // Joylashuv siljishi (CLS): sahifa yuklanayotganda elementlar sakrab ketmasligi kerak
-  await ctx.addInitScript(() => {
+  // «Foydalanishga tayyor» sahifa ichida o'lchanadi: har kadrda (requestAnimationFrame) kerakli element ko'rinadimi —
+  // Playwright ning kutish tekshiruvlari oraliqlari (0…500 ms) o'lchovga qo'shilmasin (aks holda natija ±0,5 s sakraydi).
+  await ctx.addInitScript((sel) => {
     window.__cls = 0;
+    window.__readyAt = null;
     try {
       new PerformanceObserver((list) => {
         for (const e of list.getEntries()) if (!e.hadRecentInput) window.__cls += e.value;
       }).observe({ type: 'layout-shift', buffered: true });
     } catch { /* eski brauzer */ }
-  });
+    const check = () => {
+      for (const el of document.querySelectorAll(sel)) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden') {
+          window.__readyAt = performance.now();
+          return;
+        }
+      }
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  }, route.ready);
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
   await cdp.send('Network.enable');
@@ -120,7 +136,7 @@ async function measure(browser, route, cookie) {
     const t0 = Date.now();
     await page.goto(BASE + route.url, { waitUntil: 'commit' });
     await page.waitForSelector(route.ready, { state: 'visible', timeout: 60000 });
-    const usable = await page.evaluate(() => performance.now());
+    const usable = await page.evaluate(() => window.__readyAt ?? performance.now());
     await page.waitForLoadState('load');
     await sleep(300);
     const nav = await page.evaluate(() => {
@@ -133,7 +149,9 @@ async function measure(browser, route, cookie) {
     const transferred = nav.docTransfer + nav.res.reduce((a, r) => a + (r.transfer || 0), 0);
     // tarmoqqa chiqqan so'rovlar (disk/xotira keshidan olinganlari — transferSize 0 — hisoblanmaydi; 304 hisoblanadi)
     const networkRequests = (nav.docTransfer > 0 ? 1 : 0) + nav.res.filter((r) => r.transfer > 0).length;
-    results.push({ visit, usableMs: Math.round(usable), fcpMs: nav.fcp && Math.round(nav.fcp), dclMs: Math.round(nav.dcl), loadMs: Math.round(nav.load), wallMs: Date.now() - t0, transferredBytes: transferred, networkRequests, cls: Math.round(nav.cls * 1000) / 1000, resources });
+    // ko'rinadi deyish uchun sahifa chizilgan ham bo'lishi kerak: tayyorlik va birinchi chizilishning kechrog'i
+    const usableMs = Math.round(Math.max(usable, nav.fcp || 0));
+    results.push({ visit, usableMs, fcpMs: nav.fcp && Math.round(nav.fcp), dclMs: Math.round(nav.dcl), loadMs: Math.round(nav.load), wallMs: Date.now() - t0, transferredBytes: transferred, networkRequests, cls: Math.round(nav.cls * 1000) / 1000, resources });
   }
   await ctx.close();
   return { results, errors };
@@ -171,7 +189,7 @@ function summarize(route, runs) {
     const { owner, pin } = await seed();
     const out = [];
     const allErrors = [];
-    for (const route of ROUTES(pin)) {
+    for (const route of ROUTES(pin).filter((r) => !ONLY || r.name.includes(ONLY))) {
       const runs = [];
       for (let i = 0; i < RUNS; i++) {
         const m = await measure(browser, route, owner);

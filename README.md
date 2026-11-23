@@ -76,7 +76,7 @@ ichki nomlar — `/api/octagon`, `app/octagon.py` — o'zgarmaydi).
 - Telefonda **faqat rangli shakllar** (qizil sakkizburchak, ko'k tomchi, sariq yulduz, yashil plyus) — savol va javob
   matni yuborilmaydi. Serverdan faqat bosqich, savol raqami, variantlar soni, server vaqtlari va shaxsiy natija keladi
   (o'rtacha ~85 bayt); to'g'ri javob savol yopilgandan keyingina yuboriladi. O'quvchi sahifasi asosiy ilovani
-  yuklamaydi: JS ~13 KB, CSS ~7 KB (gzip); sekin 4G va o'rta telefonda ~0,7 s da, takroriy ochilishda ~0,45 s da
+  yuklamaydi: JS ~14 KB, CSS ~7 KB (gzip); sekin 4G va o'rta telefonda ~0,6 s da, takroriy ochilishda ~0,45 s da
   tayyor ([docs/performance.md](docs/performance.md)).
 - Har savoldan keyin: to'g'ri/noto'g'ri, olingan ball, umumiy ball va o'rin.
 - Birinchi qo'shilishda server o'yinchi ID va maxfiy token beradi — ular brauzerda (localStorage, bo'lmasa cookie)

@@ -5,59 +5,72 @@ caches and what may be stored on the user's device.
 
 ## How it was measured
 
-- **Pages:** `node scripts/perf-routes.js [--json out.json]`, using Playwright/Chromium.
+- **Pages:** `node scripts/perf-routes.js [--json out.json] [--runs 5] [--route teacher]`, using Playwright/Chromium.
   - Lighthouse "Slow 4G" network: 150 ms RTT, 1.6 Mbit/s down, 750 kbit/s up.
   - 4× CPU slowdown (a mid-range phone), 390×800 mobile viewport.
-  - Median of 3 runs.
-  - "Usable" means the page's main input or button is visible. "Repeat" is a second full navigation in the same
-    browser profile.
+  - Median of 5 runs.
+  - **Usable** is the later of two moments: the first animation frame in which the page's main input or button is
+    visible, measured inside the page, and the first contentful paint. Playwright's own wait re-checks at intervals of
+    up to 500 ms, which made a single number jump by half a second between runs. That was the cause of an apparent
+    0.4 s "regression" on the teacher screen, tracked down with request and WebSocket timelines.
+  - **Repeat** is a second full navigation in the same browser profile.
 - **Load:** `python3 scripts/octagon_load.py [--json out.json]`.
   - 20 games at once: one with 300 players and 19 with 30, for 870 players. All join within 3 s.
   - 5 questions; 10 % of players drop and reconnect during each question.
   - Real WebSockets with one `X-Forwarded-For` address per phone.
   - Server CPU and RSS are read from `/proc`.
-- **Baseline:** the same scripts before the v2 work. The load script spoke the v1 protocol then; it still does with
-  `--v1`.
+  - Final numbers are medians of 5 runs.
+- **Baseline:** the pre-v2 code (commit `7e0adf5`).
+  - Pages: re-measured with the same script and method as the final numbers.
+  - Load: one run with the v1 protocol (`--v1`).
 
 ## Targets (spec §3)
 
 | Target | Result | Met |
 |---|---|---|
-| Student route ≤ 100 KB gzipped JS on first load | **12.7 KB** (`play.js` + `octagon/common.js`) | yes |
-| Student route usable in < 3 s on slow 4G, mid-range phone | **0.69 s** `/play`, **0.66 s** `/play/PIN` | yes |
-| Student route < 1 s on repeat visits | **0.45 s** (one network request: the 300-byte HTML revalidation) | yes |
-| API p95 < 200 ms | **2.0 ms** during the load test (952 requests) | yes |
-| WebSocket action → broadcast p95 < 150 ms, 300 players in one game | **31 ms**; 24–39 ms across runs | yes |
+| Student route ≤ 100 KB gzipped JS on first load | **13.8 KB** (`play.js`, `octagon/common.js`, `report.js`) | yes |
+| Student route usable in < 3 s on slow 4G, mid-range phone | **0.59 s** `/play`, **0.61 s** `/play/PIN` | yes |
+| Student route < 1 s on repeat visits | **0.43–0.46 s** (one network request: the 300-byte HTML revalidation) | yes |
+| API p95 < 200 ms | **3.0 ms** during the load test (median of 5 runs) | yes |
+| WebSocket action → broadcast p95 < 150 ms, 300 players in one game | **28 ms** (median of 5 runs; 26–44 ms) | yes |
 
-## Pages: before → after (slow 4G, 4× CPU)
+## Pages: before → after (slow 4G, 4× CPU, median of 5)
 
-| Route | JS gzip | Usable (cold) | First paint | Usable (repeat) | Bytes (cold) | Repeat: requests on the network |
+| Route | JS gzip | Usable (cold) | First paint | Usable (repeat) | Bytes (cold → repeat) | Repeat: requests on the network |
 |---|---|---|---|---|---|---|
-| Student `/play` | 9.6 → 12.7 KB¹ | 1153 → **688 ms** | 584 → 500 ms | 670 → **454 ms** | 49.6 → **21.3 KB** | 5 → **1** |
-| Student `/play/PIN` | 9.6 → 12.7 KB¹ | 1174 → **664 ms** | 596 → 488 ms | 1169 → **456 ms** | 49.6 → **21.3 KB** | 5 → **1** |
-| Login `/` | 41.2 → 41.4 KB | 2665 → **1136 ms** | 2364 → 1172 ms | 1202 → **613 ms** | 260 → **73 KB** | 15 → **3** |
-| Teacher game screen | 53.6 → 55.3 KB | 3222 → **1670 ms** | 2276 → 1024 ms | 1721 → **1237 ms** | 298 → **87 KB** | 16 → **2** |
+| Student `/play` | 9.6 → 13.8 KB¹ | 854 → **585 ms** | 608 → 504 ms | 625 → **432 ms** | 49.6 → **22.8 KB**; 1.5 → 0.3 KB | 5 → **1** |
+| Student `/play/PIN` | 9.6 → 13.8 KB¹ | 1030 → **606 ms** | 600 → 508 ms | 802 → **455 ms** | 49.6 → **22.8 KB**; 1.5 → 0.3 KB | 5 → **1** |
+| Login `/` | 41.2 → 42.9 KB | 2416 → **1228 ms** | 2416 → 1228 ms | 1228 → **848 ms** | 260 → **75 KB**; 4.5 → 1.0 KB | 15 → **3** |
+| Teacher game screen | 53.6 → 57.3 KB | 2976 → **1708 ms** | 2288 → 1080 ms | 1592 → **970 ms** | 298 → **90 KB**; 4.8 → 0.7 KB | 16 → **2** |
 
-¹ The student code grew because of the v2 features: topic intro, reading phase, avatars and clock sync. The size
-column is the gzip size of the files, which is what goes over the wire now; before, nothing was compressed in
-transit. Layout shift (CLS) is 0 on the student pages and 0.002 on the teacher screen.
+¹ The JS size column is the gzip size of the files. That is what goes over the wire now; before, nothing was compressed
+in transit. The student code grew because of the v2 features: topic intro, reading phase, avatars, clock sync and the
+0.5 KB browser error reporter.
+
+CSS is 6.8 KB gzipped on the student page and 26.9 KB in the main app. Layout shift (CLS) is 0 on the student pages
+(worst of 5 runs) and 0.002 on the teacher screen. The baseline showed 0.042 on the student pages in its worst run.
 
 ## Realtime and backend: before → after (load test)
 
-| Metric | Before (v1) | After |
+| Metric | Before (v1, 1 run) | After (median of 5 runs) |
 |---|---|---|
-| Broadcast p95, 300-player game / 30-player games | 24.1 / 3.4 ms | 31.4 / 2.7 ms |
-| Answer acknowledgement p95 | 1.4 ms | 0.8 ms |
-| Join p95 / reconnect p95 | 1.5 / 1.3 ms | 1.0 / 0.7 ms |
-| API p95 | 3.0 ms | 2.0 ms |
+| Broadcast p95, 300-player game / 30-player games | 24.1 / 3.4 ms | 28.2 / 3.6 ms (300-player range 26–44 ms) |
+| Answer acknowledgement p95 | 1.4 ms | 1.4 ms |
+| Join p95 / reconnect p95 | 1.5 / 1.3 ms | 1.5 / 1.4 ms |
+| API p95 | 3.0 ms | 3.0 ms |
 | Student state message, average | 99 B | 85 B |
 | Teacher-screen traffic, all 20 games | 5.4 MB | **1.0 MB** (−82 %) |
 | Teacher-screen traffic, 300-player game | 449 KB in 85 messages | **100 KB in 38 messages** |
-| Server CPU (one core) / peak RSS | 13 % / 90.7 MB | 7 % / 91.4 MB |
-| Errors / server tracebacks | 0 / 0 | 0 / 0 |
+| Server CPU (one core) / peak RSS | 13 % / 90.7 MB | 9 % / 93 MB |
+| Errors / server tracebacks | 0 / 0 | 0 / 0 (in all 5 runs) |
 
-The teacher-traffic comparison is the same script run against the code just before and just after this change.
-Broadcast latency varies by about ±8 ms between runs on the same code; it stays far below the target.
+- The teacher-traffic comparison is the same script run against the code just before and just after the change.
+- The after column includes the per-message metrics counters added for `/metrics`.
+- Broadcast latency in the 300-player game varies by about ±10 ms between runs on the same code, and stays far below
+  the target.
+- One early run showed a game stalling: the load script sent a teacher action before its own copy of the teacher state
+  had caught up. The server correctly ignores a stale action (double-click protection). The script now waits for the
+  teacher screen's state first.
 
 ## What was done
 

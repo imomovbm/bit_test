@@ -102,6 +102,15 @@ server sends error texts. "Strings present in every language" is therefore check
 
 ## Test totals
 
-`python -m pytest`: **358 passed** at the end of the audit (V3). That is 326 at commit `e539249` plus 32 new from this audit: 25 in
-`tests/test_octagon_v2_audit.py`, 8 of which failed before the fixes, and 7 in `tests/test_i18n_strings.py`.
-Browser checks: see `e2e/octagon.e2e.js`.
+- **At the end of the audit (V3):** `python -m pytest` reported **358 passed**: 326 at commit `e539249` plus 32 new
+  tests. Of those, 25 are in `tests/test_octagon_v2_audit.py` (8 of which failed before the fixes) and 7 in
+  `tests/test_i18n_strings.py`.
+- **At the end of the v2 work:**
+  - `python -m pytest` reports **434 passed**. The new suites cover caching, tamper, restart, config, observability
+    and the database tool.
+  - `node e2e/octagon.e2e.js` runs **536 checks** and `node e2e/lobby.e2e.js` **59 checks**. Both pass with the
+    local font (Inter) and with the CI font (DejaVu Sans, `FONTCONFIG_FILE=e2e/fonts-ci.conf`), with no browser
+    console errors and no server tracebacks.
+  - The earlier browser regression scripts also pass: Balloon Pop game, edge cases and lifelines; duel, invite link,
+    practice and rating; topics, question bank and admin; and a console-error crawl of every route as owner, teacher
+    and student.

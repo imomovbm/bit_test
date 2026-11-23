@@ -138,12 +138,12 @@ total), 5 questions, 10 % of players reconnecting during each question.
 
 | Metric | Value |
 |---|---|
-| Server CPU | 7 % of one core over the whole run |
-| Peak RSS | 91 MB |
-| Broadcast p95, 300-player game | 31 ms |
-| Answer acknowledgement p95 | 0.8 ms |
-| API p95 | 2 ms |
-| Errors | 0 |
+| Server CPU | about 9 % of one core over the whole run |
+| Peak RSS | 93 MB |
+| Broadcast p95, 300-player game | 28 ms (median of 5 runs; 26–44 ms) |
+| Answer acknowledgement p95 | 1.4 ms |
+| API p95 | 3 ms |
+| Errors | 0 (in all 5 runs) |
 
 CPU scales roughly linearly with the number of connected players, so one core would carry several thousand. The
 default limits stop well before that:
