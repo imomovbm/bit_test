@@ -228,8 +228,27 @@ function buildShell() {
   const s = { main, banner };
   buildNav(s);
   rootEl.replaceChildren(s.header, main, banner, s.bottom);
+  fitHeader(s);
   return s;
 }
+
+/** Sarlavha sig'masa (kengroq tizim shrifti, uzun login, «Ulanmoqda…» belgisi) — kenglik chegaralariga emas, o'lchovga
+ * qarab: avval foydalanuvchi nomi va rol belgisi, so'ng menyu yozuvlari yashiriladi (gorizontal siljish bo'lmasin). */
+function fitHeader(s = shell) {
+  if (!s || !s.header.isConnected) return;
+  const inner = s.header.firstElementChild;
+  s.header.classList.remove('fit-1', 'fit-2');
+  for (const level of ['fit-1', 'fit-2']) {
+    if (inner.scrollWidth <= inner.clientWidth + 1) return;
+    s.header.classList.add(level);
+  }
+}
+let fitFrame = 0;
+window.addEventListener('resize', () => {
+  cancelAnimationFrame(fitFrame);
+  fitFrame = requestAnimationFrame(() => fitHeader());
+});
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => fitHeader());
 
 /** Sarlavha va pastki menyu (foydalanuvchi huquqlari o'zgarganda sahifani qayta yuklamasdan yangilanadi). */
 function buildNav(s) {
@@ -266,6 +285,7 @@ function refreshNav() {
   header.replaceWith(shell.header);
   bottom.replaceWith(shell.bottom);
   if (current) setActiveNav(current.route.nav);
+  fitHeader();
 }
 
 function setActiveNav(id) {
@@ -277,6 +297,7 @@ function paintHeader(s = shell) {
   if (!s) return;
   s.onlineCount.textContent = String(live.presence.online || 0);
   s.connPill.hidden = live.status === 'online';
+  fitHeader(s);
 }
 
 function updateBanner() {

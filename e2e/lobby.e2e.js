@@ -128,7 +128,9 @@ async function noOverflow(page, label) {
     for (const el of document.querySelectorAll('body *')) {
       const r = el.getBoundingClientRect();
       if (r.width && r.right > window.innerWidth + 0.5 && getComputedStyle(el).position !== 'fixed') {
-        out.push(`${el.tagName.toLowerCase()}.${[...el.classList].join('.')} right=${Math.round(r.right)}`);
+        const chain = [];
+        for (let e = el.parentElement; e && chain.length < 3; e = e.parentElement) chain.push(`${e.tagName.toLowerCase()}.${[...e.classList].join('.')}`);
+        out.push(`${el.tagName.toLowerCase()}.${[...el.classList].join('.')} right=${Math.round(r.right)} «${el.textContent.trim().slice(0, 30)}» < ${chain.join(' < ')}`);
       }
     }
     return { extra: document.documentElement.scrollWidth - window.innerWidth, wide: out.slice(0, 6) };

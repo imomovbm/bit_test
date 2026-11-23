@@ -841,6 +841,13 @@ select.adm-select { width: auto; max-width: 100%; min-height: 40px; padding: 8px
   .adm-grid2 { grid-template-columns: 1fr; }
 }
 
+/* tor telefonda boshqaruv menyusi 2×2: «Foydalanuvchilar» kabi uzun so'z 4 ustunga sig'maydi (keng shriftlarda
+   ekrandan chiqib ketardi) — hamma bo'lim ko'rinib turadi, bosish maydoni ≥ 48 px */
+@media (max-width: 420px) {
+  .adm-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .adm-link { min-height: 48px; overflow-wrap: anywhere; }
+}
+
 /* telefonda jadval qatorlari ixcham kartochkalarga aylanadi */
 @media (max-width: 760px) {
   .adm-link { flex-direction: column; gap: 3px; font-size: 12px; text-align: center; white-space: normal; line-height: 1.2; }
@@ -934,6 +941,12 @@ select.adm-select { width: auto; max-width: 100%; min-height: 40px; padding: 8px
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* sarlavha sig'masa (app.js: fitHeader — o'lchab qaror qiladi, shriftga bog'liq emas) */
+.app-header.fit-1 .header-right .user-name, .app-header.fit-1 .header-right .badge { display: none; }
+.app-header.fit-1 .user-box { padding: 3px; }
+.app-header.fit-2 .nav-link > span:not(.ic) { display: none; }
+.app-header.fit-2 .nav-link { padding: 8px 11px; }
 
 /* ------------------------------------------------------------- mobil */
 /* o'rta kenglikdagi ekranlar: sarlavha sig'ishi uchun foydalanuvchi nomi va menyu yozuvlari yashiriladi */

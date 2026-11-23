@@ -399,7 +399,8 @@ python scripts/bundle_budget.py   # JS/CSS hajmi byudjeti (o'quvchi sahifasi JS 
 ```
 
 CI (`.github/workflows/ci.yml`) har bir push va PR da: lint, tur tekshiruvi, `--check-config`, pytest, hajm byudjeti,
-`pip-audit` (zaifliklar) va brauzer E2E testlari.
+`pip-audit` (zaifliklar) va brauzer E2E testlari. Kenglik tekshiruvlari shriftga bog'liq: CI dagi shrift (DejaVu Sans)
+bilan mahalliy tekshirish — `FONTCONFIG_FILE=e2e/fonts-ci.conf node e2e/octagon.e2e.js`.
 
 - `tests/test_octagon.py` — ball hisoblash (0,5 s, yarim/to'liq vaqt, 1 ms chegaralari, turli vaqtlar), ismlar, o'yin
   dvigateli (soxta soat bilan: lobbi, vaqt, kech qo'shilish, qayta ulanish, ikkinchi oyna, band ism, o'quvchi
