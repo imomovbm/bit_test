@@ -5,7 +5,8 @@ import logging
 import pytest
 
 from app import config, octagon, security
-from test_octagon import PV, FakeConn, act, answer, join, make_game, octagon_env, ph, to_question
+from app import octagon_flow as flow
+from test_octagon import PV, FakeConn, act, answer, join, make_game, octagon_env, ph, reach_phase, to_question
 
 
 @pytest.fixture
@@ -125,67 +126,41 @@ def test_two_games_at_once_do_not_interfere(env):
     assert a2.last("s")["res"]["ok"] is True and g1.pin not in env.hub.games
 
 
-@pytest.mark.parametrize("phase", ["lobby", "topic_intro", "question_read", "question_active", "question_result", "leaderboard", "podium"])
+@pytest.mark.parametrize("phase", flow.PHASES)
 def test_teacher_and_student_reconnect_in_every_phase(env, phase):
     game = make_game(env, questionCount=2, timeLimit=10)
-    a = join(env, game, "Ali", av=4)
+    players = [join(env, game, n, av=i + 4) for i, n in enumerate(("Ali", "Vali", "Olim"))]
+    a = players[0]
     w = a.last("w")
-    steps = {
-        "topic_intro": [("start",)],
-        "question_read": [("start",), ("adv", config.OCTAGON_INTRO)],
-        "question_active": [("start",), ("adv", config.OCTAGON_INTRO + config.OCTAGON_READ)],
-        "question_result": [("start",), ("adv", config.OCTAGON_INTRO + config.OCTAGON_READ), ("ans",)],
-        "leaderboard": [("start",), ("adv", config.OCTAGON_INTRO + config.OCTAGON_READ), ("ans",), ("next",)],
-        "podium": [("start",), ("end",)],
-    }.get(phase, [])
-    for step in steps:
-        if step[0] == "adv":
-            env.clock.advance(step[1])
-        elif step[0] == "ans":
-            answer(env, a, 0, 0)
-        else:
-            act(env, game, step[0])
-    assert game.phase == phase
+    reach_phase(env, game, players, phase)
     score = next(iter(game.players.values())).score
     host = FakeConn()
     env.hub.handle(host, "host", {"v": PV, "pin": game.pin}, env.owner)
     h = host.last("h")
-    assert h["phase"] == phase and ("phaseEnd" in h) == (phase in ("topic_intro", "question_read", "question_active"))
+    assert h["phase"] == phase and ("phaseEnd" in h) == (phase in flow.TIMED)
     env.hub.disconnect(a)
     a2 = FakeConn()
     env.hub.handle(a2, "resume", {"v": PV, "pin": game.pin, "id": w["id"], "tok": w["tok"]})
-    assert ph(a2.last("s")) == phase and a2.last("s")["sc"] == score and a2.last("w")["av"] == 4 and len(game.players) == 1
+    assert ph(a2.last("s")) == phase and a2.last("s")["sc"] == score and a2.last("w")["av"] == 4 and len(game.players) == 3
 
 
-@pytest.mark.parametrize("phase", ["lobby", "topic_intro", "question_read", "question_active", "question_result", "leaderboard", "podium"])
+@pytest.mark.parametrize("phase", flow.PHASES)
 def test_closing_in_any_phase_leaves_no_timers_and_nothing_fires_later(env, phase):
     """O'qituvchi o'yinni istalgan bosqichda yopsa: o'yin, ulanishlar va taymerlar qolmaydi; keyin vaqt o'tsa
     hech narsa ishga tushmaydi (yopilgan o'yinga xabar yoki xato yo'q)."""
     baseline = sum(1 for *_, h in env.clock.heap if not h.cancelled)
     game = make_game(env, questionCount=2, timeLimit=10)
-    a = join(env, game, "Ali")
+    players = [join(env, game, n) for n in ("Ali", "Vali", "Olim")]
     host = FakeConn()
     env.hub.handle(host, "host", {"v": PV, "pin": game.pin}, env.owner)
-    if phase != "lobby":
-        act(env, game, "start")
-    if phase in ("question_read", "question_active", "question_result", "leaderboard"):
-        env.clock.advance(config.OCTAGON_INTRO)
-    if phase in ("question_active", "question_result", "leaderboard"):
-        env.clock.advance(config.OCTAGON_READ)
-    if phase in ("question_result", "leaderboard"):
-        answer(env, a, 0, 0)
-    if phase == "leaderboard":
-        act(env, game, "next")
-    if phase == "podium":
-        act(env, game, "end")
-    assert game.phase == phase
+    reach_phase(env, game, players, phase)
     act(env, game, "close")
-    assert game.pin not in env.hub.games and a.closed == (4003, "ended")
+    assert game.pin not in env.hub.games and all(c.closed == (4003, "ended") for c in players)
     live = sum(1 for *_, h in env.clock.heap if not h.cancelled)
     assert live <= max(baseline, 1)  # faqat umumiy tozalash taymeri qolishi mumkin
-    sent_a, sent_h = len(a.msgs), len(host.msgs)
+    sent = [len(c.msgs) for c in players], len(host.msgs)
     env.clock.advance(3600)
-    assert len(a.msgs) == sent_a and len(host.msgs) == sent_h
+    assert ([len(c.msgs) for c in players], len(host.msgs)) == sent
 
 
 def test_answers_for_previous_or_future_questions_never_count(env):

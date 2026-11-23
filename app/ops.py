@@ -22,6 +22,7 @@ from pathlib import Path
 from aiohttp import web
 
 from . import config
+from . import octagon_flow as flow
 from .observability import ERRORS, METRICS
 from .security import RateLimiter
 
@@ -139,7 +140,7 @@ def register_gauges(app: web.Application) -> None:
 
     octagon = app[OCTAGON]
     METRICS.gauge("octagon_games", lambda: len(octagon.games))
-    METRICS.gauge("octagon_games_running", lambda: sum(1 for g in octagon.games.values() if g.phase not in ("lobby", "podium")))
+    METRICS.gauge("octagon_games_running", lambda: sum(1 for g in octagon.games.values() if g.phase != flow.LOBBY and g.phase not in flow.FINISHED))
     METRICS.gauge("octagon_players", lambda: sum(len(g.players) for g in octagon.games.values()))
     METRICS.gauge("octagon_players_connected",
                   lambda: sum(1 for g in octagon.games.values() for p in g.players.values() if p.conn is not None))

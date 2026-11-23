@@ -55,8 +55,22 @@ const T = {
   points: (p) => `+${fmt(p)} ball`,
   score: 'ball',
   rank: (k, n) => `${k}-oʻrin · ${n} ta oʻquvchi`,
+  moveUp: (n) => `${n} oʻringa koʻtarildingiz`,
+  moveDown: (n) => `${n} oʻringa tushdingiz`,
+  moveSame: 'Oʻrningiz oʻzgarmadi',
+  moveNew: 'YANGI',
+  moveNewText: 'Reytingda birinchi marta',
+  behind: (pts, nick) => `${nick} sizdan ${fmt(pts)} ball oldinda`,
   waitNext: 'Keyingi savolni kuting…',
-  waitFinal: 'Yakuniy natijalarni kuting…',
+  waitFinal: 'Gʻoliblar tez orada eʼlon qilinadi — oʻqituvchi ekraniga qarang!',
+  whoPodium: 'Kim podiumga chiqdi?',
+  winnersIntro: 'Va gʻoliblar…',
+  lookUp: 'Oʻqituvchi ekraniga qarang!',
+  announced: 'Eʼlon qilinganlar',
+  youPlace: (k) => `Siz — ${k}-oʻrin!`,
+  youWon: 'Tabriklaymiz, siz gʻolibsiz!',
+  youPodium: 'Siz podiumdasiz!',
+  correctOf: (c, n) => `${c}/${n} ta toʻgʻri javob`,
   joinedLate: 'Siz oʻyinga qoʻshildingiz. Keyingi savol tez orada boshlanadi.',
   finished: 'Oʻyin tugadi!',
   place: (k) => `${k}-oʻrin`,
@@ -105,6 +119,7 @@ const st = {
   closed: null,         // replaced | kicked | ended | reload
   status: 'connecting', // connecting | online | offline
   restarting: false,    // server qayta ishga tushmoqda (1012) — o'yin saqlangan
+  revealShown: 0,       // podiumdagi o'z o'rni allaqachon ko'rsatilgan (keyingi qadamlarda animatsiya qaytarilmaydi)
 };
 const clock = serverClock();
 
@@ -510,6 +525,7 @@ function restart(keepPin) {
   st.closed = null;
   st.me = null;
   st.s = null;
+  st.revealShown = 0;
   st.error = '';
   pending = null;
   if (keepPin && st.pin) {
@@ -721,6 +737,64 @@ function shapesGrid(s, active) {
     }, shapeIcon(o, 120))));
 }
 
+/** O'rin va uning o'zgarishi: ▲ 3 → 5-o'rin (yuqoriga), ▼ 2 → 8-o'rin, – → 4-o'rin; 1-savoldan keyin — faqat o'rin.
+ * Rang yolg'iz emas: strelka, son va matn har doim bor. */
+function moveLine(s) {
+  const d = s.dk;
+  const kind = s.nw ? 'new' : d > 0 ? 'up' : d < 0 ? 'down' : d === 0 ? 'same' : 'none';
+  const mark = { up: `▲ ${d}`, down: `▼ ${-d}`, same: '–', new: T.moveNew, none: '' }[kind];
+  const text = { up: T.moveUp(d), down: T.moveDown(-d), same: T.moveSame, new: T.moveNewText, none: '' }[kind];
+  return el(`div.pl-move.${kind}`,
+    mark ? el('span.pl-move-mark', { 'aria-hidden': 'true' }, mark) : null,
+    mark ? el('span.pl-move-to', { 'aria-hidden': 'true' }, '→') : null,
+    el('b.pl-move-place', T.place(s.k)),
+    el('span.pl-move-of', `· ${s.pl}`),
+    text ? el('span.pl-move-text', text) : null);
+}
+
+/** Natija kartasi: avatar, umumiy ball, o'rin va o'zgarish, "N ball oldinda" (bo'lsa). Oxirgi savoldan keyin o'rin
+ * kelmaydi (g'oliblar e'lon qilinadi) — faqat ball. */
+function rankCard(s) {
+  return el('div.pl-rank',
+    el('p.pl-rank-score', avatar(st.me && st.me.av), el('b', `${fmt(s.sc)} ${T.score}`)),
+    s.k ? moveLine(s) : null,
+    s.bh ? el('p.pl-behind', T.behind(s.bh[0], s.bh[1])) : null);
+}
+
+function topList(s, meNick) {
+  const top = (s.top || []).slice().sort((a, b) => a[0] - b[0]);
+  if (!top.length) return null;
+  return el('ol.pl-top3', { 'aria-label': T.winners }, top.map(([place, nick, score, av]) => el(`li.m${place}${meNick && nick === meNick ? '.me' : ''}`,
+    el(`span.pl-top3-n.oc-oct.m${place}`, String(place)), avatar(av), el('span.pl-top3-nick', { title: nick }, nick), el('b', fmt(score)))));
+}
+
+const MEDAL = { 1: 'gold', 2: 'silver', 3: 'bronze' };
+
+/** Yakuniy ochilish (podium_intro, reveal_*): hamma uchun — sir saqlanadi; o'quvchining o'z o'rni faqat e'lon
+ * qilinganda (server k ni shu paytda yuboradi) ko'rsatiladi. */
+function viewFinale(s) {
+  const me = st.me ? st.me.nick : '';
+  if (s.k) {
+    const fresh = st.revealShown !== s.k;
+    st.revealShown = s.k;
+    return el(`div.pl-final.pl-reveal-me${fresh ? '.fresh' : ''}`,
+      el('p.pl-intro-label', T.youPodium),
+      el(`div.pl-medal.oc-oct.${MEDAL[s.k] || 'rest'}`, el('b', String(s.k)), el('small', T.placeShort)),
+      s.k === 1 && fresh ? el('div.oc-burst', { 'aria-hidden': 'true' }, Array.from({ length: 18 }, () => el('i'))) : null,
+      el('h1', s.k === 1 ? T.youWon : T.youPlace(s.k)),
+      el('p.pl-place', avatar(st.me && st.me.av), el('span', `${fmt(s.sc)} ${T.score}`)),
+      topList(s, me));
+  }
+  const intro = s.phase === 'podium_intro';
+  return el(`div.pl-wait.pl-suspense${intro ? '.intro' : ''}`,
+    badge('wait.breathe', octagonMark(64)),
+    el('h1', intro ? T.winnersIntro : T.whoPodium),
+    el('p.pl-muted', T.lookUp),
+    s.top && s.top.length ? el('p.pl-intro-label', T.announced) : null,
+    topList(s, me),
+    el('p.oc-sr', { 'aria-live': 'polite' }, s.top && s.top.length ? s.top.map(([k, nick]) => `${k}: ${nick}`).join(', ') : ''));
+}
+
 function viewGame() {
   const s = st.s;
   if (!s) return el('div.pl-card.pl-center', octagonLoader());
@@ -768,7 +842,7 @@ function viewGame() {
     case 'question_result':
     case 'leaderboard': {
       const r = s.res;
-      if (!r) return el('div.pl-wait', badge('wait', octagonLoader()), el('h1', T.joinedLate), rankLine(s));
+      if (!r) return el('div.pl-wait', badge('wait', octagonLoader()), el('h1', T.joinedLate), s.k ? rankCard(s) : null);
       const ok = r.ok === true;
       const kind = ok ? 'good' : r.ok === false ? 'bad' : 'none';
       return el(`div.pl-result.${kind}`,
@@ -776,28 +850,28 @@ function viewGame() {
         badge(kind, glyph(ok ? 'check' : r.ok === false ? 'cross' : 'clock', 56)),
         el('h1', ok ? T.correct : r.ok === false ? T.wrong : T.noAnswer),
         ok ? el('p.pl-points', T.points(r.pts)) : el('div.pl-correct-was', el('span', T.correctWas), shapeBadge(r.co, 34)),
-        rankLine(s),
+        rankCard(s),
         el('p.pl-muted', s.q + 1 >= total ? T.waitFinal : T.waitNext));
     }
-    case 'podium': {
-      const medal = s.k === 1 ? 'gold' : s.k === 2 ? 'silver' : s.k === 3 ? 'bronze' : 'rest';
+    case 'podium_intro':
+    case 'reveal_3rd':
+    case 'reveal_2nd':
+    case 'reveal_1st':
+      return viewFinale(s);
+    case 'final_results': {
+      const medal = MEDAL[s.k] || 'rest';
       return el('div.pl-final',
         el('h1', T.finished),
         el(`div.pl-medal.oc-oct.${medal}`, el('b', String(s.k)), el('small', T.placeShort)),
         el('p.pl-place', avatar(st.me && st.me.av), T.place(s.k)),
         el('p.pl-points', `${fmt(s.sc)} ${T.score}`),
-        el('p.pl-muted', T.rank(s.k, s.pl)),
-        s.top && s.top.length ? el('ol.pl-top3', { 'aria-label': T.winners }, s.top.map(([nick, score, av], i) => el('li', { class: st.me && nick === st.me.nick ? 'me' : null },
-          el(`span.pl-top3-n.oc-oct.m${i + 1}`, String(i + 1)), avatar(av), el('span.pl-top3-nick', nick), el('b', fmt(score))))) : null,
+        el('p.pl-muted', `${T.rank(s.k, s.pl)}${s.nc != null && total ? ` · ${T.correctOf(s.nc, total)}` : ''}`),
+        topList(s, st.me ? st.me.nick : ''),
         el('button.pl-btn.ghost', { type: 'button', onclick: () => { forgetMe(st.pin); restart(false); } }, T.otherGame));
     }
     default:
       return el('div.pl-card.pl-center', octagonLoader());
   }
-}
-
-function rankLine(s) {
-  return el('p.pl-rank', avatar(st.me && st.me.av), el('b', `${fmt(s.sc)} ${T.score}`), el('span', T.rank(s.k, s.pl)));
 }
 
 function viewClosed() {

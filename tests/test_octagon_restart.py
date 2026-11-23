@@ -7,8 +7,9 @@ import time
 import pytest
 
 from app import config, octagon, ops
+from app import octagon_flow as flow
 from app.octagon import OctagonHub
-from test_octagon import PV, FakeClock, FakeConn, act, answer, join, make_game, octagon_env, ph, to_question
+from test_octagon import PV, FakeClock, FakeConn, act, join, make_game, octagon_env, ph, reach_phase, to_question
 
 
 @pytest.fixture
@@ -33,28 +34,15 @@ def resume(env, game_pin, w):
     return c
 
 
-@pytest.mark.parametrize("phase", ["lobby", "topic_intro", "question_read", "question_active", "question_result", "leaderboard", "podium"])
+@pytest.mark.parametrize("phase", flow.PHASES)
 def test_every_phase_survives_a_restart(env, phase):
     game = make_game(env, questionCount=2, timeLimit=20)
-    a, b = join(env, game, "Ali", av=5), join(env, game, "Vali", av=6)
+    a, b, c = join(env, game, "Ali", av=5), join(env, game, "Vali", av=6), join(env, game, "Olim", av=7)
     wa, wb = a.last("w"), b.last("w")
-    if phase != "lobby":
-        act(env, game, "start")
-    if phase in ("question_read", "question_active", "question_result", "leaderboard"):
-        env.clock.advance(config.OCTAGON_INTRO)
-    if phase in ("question_active", "question_result", "leaderboard"):
-        env.clock.advance(config.OCTAGON_READ)
-    if phase in ("question_result", "leaderboard"):
-        answer(env, a, 0, 0)
-        answer(env, b, 0, 1)
-    if phase == "leaderboard":
-        act(env, game, "next")
-    if phase == "podium":
-        act(env, game, "end")
-    assert game.phase == phase
+    reach_phase(env, game, [a, b, c], phase)
     before = {p.id: (p.nick, p.avatar, p.score, dict(p.answers)) for p in game.players.values()}
     data = env.hub.shutdown()
-    assert a.closed == (1012, "restart") and b.closed == (1012, "restart")
+    assert a.closed == (1012, "restart") and b.closed == (1012, "restart") and c.closed == (1012, "restart")
     assert restart(env, data, downtime=30) == 1
     g2 = env.hub.games[game.pin]
     assert g2.phase == phase and g2.index == game.index
@@ -62,7 +50,7 @@ def test_every_phase_survives_a_restart(env, phase):
     a2 = resume(env, game.pin, wa)
     assert ph(a2.last("s")) == phase and a2.last("w")["nick"] == "Ali" and a2.last("w")["av"] == 5
     b2 = resume(env, game.pin, wb)
-    assert b2.last("w")["id"] == wb["id"] and b2.last("s")["sc"] == before[wb["id"]][2] and len(g2.players) == 2
+    assert b2.last("w")["id"] == wb["id"] and b2.last("s")["sc"] == before[wb["id"]][2] and len(g2.players) == 3
     host = FakeConn()
     env.hub.handle(host, "host", {"v": PV, "pin": game.pin}, env.owner)
     assert host.last("h")["phase"] == phase and host.last("h")["qr"]

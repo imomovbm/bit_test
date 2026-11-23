@@ -28,7 +28,7 @@ caches and what may be stored on the user's device.
 
 | Target | Result | Met |
 |---|---|---|
-| Student route ≤ 100 KB gzipped JS on first load | **13.8 KB** (`play.js`, `octagon/common.js`, `report.js`) | yes |
+| Student route ≤ 100 KB gzipped JS on first load | **15.1 KB** (`play.js`, `octagon/common.js`, `report.js`; 13.8 KB before the rank-change and podium release) | yes |
 | Student route usable in < 3 s on slow 4G, mid-range phone | **0.59 s** `/play`, **0.61 s** `/play/PIN` | yes |
 | Student route < 1 s on repeat visits | **0.43–0.46 s** (one network request: the 300-byte HTML revalidation) | yes |
 | API p95 < 200 ms | **3.0 ms** during the load test (median of 5 runs) | yes |
@@ -47,7 +47,18 @@ caches and what may be stored on the user's device.
 in transit. The student code grew because of the v2 features: topic intro, reading phase, avatars, clock sync and the
 0.5 KB browser error reporter.
 
-CSS is 6.8 KB gzipped on the student page and 26.9 KB in the main app. Layout shift (CLS) is 0 on the student pages
+**After the rank-change and podium release** ([octagon-rank-podium.md](octagon-rank-podium.md)), same method, median of 5:
+
+| Route | JS gzip | CSS gzip | Usable (cold) | Usable (repeat) |
+|---|---|---|---|---|
+| Student `/play` | 15.1 KB (+1.3) | 8.1 KB (+1.3) | 565 ms | 366 ms |
+| Student `/play/PIN` | 15.1 KB (+1.3) | 8.1 KB (+1.3) | 610 ms | 393 ms |
+| Login `/` | 42.9 KB | 29.4 KB | 1236 ms | 764 ms |
+| Teacher game screen | 60.8 KB (+3.5) | 29.4 KB | 1707 ms | 968 ms |
+
+The new screens use CSS animations and the Web Animations API, with no library.
+
+Before that release, CSS was 6.8 KB gzipped on the student page and 26.9 KB in the main app. Layout shift (CLS) is 0 on the student pages
 (worst of 5 runs) and 0.002 on the teacher screen. The baseline showed 0.042 on the student pages in its worst run.
 
 ## Realtime and backend: before → after (load test)

@@ -1569,7 +1569,7 @@ input.oct-custom-time:focus { outline: none; border-color: var(--primary); box-s
 .oct-start { min-width: 240px; min-height: 60px; font-size: 22px; }
 
 /* savol, natija, reyting, podium */
-.oct-question, .oct-reveal, .oct-ready, .oct-board, .oct-podium-wrap { display: flex; flex-direction: column; gap: 14px; flex: 1; animation: oc-rise 0.25s ease-out; }
+.oct-question, .oct-reveal, .oct-ready, .oct-board { display: flex; flex-direction: column; gap: 14px; flex: 1; animation: oc-rise 0.25s ease-out; }
 .oct-qhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .oct-qnum { font-weight: 900; color: var(--oc-ink-2); font-size: clamp(14px, 1.4vw, 22px); text-transform: uppercase; letter-spacing: 0.1em; }
 .oct-answered { font-weight: 800; padding: 6px 16px; border-radius: 99px; border: 1px solid var(--oc-line); background: var(--oc-surface); font-size: clamp(14px, 1.4vw, 22px); font-variant-numeric: tabular-nums; }
@@ -1631,21 +1631,87 @@ input.oct-custom-time:focus { outline: none; border-color: var(--primary); box-s
 .oct-rank-score { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .oct-rank.compact li { font-size: 15px; padding: 6px 12px 6px 6px; animation: none; }
 
-.oct-podium { display: flex; align-items: flex-end; justify-content: center; gap: clamp(10px, 2.4vw, 28px); margin: 6px auto 0; width: min(100%, 960px); }
-.oct-step { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; text-align: center; animation: oc-rise 0.6s ease-out backwards; }
-.oct-step.place-1 { animation-delay: 0.5s; }
-.oct-step.place-2 { animation-delay: 0.25s; }
 .oct-medal { width: clamp(64px, 7vw, 120px); aspect-ratio: 1; display: grid; place-items: center; font-size: clamp(28px, 3.4vw, 58px); font-weight: 900; }
 .oct-step-nick { max-width: 100%; overflow-wrap: anywhere; line-height: 1.15; text-align: center; font-weight: 900; font-size: clamp(16px, 2.4vw, 38px); } /* uzun ism o'raladi */
 .oct-step-score { color: var(--oc-ink-2); font-weight: 750; font-size: clamp(13px, 1.4vw, 22px); font-variant-numeric: tabular-nums; }
-.oct-step-block { width: 100%; border-radius: 18px 18px 6px 6px; border: 1px solid var(--oc-line); border-top: 6px solid var(--medal); background: linear-gradient(180deg, var(--oc-surface-2), var(--oc-surface)); }
-.oct-step.place-1 .oct-step-block { --medal: var(--oc-gold); height: clamp(120px, 22vh, 250px); }
-.oct-step.place-2 .oct-step-block { --medal: var(--oc-silver); height: clamp(86px, 15vh, 180px); }
-.oct-step.place-3 .oct-step-block { --medal: var(--oc-bronze); height: clamp(60px, 10vh, 130px); }
-.oct-all { width: min(100%, 960px); margin: 0 auto; padding: 4px 14px 12px; border-radius: 18px; border: 1px solid var(--oc-line); background: var(--oc-surface); }
-.oct-all summary { min-height: 48px; display: flex; align-items: center; cursor: pointer; font-weight: 800; }
-.oct-all .oct-rank { margin-top: 6px; max-height: 50vh; overflow: auto; }
-.oct-all .oct-rank li { background: var(--oc-surface-2); }
+
+/* reyting: o'rin o'zgarishi (▲/▼/–/YANGI) va qatorlar siljishi (FLIP — views/octagon.js, Web Animations API) */
+.oct-board .oct-board-list { position: relative; animation: oc-rise 0.3s ease-out; }
+.oct-board-list li { position: relative; animation: none; }
+.oct-rank-gain:empty { visibility: hidden; }
+.oct-rank-gain { min-width: 3.4em; text-align: right; }
+.oct-move { flex: none; min-width: 2.8em; min-height: 1.6em; display: inline-flex; align-items: center; justify-content: center; gap: 0.25em; padding: 0 0.45em; border-radius: 999px; border: 2px solid transparent; font-size: max(13px, 0.66em); font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.oct-move.up { color: var(--oc-green-hi); border-color: currentColor; }
+.oct-move.down { color: var(--oc-red-hi); border-color: currentColor; }
+.oct-move.same { color: var(--oc-ink-2); border-color: var(--oc-line-strong); }
+.oct-move.new { background: var(--oc-warn); color: var(--oc-warn-ink); letter-spacing: 0.05em; }
+.oct-move.none { display: none; } /* 1-savol: oldingi reyting yo'q — ustun ham yo'q */
+.oct-move-arrow { font-size: max(12px, 0.86em); }
+.oct-jump { margin: 0 auto; max-width: min(100%, 960px); display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 12px; padding: 8px 18px; border-radius: 999px; border: 1px dashed var(--oc-line-strong); font-size: clamp(16px, 1.7vw, 28px); font-weight: 800; animation: oc-pop 0.4s 1.2s ease-out backwards; }
+.oct-jump-label { display: inline-flex; align-items: center; gap: 6px; color: var(--oc-ink-2); }
+.oct-jump-nick { min-width: 0; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* g'oliblarni e'lon qilish: ustunlar birma-bir ko'tariladi, ism va ball tushganda chiqadi */
+.oct-finale { --oc-rise-ms: 1.2s; flex: 1; display: flex; flex-direction: column; align-items: center; gap: clamp(8px, 1.8vh, 20px); text-align: center; animation: oc-rise 0.3s ease-out; }
+.oct-finale-head { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.oct-finale-title { margin: 0; font-size: clamp(30px, 4.6vw, 80px); line-height: 1.12; }
+.oct-finale.intro .oct-finale-title { animation: oct-pulse 1.2s ease-in-out infinite; }
+.oct-finale-sub { margin: 0; color: var(--oc-ink-2); font-weight: 800; font-size: clamp(16px, 2vw, 32px); }
+.oct-finale-sub:empty { display: none; }
+.oct-finale-intro { display: none; }
+.oct-finale.intro .oct-finale-intro { display: grid; place-items: center; }
+.oct-finale-progress { width: min(100%, 420px); height: 6px; border-radius: 99px; background: var(--oc-surface-2); overflow: hidden; }
+.oct-finale-progress i { display: block; height: 100%; background: var(--oc-accent-2); transform: scaleX(0); transform-origin: left; transition: transform 0.2s linear; }
+.oct-finale .oct-actions { align-self: stretch; }
+.oct-finale .oct-actions .btn { flex: 1 1 auto; } /* tor ekranda sig'masa — keyingi qatorga (kesilmaydi) */
+@keyframes oct-pulse { 50% { transform: scale(1.06); } }
+
+.oct-stand { width: min(100%, 980px); flex: 1; min-height: clamp(230px, 44vh, 560px); display: flex; align-items: flex-end; justify-content: center; gap: clamp(8px, 2vw, 28px); overflow-x: clip; overflow-clip-margin: 4px; } /* konfetti ekran chetidan chiqmaydi (faqat podium, tugmalar emas) */
+.oct-col { --h0: clamp(30px, 5vh, 52px); position: relative; flex: 1 1 0; min-width: 0; max-width: 320px; display: flex; flex-direction: column; justify-content: flex-end; }
+.oct-col.place-1 { --medal: var(--oc-gold); --h: clamp(120px, 27vh, 300px); }
+.oct-col.place-2 { --medal: var(--oc-silver); --h: clamp(88px, 19vh, 216px); }
+.oct-col.place-3 { --medal: var(--oc-bronze); --h: clamp(64px, 13vh, 156px); }
+.oct-col-card { min-height: clamp(92px, 15vh, 176px); display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; padding: 0 4px 10px; min-width: 0; }
+.oct-col:not(.shown) .oct-col-card::before { content: '?'; display: grid; place-items: center; width: clamp(48px, 5vw, 84px); aspect-ratio: 1; clip-path: var(--oc-octagon); background: var(--oc-surface-2); color: var(--oc-ink-3); font-weight: 900; font-size: clamp(24px, 3vw, 46px); }
+.oct-col-bar { height: var(--h0); display: flex; justify-content: center; align-items: flex-start; padding-top: 10px; border-radius: 18px 18px 6px 6px; border: 2px dashed var(--oc-line-strong); background: transparent; }
+.oct-col-bar .oct-medal { width: clamp(40px, 4.4vw, 76px); font-size: clamp(20px, 2.4vw, 40px); }
+.oct-col:not(.shown) .oct-col-bar .oct-medal { visibility: hidden; } /* bo'sh tagcha past — o'rin raqami «?» ustida emas */
+.oct-col.shown .oct-col-bar { height: var(--h); border: 1px solid var(--oc-line); border-top: 6px solid var(--medal); background: linear-gradient(180deg, var(--oc-surface-2), var(--oc-surface)); }
+.oct-col.up .oct-col-bar { animation: oct-grow var(--oc-rise-ms) cubic-bezier(.2, .8, .2, 1) both; }
+.oct-col.up .oct-col-card > * { animation: oct-land 0.5s var(--oc-rise-ms) cubic-bezier(.2, 1.5, .4, 1) both; }
+.oct-col.up .oc-burst { --oc-burst-delay: var(--oc-rise-ms); }
+.oct-col.place-1.shown .oct-col-card .oct-step-av { filter: drop-shadow(0 0 18px var(--oc-glow-accent)); }
+.oct-col .oct-step-av { font-size: clamp(30px, 4vw, 64px); line-height: 1.15; }
+.oct-col .oct-step-nick { max-width: 100%; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; text-overflow: ellipsis; font-size: clamp(16px, 2.2vw, 36px); line-height: 1.15; } /* juda uzun ism — 2 qator va «…», to'liq ism title da */
+@keyframes oct-grow { from { height: var(--h0); } to { height: var(--h); } }
+@keyframes oct-land { from { transform: translateY(14px) scale(0.6); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* yakuniy natijalar */
+.oct-final { display: flex; flex-direction: column; gap: 14px; flex: 1; animation: oc-rise 0.25s ease-out; }
+.oct-final-head { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.oct-stand.compact { flex: none; min-height: 0; margin: 0 auto; }
+.oct-stand.compact .oct-col.place-1 { --h: clamp(80px, 12vh, 130px); }
+.oct-stand.compact .oct-col.place-2 { --h: clamp(66px, 9vh, 100px); }
+.oct-stand.compact .oct-col.place-3 { --h: clamp(56px, 7vh, 80px); }
+.oct-stand.compact .oct-col-bar { padding-top: 6px; }
+.oct-stand.compact .oct-col-bar .oct-medal { width: clamp(32px, 2.8vw, 46px); font-size: clamp(16px, 1.6vw, 24px); }
+.oct-stand.compact .oct-col-card { min-height: 0; }
+.oct-stand.compact .oct-step-av { font-size: clamp(26px, 3vw, 46px); }
+.oct-stand.compact .oct-step-nick { font-size: clamp(15px, 1.7vw, 26px); }
+.oct-zero { margin: 0 auto; max-width: 640px; text-align: center; padding: 14px 18px; border-radius: 18px; border: 1px dashed var(--oc-line-strong); }
+.oct-zero b { font-size: clamp(18px, 2vw, 30px); }
+.oct-zero p { margin: 6px 0 0; }
+.oct-all-box { width: min(100%, 960px); margin: 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 18px; border: 1px solid var(--oc-line); background: var(--oc-surface); }
+.oct-final-list { width: 100%; max-height: min(52vh, 640px); overflow: auto; gap: 6px; overscroll-behavior: contain; }
+.oct-final-list li { font-size: clamp(14px, 1.3vw, 19px); padding: 5px 12px 5px 5px; background: var(--oc-surface-2); animation: none; }
+.oct-final-list li.top { font-size: clamp(16px, 1.8vw, 27px); padding: 7px 14px 7px 7px; }
+.oct-final-list li[hidden] { display: none; }
+.oct-rank-correct { white-space: nowrap; }
+.oct-search { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--oc-line-strong); background: var(--oc-bg); color: var(--oc-ink-2); }
+.oct-search:focus-within { border-color: var(--oc-focus); box-shadow: 0 0 0 2px var(--oc-focus); }
+.oct-search input { flex: 1; min-width: 0; min-height: 44px; border: 0; background: transparent; color: var(--oc-ink); font: inherit; font-weight: 700; outline: none; }
+.oct-final-actions { justify-content: center; }
+.oct-final .oct-final-actions .btn { flex: 1 1 auto; } /* tor ekranda sig'masa — keyingi qatorga (umumiy flex: 1 dan ustun) */
 
 /* yangi ekranlarda (O'yinlar, Octagon) barcha bosiladigan elementlar kamida 48px */
 .games .btn, .oct-lobby-page .btn { min-height: 48px; min-width: 48px; justify-content: center; }
@@ -1683,9 +1749,17 @@ body.oct-immersive .oct-bar { top: 8px; }
   .oct-ring span { font-size: 28px; }
   .oct-ring.big { width: 112px; }
   .oct-ring.big span { font-size: 44px; }
-  /* tor ekranda uzun ismlar (20 belgigacha) kesilmasin — qator o'raladi */
-  .oct-rank li { gap: 8px; padding: 6px 12px 6px 6px; }
-  .oct-rank-nick, .oct-step-nick { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.15; }
+  /* tor ekranda uzun ismlar (20 belgigacha): 2 qatorgacha o'raladi, sig'masa «…» (to'liq ism — title) */
+  .oct-rank li { gap: 7px; padding: 6px 10px 6px 6px; }
+  .oct-rank-nick, .oct-step-nick { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; line-height: 1.15; }
+  .oct-rank-gain { min-width: 0; font-size: max(12px, 0.64em); }
+  .oct-move { min-width: 2.4em; padding: 0 0.3em; }
+  .oct-stand { min-height: clamp(200px, 40vh, 380px); gap: 6px; }
+  .oct-col-card { padding: 0 2px 8px; }
+  .oct-col .oct-step-nick { font-size: 14px; -webkit-line-clamp: 3; line-clamp: 3; overflow-wrap: break-word; } /* tor ustun: so'z o'rtasidan bo'linmasin */
+  .oct-stand.compact .oct-step-nick { font-size: 13px; }
+  .oct-col .oct-step-score { font-size: 13px; }
+  .oct-final-list { max-height: none; }
   .oct-intro, .oct-ready { gap: 12px; }
   .oct-tiles { grid-template-columns: 1fr; gap: 10px; }
   .oct-tiles.n3 > :last-child { grid-column: auto; }
@@ -1695,6 +1769,24 @@ body.oct-immersive .oct-bar { top: 8px; }
   .oct-actions .btn { flex: 1; }
   .oct-players { max-height: none; }
   .oct-hero-pin { font-size: clamp(34px, 12vw, 72px); letter-spacing: 0.04em; }
+}
+
+/* juda tor ekran (telefonda o'qituvchi): ball va "+ball" ustma-ust — ismga joy qoladi */
+@media (max-width: 480px) {
+  .oct-board-list li { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; grid-template-areas: "n av nick score move" "n av nick gain move"; align-items: center; column-gap: 7px; row-gap: 0; }
+  .oct-board-list .oct-rank-n { grid-area: n; }
+  .oct-board-list .oct-rank-av { grid-area: av; }
+  .oct-board-list .oct-rank-nick { grid-area: nick; }
+  .oct-board-list .oct-rank-score { grid-area: score; text-align: right; }
+  .oct-board-list .oct-rank-gain { grid-area: gain; text-align: right; line-height: 1.1; min-width: 0; }
+  .oct-board-list .oct-move { grid-area: move; }
+  .oct-board-list .oct-rank-gain:empty { display: none; }
+  .oct-final-list li { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-areas: "n av nick score" "n av correct score"; align-items: center; column-gap: 7px; row-gap: 0; }
+  .oct-final-list .oct-rank-n { grid-area: n; }
+  .oct-final-list .oct-rank-av { grid-area: av; }
+  .oct-final-list .oct-rank-nick { grid-area: nick; }
+  .oct-final-list .oct-rank-correct { grid-area: correct; font-size: 12px; line-height: 1.2; }
+  .oct-final-list .oct-rank-score { grid-area: score; }
 }
 
 @media (prefers-reduced-motion: reduce) {

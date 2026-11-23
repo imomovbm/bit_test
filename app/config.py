@@ -168,6 +168,9 @@ SUGGEST_IDLE_DAYS = _setting("TD_SUGGEST_IDLE_DAYS", 90, "Shuncha kun o'ynalmaga
 OCTAGON_INTRO = _setting("TD_OCTAGON_INTRO", 5.0, "«Boshlash»dan keyin mavzu nomi hamma ekranda (soniya)", lo=0, hi=60)
 OCTAGON_READ = _setting("TD_OCTAGON_READ", 5.0, "Savolni o'qish vaqti: matn faqat o'qituvchida, tugmalar yopiq (soniya)",
                         lo=0, hi=60, legacy=("TD_OCTAGON_READY",))
+OCTAGON_PODIUM_INTRO = _setting("TD_OCTAGON_PODIUM_INTRO", 3.0, "Oxirgi savoldan keyin «Va g'oliblar…» ekrani (soniya)", lo=0, hi=60)
+OCTAGON_REVEAL_STEP = _setting("TD_OCTAGON_REVEAL_STEP", 3.5, "Podium: 3- va 2-o'rin ochilgandan keyingi pauza (soniya)", lo=0, hi=60)
+OCTAGON_REVEAL_WINNER = _setting("TD_OCTAGON_REVEAL_WINNER", 6.0, "Podium: 1-o'rin ekrani, keyin to'liq natijalar (soniya)", lo=0, hi=60)
 OCTAGON_TIME_MIN = _setting("TD_OCTAGON_TIME_MIN", 5, "Savol vaqti: eng kami (soniya)", lo=1, hi=600)
 OCTAGON_TIME_MAX = _setting("TD_OCTAGON_TIME_MAX", 120, "Savol vaqti: eng ko'pi (soniya)", lo=1, hi=600)
 OCTAGON_TIME_DEFAULT = _setting("TD_OCTAGON_TIME_DEFAULT", 20, "Savol vaqti: standart (soniya)", lo=1, hi=600)

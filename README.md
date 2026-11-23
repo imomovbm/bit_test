@@ -52,12 +52,23 @@ ichki nomlar — `/api/octagon`, `app/octagon.py` — o'zgarmaydi).
   tekshiradi).
 - O'yin faqat **Boshlash** bosilganda boshlanadi. Bosqichlar (server boshqaradi, vaqtlar — `app/config.py`):
   `lobby → topic_intro (5 s) → question_read (5 s) → question_active (savol vaqti) → question_result → leaderboard →
-  (keyingi savolni o'qish …) → podium`.
+  (keyingi savolni o'qish …) → oxirgi savol natijasi → podium_intro (3 s) → reveal_3rd (3,5 s) → reveal_2nd (3,5 s) →
+  reveal_1st (6 s) → final_results`.
   - **Mavzu** (`topic_intro`, bir marta): mavzu nomi o'qituvchi va barcha o'quvchilar ekranida, sanoq bilan.
   - **O'qish** (`question_read`, har savol oldidan 5 s): savol matni **faqat o'qituvchi ekranida**; o'quvchilarda —
     rangli shakllar va sanoq, tugmalar hali bosilmaydi.
   - **Javoblar** (`question_active`): tugmalar ochiladi, taymer shu paytdan boshlanadi (ball ham shu paytdan o'lchanadi).
-  - Natija (javoblar taqsimoti, to'g'ri javob) → eng yaxshi 5 talik → keyingi savol → yakunda podium.
+  - Natija (javoblar taqsimoti, to'g'ri javob) → **eng yaxshi 5 talik**: har qatorda o'rin, avatar, ism, umumiy ball,
+    shu savolda olingan ball va o'rin o'zgarishi — `▲ 2` (yashil), `▼ 1` (qizil), `–` (o'zgarmadi), `YANGI` (keyin
+    qo'shilgan o'quvchining birinchi reytingi); strelka va son har doim bor (faqat rang emas). Qatorlar eski joyidan
+    yangisiga suriladi (~0,7 s, «kamroq harakat» sozlamasida — siljishsiz). Kimdir kamida 2 o'ringa ko'tarilsa —
+    «Eng katta sakrash» qatori. 1-savoldan keyin strelka yo'q (oldingi reyting yo'q).
+  - **G'oliblarni e'lon qilish** (oxirgi savoldan keyin reyting ko'rsatilmaydi — natija oldindan ma'lum bo'lmasin):
+    «Va g'oliblar…» → 3-o'rin → 2-o'rin → 1-o'rin (ustun ko'tariladi, tushganda avatar, ism va ball chiqadi; 1-o'ringa
+    yengil konfetti, faqat CSS) → **yakuniy natijalar**: podium, birinchi 10 tasi ajratilgan to'liq reyting (ism bo'yicha
+    qidiruv), «Yangi o'yin», «O'yinlar paneli» va **CSV yuklab olish** (ism, avatar, ball, o'rin, to'g'ri javoblar).
+    O'yinchilar 3 tadan kam bo'lsa — ortiqcha qadamlar tashlanadi; hech kim qolmasa — «O'yinda hech kim qolmadi».
+    Qadamlar avtomatik o'tadi; «Keyingi o'rin» (Probel/Enter) tezlashtiradi, «Natijalarga o'tish» — darhol natijalar.
   Hamma javob bersa, savol vaqt tugashini kutmasdan yopiladi. «O'tkazib yuborish» (mavzu va o'qish bosqichlari),
   «Savolni yakunlash» va «Tugatish» (muddatidan oldin yakuniy natijalar) tugmalari bor. Probel/Enter — keyingi bosqich
   (bosib turilsa ham bitta amal), F — to'liq ekran. Bosqich boshlanishi va tugashi server vaqtida (Unix ms) yuboriladi;
@@ -68,7 +79,7 @@ ichki nomlar — `/api/octagon`, `app/octagon.py` — o'zgarmaydi).
 **O'quvchi** (ro'yxatdan o'tmasdan): QR kodni skanerlaydi yoki `sayt/play` ni ochib PIN kiritadi, so'ng ism yozadi va
 **avatar** tanlaydi (30 ta oddiy emoji: hayvonlar, mevalar, sport, buyumlar; bittasi tasodifiy tanlangan bo'ladi).
 - Avatar lobbida almashtirilishi mumkin (o'yin boshlangach — yo'q), ism yonida hamma joyda ko'rinadi (lobbi, o'quvchi
-  ekrani, natija, reyting, podium, o'qituvchi ekranlari), qayta ulanganda saqlanadi. Server faqat ro'yxatdagi
+  ekrani, natija, reyting, g'oliblar, yakuniy natijalar, o'qituvchi ekranlari), qayta ulanganda saqlanadi. Server faqat ro'yxatdagi
   indeksni qabul qiladi (simda emoji emas, raqam); bir xil avatar bir nechta o'quvchida bo'lishi mumkin.
 - Ism: 1–20 belgi, o'yinda yagona (katta-kichik harf va o'xshash harflar hisobga olinmaydi); HTML, ko'rinmas belgilar,
   emoji va oddiy so'kinishlar filtrlanadi.
@@ -76,9 +87,14 @@ ichki nomlar — `/api/octagon`, `app/octagon.py` — o'zgarmaydi).
 - Telefonda **faqat rangli shakllar** (qizil sakkizburchak, ko'k tomchi, sariq yulduz, yashil plyus) — savol va javob
   matni yuborilmaydi. Serverdan faqat bosqich, savol raqami, variantlar soni, server vaqtlari va shaxsiy natija keladi
   (o'rtacha ~85 bayt); to'g'ri javob savol yopilgandan keyingina yuboriladi. O'quvchi sahifasi asosiy ilovani
-  yuklamaydi: JS ~14 KB, CSS ~7 KB (gzip); sekin 4G va o'rta telefonda ~0,6 s da, takroriy ochilishda ~0,45 s da
+  yuklamaydi: JS ~15 KB, CSS ~8 KB (gzip); sekin 4G va o'rta telefonda ~0,6 s da, takroriy ochilishda ~0,45 s da
   tayyor ([docs/performance.md](docs/performance.md)).
-- Har savoldan keyin: to'g'ri/noto'g'ri, olingan ball, umumiy ball va o'rin.
+- Har savoldan keyin: to'g'ri/noto'g'ri, olingan ball, umumiy ball, o'rin va uning o'zgarishi («▲ 3 → 5-o'rin —
+  3 o'ringa ko'tarildingiz», «▼ 2 → 8-o'rin», «– → 4-o'rin»); yuqoridagi o'quvchiga yaqin bo'lsa — «Ali sizdan 120
+  ball oldinda». Telefonga faqat o'z o'rni, o'zgarishi va (yaqin bo'lsa) bitta qo'shnining ismi keladi.
+- G'oliblar e'lon qilinayotganda telefonda «Kim podiumga chiqdi?» va e'lon qilinganlar ro'yxati; podiumdagi o'quvchi
+  o'z o'rnini **aynan o'z o'rni e'lon qilinganda** ko'radi, qolganlar — yakuniy natijalarda. Server hali e'lon
+  qilinmagan o'rinni hech kimga yubormaydi (o'qituvchi ekraniga ham).
 - Birinchi qo'shilishda server o'yinchi ID va maxfiy token beradi — ular brauzerda (localStorage, bo'lmasa cookie)
   PIN bo'yicha saqlanadi. Sahifa yangilansa, aloqa uzilsa yoki oyna yopilib qayta ochilsa — o'sha o'yinchi (ism, ball,
   javoblar) davom etadi, dublikat yaratilmaydi. Shu token ikkinchi oynada ochilsa, yangi oyna egallaydi, eskisi
@@ -303,6 +319,9 @@ ko'rish (maxfiylari yashiriladi): `python run.py --check-config`.
 | **Octagon** | | |
 | `TD_OCTAGON_INTRO` | `5` | «Boshlash»dan keyin mavzu nomi hamma ekranda (soniya) |
 | `TD_OCTAGON_READ` (eski nomi: `TD_OCTAGON_READY`) | `5` | Savolni o'qish vaqti: matn faqat o'qituvchida, tugmalar yopiq (soniya) |
+| `TD_OCTAGON_PODIUM_INTRO` | `3` | Oxirgi savoldan keyin «Va g'oliblar…» ekrani (soniya) |
+| `TD_OCTAGON_REVEAL_STEP` | `3.5` | Podium: 3- va 2-o'rin ochilgandan keyingi pauza (soniya) |
+| `TD_OCTAGON_REVEAL_WINNER` | `6` | Podium: 1-o'rin ekrani, keyin to'liq natijalar (soniya) |
 | `TD_OCTAGON_TIME_MIN` | `5` | Savol vaqti: eng kami (soniya) |
 | `TD_OCTAGON_TIME_MAX` | `120` | Savol vaqti: eng ko'pi (soniya) |
 | `TD_OCTAGON_TIME_DEFAULT` | `20` | Savol vaqti: standart (soniya) |

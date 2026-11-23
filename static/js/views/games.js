@@ -11,7 +11,9 @@ const T = {
   activeTitle: 'Davom etayotgan oʻyinlar',
   phase: {
     lobby: 'lobbi', topic_intro: 'boshlanmoqda', question_read: 'savol oʻqilmoqda', question_active: 'savol',
-    question_result: 'natija', leaderboard: 'reyting', podium: 'tugagan',
+    question_result: 'natija', leaderboard: 'reyting', podium_intro: 'gʻoliblar eʼlon qilinmoqda',
+    reveal_3rd: 'gʻoliblar eʼlon qilinmoqda', reveal_2nd: 'gʻoliblar eʼlon qilinmoqda', reveal_1st: 'gʻoliblar eʼlon qilinmoqda',
+    final_results: 'tugagan',
   },
   players: (n) => `${n} ta oʻquvchi`,
   octagon: {
@@ -52,7 +54,7 @@ export function gamesView(root) {
 
   api('/api/octagon/games').then(({ games }) => {
     if (!alive) return;
-    const active = games.filter((g) => g.phase !== 'podium');
+    const active = games.filter((g) => g.phase !== 'final_results');
     if (!active.length) return;
     activeBox.replaceChildren(h('div.card.games-active',
       h('h2.card-title', icon('activity', 18), T.activeTitle),

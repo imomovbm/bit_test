@@ -17,6 +17,7 @@ from app import ws as ws_mod
 from app.keys import DB, OCTAGON
 from app.server import create_app
 from test_octagon_api import QUESTIONS, call, recv, recv_state
+from app.octagon import PROTOCOL_VERSION as PV  # noqa: E402
 
 EVIL = "https://evil.example"
 
@@ -103,7 +104,7 @@ def test_teacher_cannot_control_another_teachers_game(tmp_path):
         async with world(tmp_path) as w:
             pin = await w.game(w.a)
             phone = await w.guest.ws_connect("/ws/octagon")
-            await phone.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": "Ali"}})
+            await phone.send_json({"t": "join", "d": {"v": PV, "av": 0, "pin": pin, "nick": "Ali"}})
             assert (await recv(phone, "w"))["nick"] == "Ali"
             zam = await w.client("zam")  # oddiy administrator (bosh administrator emas)
             assert (await call(w.owner, "PATCH", "/api/admin/users/5", {"isAdmin": True}))[0] == 200
@@ -115,7 +116,7 @@ def test_teacher_cannot_control_another_teachers_game(tmp_path):
                 assert (await call(intruder, "DELETE", f"/api/octagon/games/{pin}"))[0] == 404
                 assert pin not in [g["pin"] for g in (await call(intruder, "GET", "/api/octagon/games"))[1]["games"]]
                 ws = await intruder.ws_connect("/ws/octagon")
-                await ws.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
+                await ws.send_json({"t": "host", "d": {"v": PV, "pin": pin}})
                 assert (await recv(ws, "e"))["status"] == 404
                 for action in ("start", "next", "end", "close"):
                     await ws.send_json({"t": action, "d": {}})
@@ -134,9 +135,9 @@ def test_player_socket_cannot_send_host_messages(tmp_path):
             pin = await w.game(w.a)
             for c, nick in ((w.guest, "Mehmon"), (w.student, "Talaba")):  # mehmon telefoni va akkaunti bor o'quvchi
                 ws = await c.ws_connect("/ws/octagon")
-                await ws.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": nick}})
+                await ws.send_json({"t": "join", "d": {"v": PV, "av": 0, "pin": pin, "nick": nick}})
                 await recv(ws, "w")
-                for t, d in (("host", {"v": 2, "pin": pin}), ("start", {}), ("next", {}), ("skip", {}), ("end", {}), ("kick", {"id": "x"}),
+                for t, d in (("host", {"v": PV, "pin": pin}), ("start", {}), ("next", {}), ("skip", {}), ("end", {}), ("kick", {"id": "x"}),
                              ("settings", {"timeLimit": 5}), ("close", {}), ("lock", {"locked": True})):
                     await ws.send_json({"t": t, "d": d})
                     assert (await recv(ws, "e"))["status"] == 403, t
@@ -153,25 +154,25 @@ def test_host_socket_loses_control_after_logout_or_password_reset(tmp_path):
             pin = await w.game(w.a)
             game = w.server.app[OCTAGON].games[pin]
             phone = await w.guest.ws_connect("/ws/octagon")
-            await phone.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": "Ali"}})
+            await phone.send_json({"t": "join", "d": {"v": PV, "av": 0, "pin": pin, "nick": "Ali"}})
             await recv(phone, "w")
             # 1) o'qituvchi boshqa oynada tizimdan chiqdi — ochiq boshqaruv ulanishi yopiladi
             host = await w.a.ws_connect("/ws/octagon")
-            await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
+            await host.send_json({"t": "host", "d": {"v": PV, "pin": pin}})
             assert (await recv(host, "h"))["phase"] == "lobby"
             assert (await call(w.a, "POST", "/api/auth/logout"))[0] == 200
             assert await drain(host, 3) == 4401
             # 2) bosh administrator parolni tikladi — eski sessiyalardagi boshqaruv ulanishlari yopiladi
             assert (await call(w.a, "POST", "/api/auth/login", {"login": "ustoz_a", "password": "1234"}))[0] == 200
             host = await w.a.ws_connect("/ws/octagon")
-            await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
+            await host.send_json({"t": "host", "d": {"v": PV, "pin": pin}})
             await recv(host, "h")
             assert (await call(w.owner, "PATCH", "/api/admin/users/2", {"password": "yangi-parol"}))[0] == 200
             assert await drain(host, 3) == 4401
             # 3) sessiya boshqa sabab bilan tugagan bo'lsa ham — har bir boshqaruv amali sessiyani qayta tekshiradi
             assert (await call(w.a, "POST", "/api/auth/login", {"login": "ustoz_a", "password": "yangi-parol"}))[0] == 200
             host = await w.a.ws_connect("/ws/octagon")
-            await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
+            await host.send_json({"t": "host", "d": {"v": PV, "pin": pin}})
             await recv(host, "h")
             w.server.app[DB].conn.execute("DELETE FROM sessions")
             await host.send_json({"t": "start", "d": {}})
@@ -307,8 +308,8 @@ def test_concurrent_join_same_nick_and_concurrent_resume(tmp_path):
             pin = await w.game(w.a)
             s1 = await w.guest.ws_connect("/ws/octagon")
             s2 = await w.student.ws_connect("/ws/octagon")
-            await asyncio.gather(s1.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": "Ali"}}),
-                                 s2.send_json({"t": "join", "d": {"v": 2, "av": 0, "pin": pin, "nick": "ali"}}))
+            await asyncio.gather(s1.send_json({"t": "join", "d": {"v": PV, "av": 0, "pin": pin, "nick": "Ali"}}),
+                                 s2.send_json({"t": "join", "d": {"v": PV, "av": 0, "pin": pin, "nick": "ali"}}))
             first = [json.loads((await s.receive()).data) for s in (s1, s2)]
             assert sorted(m["t"] for m in first) == ["e", "w"]
             loser = next(m for m in first if m["t"] == "e")
@@ -316,7 +317,7 @@ def test_concurrent_join_same_nick_and_concurrent_resume(tmp_path):
             winner = s1 if first[0]["t"] == "w" else s2
             me = next(m for m in first if m["t"] == "w")["d"]
             tabs = [await w.guest.ws_connect("/ws/octagon") for _ in range(3)]
-            await asyncio.gather(*(t.send_json({"t": "resume", "d": {"v": 2, "pin": pin, "id": me["id"], "tok": me["tok"]}}) for t in tabs))
+            await asyncio.gather(*(t.send_json({"t": "resume", "d": {"v": PV, "pin": pin, "id": me["id"], "tok": me["tok"]}}) for t in tabs))
             codes = [await drain(t) for t in (winner, *tabs)]
             game = w.server.app[OCTAGON].games[pin]
             assert len(game.players) == 1 and game.players[me["id"]].conn is not None  # dublikat yo'q
@@ -337,10 +338,10 @@ async def _restart_scenario(tmp_path, keep):
     body = {"topicId": tid, "timeLimit": 20, "shuffleQuestions": False, "shuffleAnswers": False}  # 1-savol: to'g'risi A
     pin = (await call(owner, "POST", "/api/octagon/games", body))[1]["game"]["pin"]
     phone = await phone_client.ws_connect("/ws/octagon")
-    await phone.send_json({"t": "join", "d": {"v": 2, "av": 7, "pin": pin, "nick": "Ali"}})
+    await phone.send_json({"t": "join", "d": {"v": PV, "av": 7, "pin": pin, "nick": "Ali"}})
     me = await recv(phone, "w")
     host = await owner.ws_connect("/ws/octagon")
-    await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
+    await host.send_json({"t": "host", "d": {"v": PV, "pin": pin}})
     await recv(host, "h")
     await host.send_json({"t": "start", "d": {}})
     s = await recv_state(phone, "question_active")
@@ -365,9 +366,9 @@ async def _restart_scenario(tmp_path, keep):
         assert (await call(owner, "POST", "/api/auth/login", {"login": "admin", "password": "1234"}))[0] == 200
         games = (await call(owner, "GET", "/api/octagon/games"))[1]["games"]
         host = await owner.ws_connect("/ws/octagon")
-        await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
+        await host.send_json({"t": "host", "d": {"v": PV, "pin": pin}})
         phone = await phone_client.ws_connect("/ws/octagon")
-        await phone.send_json({"t": "resume", "d": {"v": 2, "pin": pin, "id": me["id"], "tok": me["tok"]}})
+        await phone.send_json({"t": "resume", "d": {"v": PV, "pin": pin, "id": me["id"], "tok": me["tok"]}})
         return code, games, host, phone, me, res["sc"]
     except Exception:
         await owner.close()

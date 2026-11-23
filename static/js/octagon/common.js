@@ -73,10 +73,13 @@ export function formatPin(pin) {
 
 // Protokol versiyasi — serverdagi app/octagon.py PROTOCOL_VERSION bilan bir xil. Server boshqa versiyani ko'rsa,
 // "reload" xabarini yuboradi: eski (keshdagi) sahifa jim buzilmaydi, "sahifani yangilang" deydi.
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3; // app/octagon.PROTOCOL_VERSION (3 — yakuniy ochilish bosqichlari)
 
 // Bosqichlar — app/octagon_flow.PHASES bilan bir xil tartibda (o'quvchilarga bosqich nomi emas, indeksi yuboriladi).
-export const PHASES = ['lobby', 'topic_intro', 'question_read', 'question_active', 'question_result', 'leaderboard', 'podium'];
+export const PHASES = [
+  'lobby', 'topic_intro', 'question_read', 'question_active', 'question_result', 'leaderboard',
+  'podium_intro', 'reveal_3rd', 'reveal_2nd', 'reveal_1st', 'final_results',
+];
 
 // Avatarlar — app/octagon.py AVATARS bilan bir xil tartibda (simda faqat indeks; rasm fayllari yo'q).
 export const AVATARS = [

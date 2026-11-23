@@ -176,6 +176,9 @@ def octagon_env(tmp_path, monkeypatch):
     """Soxta soatli Octagon muhiti (boshqa test modullari ham o'z env fixture'ida ishlatadi)."""
     monkeypatch.setattr(config, "OCTAGON_INTRO", 5.0)
     monkeypatch.setattr(config, "OCTAGON_READ", 5.0)
+    monkeypatch.setattr(config, "OCTAGON_PODIUM_INTRO", 3.0)
+    monkeypatch.setattr(config, "OCTAGON_REVEAL_STEP", 3.5)
+    monkeypatch.setattr(config, "OCTAGON_REVEAL_WINNER", 6.0)
     db = Database(tmp_path / "oct.db")
     owner_id = db.create_user("ustoz", "x", False, True)
     student_id = db.create_user("talaba", "x", False, False)
@@ -228,6 +231,43 @@ def to_question(env, game):
     assert game.phase == flow.READ, game.phase
     env.clock.advance(config.OCTAGON_READ)
     assert game.phase == flow.ACTIVE
+
+
+def finish_reveal(env, game):
+    """Yakuniy ochilish (podium_intro -> 3-, 2-, 1-o'rin) taymerlari bilan oxirigacha — final_results."""
+    env.clock.advance(config.OCTAGON_PODIUM_INTRO + 2 * config.OCTAGON_REVEAL_STEP + config.OCTAGON_REVEAL_WINNER)
+    assert game.phase == flow.FINAL, game.phase
+
+
+def next_question(env, game):
+    """Natijadan keyingi savolga (reyting orqali); oxirgi savoldan keyin — yakuniy ochilish boshlanadi."""
+    act(env, game, "next")
+    if game.phase == flow.BOARD:
+        act(env, game, "next")
+
+
+def reach_phase(env, game, players, phase):
+    """O'yinni berilgan bosqichga olib boradi (yakuniy ochilish — 1-savoldan keyin «Tugatish» bilan, 3 o'yinchi)."""
+    order = list(flow.PHASES)
+    if phase == "lobby":
+        return
+    act(env, game, "start")
+    if order.index(phase) >= order.index("question_read"):
+        env.clock.advance(config.OCTAGON_INTRO)
+    if order.index(phase) >= order.index("question_active"):
+        env.clock.advance(config.OCTAGON_READ)
+    if order.index(phase) >= order.index("question_result"):
+        for c in players:
+            answer(env, c, 0, 0)
+    if phase == "leaderboard":
+        act(env, game, "next")
+    if order.index(phase) >= order.index("podium_intro"):
+        act(env, game, "end")
+    for later, wait in (("reveal_3rd", config.OCTAGON_PODIUM_INTRO), ("reveal_2nd", config.OCTAGON_REVEAL_STEP),
+                        ("reveal_1st", config.OCTAGON_REVEAL_STEP), ("final_results", config.OCTAGON_REVEAL_WINNER)):
+        if order.index(phase) >= order.index(later):
+            env.clock.advance(wait)
+    assert game.phase == phase
 
 
 def left_ms(env, s):
@@ -303,13 +343,13 @@ def test_full_game_scores_ranks_and_podium(env):
     assert game.phase == "question_result"
     assert ali.last("s")["res"] == {"ok": None, "pts": 0, "co": 1}
     assert olim.last("s")["res"]["pts"] == calculate_score(True, 1000, 10_000) == 950
-    act(env, game, "next")
-    act(env, game, "next")  # oxirgi savol -> podium
-    assert game.phase == "podium"
+    act(env, game, "next")  # oxirgi savol natijasidan — reytingsiz, to'g'ridan-to'g'ri yakuniy ochilishga
+    assert game.phase == "podium_intro"
+    finish_reveal(env, game)
     final = host.last("h")
     assert [(r["nick"], r["score"]) for r in final["ranking"]] == [("Ali", 1000), ("Olim", 950), ("Vali", 750)]
     s = olim.last("s")
-    assert ph(s) == "podium" and s["k"] == 2 and s["sc"] == 950 and s["top"][0] == ["Ali", 1000, 0]
+    assert ph(s) == "final_results" and s["k"] == 2 and s["sc"] == 950 and s["top"][0] == [1, "Ali", 1000, 0]
 
 
 def test_configured_timer_is_used(env):
@@ -442,9 +482,8 @@ def test_student_messages_never_contain_question_or_answer_text(env):
         for j, c in enumerate(conns[:2]):
             answer(env, c, i, j)
         env.clock.advance(5)
-        act(env, game, "next")
-        act(env, game, "next")
-    assert game.phase == "podium"
+        next_question(env, game)
+    finish_reveal(env, game)
     for c in conns:
         raw = json.dumps(c.msgs, ensure_ascii=False)
         assert not any(t in raw for t in texts)
@@ -453,7 +492,7 @@ def test_student_messages_never_contain_question_or_answer_text(env):
             if t == "s" and ph(d) in ("lobby", "topic_intro", "question_read", "question_active"):
                 assert "res" not in d and "co" not in json.dumps(d)
             if t == "s":
-                assert set(d) <= {"p", "q", "o", "ps", "pe", "a", "sc", "k", "pl", "res", "top"}
+                assert set(d) <= {"p", "q", "o", "ps", "pe", "a", "sc", "k", "pl", "res", "top", "dk", "nw", "bh", "nc"}
 
 
 def test_long_option_questions_trimmed_or_skipped(env):
@@ -523,8 +562,9 @@ def test_end_early_and_cancel_in_lobby(env):
     answer(env, a, 0, 0)
     act(env, game, "next")
     act(env, game, "next")  # 2-savol: tayyorlaning
-    act(env, game, "end")
-    assert game.phase == "podium" and game.ended_early and len(game.stats) == 1 and ph(a.last("s")) == "podium"
+    act(env, game, "end")  # 1-savolda ball olingan — yakuniy ochilish shu ballar bilan
+    assert game.phase == "podium_intro" and game.ended_early and len(game.stats) == 1 and ph(a.last("s")) == "podium_intro"
+    assert game.podium == [a.last("w")["id"]]
     # lobbida "tugatish" — o'yin bekor qilinadi
     game2 = make_game(env)
     b = join(env, game2, "Vali")
@@ -687,9 +727,8 @@ def test_player_tokens_never_reach_host_or_other_players(env):
         to_question(env, game)
         answer(env, conns[0], i, 0)
         env.clock.advance(5)
-        act(env, game, "next")
-        act(env, game, "next")
-    assert game.phase == "podium"
+        next_question(env, game)
+    finish_reveal(env, game)
     host_blob = json.dumps([host.msgs, env.hub.host_state(game), env.hub.game_summary(game)])
     for i, tok in enumerate(tokens):
         assert len(tok) >= 32 and tok not in host_blob

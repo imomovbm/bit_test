@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from app import octagon
+from app import config, octagon
 from app.octagon import AVATARS, OctagonError, clean_avatar
-from test_octagon import PV, FakeConn, act, answer, join, make_game, ph, to_question
+from test_octagon import PV, FakeConn, act, answer, finish_reveal, join, make_game, ph, to_question
 from test_octagon import octagon_env
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -60,7 +60,7 @@ def test_join_requires_a_valid_avatar_index_and_never_trusts_strings(env):
 
 
 def test_avatar_changes_only_in_lobby_and_persists_across_reconnect(env):
-    game = make_game(env, questionCount=1, timeLimit=5)
+    game = make_game(env, questionCount=2, timeLimit=5)
     a = join(env, game, "Ali", av=2)
     b = join(env, game, "Vali", av=2)  # bir xil avatar ikki o'yinchida — ruxsat etilgan
     host = FakeConn()
@@ -87,10 +87,17 @@ def test_avatar_changes_only_in_lobby_and_persists_across_reconnect(env):
     board = host.last("h")["leaderboard"]
     assert [(r["nick"], r["av"]) for r in board] == [("Ali", 9), ("Vali", 2)]
     act(env, game, "next")
+    to_question(env, game)
+    act(env, game, "skip")
+    act(env, game, "next")   # oxirgi savol -> yakuniy ochilish: avatar podiumda ham
+    env.clock.advance(config.OCTAGON_PODIUM_INTRO)
+    assert [(r["place"], r["nick"], r["av"]) for r in host.last("h")["podium"]] == [(2, "Vali", 2)]
+    finish_reveal(env, game)
     h = host.last("h")
-    assert h["phase"] == "podium" and [(r["nick"], r["av"]) for r in h["ranking"]] == [("Ali", 9), ("Vali", 2)]
+    assert h["phase"] == "final_results" and [(r["nick"], r["av"]) for r in h["ranking"]] == [("Ali", 9), ("Vali", 2)]
+    assert [(r["place"], r["av"]) for r in h["podium"]] == [(1, 9), (2, 2)]
     s = b.last("s")
-    assert ph(s) == "podium" and s["top"] == [["Ali", 1000, 9], ["Vali", 0, 2]]
+    assert ph(s) == "final_results" and s["top"] == [[1, "Ali", 1000, 9], [2, "Vali", 0, 2]]
 
 
 def test_avatar_message_needs_a_joined_player(env):

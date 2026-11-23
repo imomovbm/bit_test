@@ -13,6 +13,7 @@ import pytest
 from app import config
 from test_octagon_api import call, recv, recv_state
 from test_octagon_security import world
+from app.octagon import PROTOCOL_VERSION as PV  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -23,13 +24,13 @@ def short_phases(monkeypatch):
 
 async def joined(client, pin, nick, av=0):
     ws = await client.ws_connect("/ws/octagon")
-    await ws.send_json({"t": "join", "d": {"v": 2, "pin": pin, "nick": nick, "av": av}})
+    await ws.send_json({"t": "join", "d": {"v": PV, "pin": pin, "nick": nick, "av": av}})
     return ws, await recv(ws, "w")
 
 
 async def host_socket(client, pin):
     ws = await client.ws_connect("/ws/octagon")
-    await ws.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
+    await ws.send_json({"t": "host", "d": {"v": PV, "pin": pin}})
     await recv(ws, "h")
     return ws
 
@@ -45,7 +46,7 @@ def test_tampered_reconnect_record_cannot_change_score_name_avatar_or_role(tmp_p
             await ws.send_json({"t": "a", "d": {"q": s["q"], "o": 3}})   # noto'g'ri javob — 0 ball
             await ws.close()
             # o'zgartirilgan yozuv: o'zining id/token i + ball, ism, avatar, rol "o'zgartirilgan"
-            forged = {"v": 2, "pin": pin, "id": me["id"], "tok": me["tok"], "sc": 99999, "score": 99999, "nick": "Admin",
+            forged = {"v": PV, "pin": pin, "id": me["id"], "tok": me["tok"], "sc": 99999, "score": 99999, "nick": "Admin",
                       "av": 29, "role": "teacher", "isTeacher": True, "host": True, "at": 4102444800000}
             ws2 = await w.guest.ws_connect("/ws/octagon")
             await ws2.send_json({"t": "resume", "d": forged})
@@ -77,7 +78,7 @@ def test_another_players_token_from_storage_is_useless(tmp_path):
             for data in attempts:
                 c = await w.client()
                 ws = await c.ws_connect("/ws/octagon")
-                await ws.send_json({"t": "resume", "d": {"v": 2, "pin": pin, **data}})
+                await ws.send_json({"t": "resume", "d": {"v": PV, "pin": pin, **data}})
                 err = await recv(ws, "e")
                 assert err["c"] in ("gone", "pin"), data
                 await ws.close()

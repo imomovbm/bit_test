@@ -59,6 +59,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Octagon E2E (every screen at 360/375/768/1280 px)
         run: node e2e/octagon.e2e.js
+      - name: Octagon rank changes and podium reveal E2E (order, timing, no leaks in real frames, reconnects)
+        run: node e2e/podium.e2e.js
       - name: Duel lobby E2E
         run: node e2e/lobby.e2e.js
       - name: Screenshots

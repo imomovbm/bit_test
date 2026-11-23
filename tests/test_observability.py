@@ -12,6 +12,7 @@ from app.keys import ASSETS, LIFECYCLE
 from app.observability import ERRORS, METRICS, JsonFormatter, Metrics
 from app.server import create_app
 from test_octagon_api import QUESTIONS, call, recv, recv_state
+from app.octagon import PROTOCOL_VERSION as PV  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -177,18 +178,19 @@ def test_full_game_is_measured_and_logs_hold_no_personal_data(tmp_path, caplog):
         phone_client = TestClient(client.server)
         await phone_client.start_server()
         phone = await phone_client.ws_connect("/ws/octagon")
-        await phone.send_json({"t": "join", "d": {"v": 2, "pin": pin, "nick": "Zulfiya Karimova", "av": 1}})
+        await phone.send_json({"t": "join", "d": {"v": PV, "pin": pin, "nick": "Zulfiya Karimova", "av": 1}})
         me = await recv(phone, "w")
         host = await client.ws_connect("/ws/octagon")
-        await host.send_json({"t": "host", "d": {"v": 2, "pin": pin}})
+        await host.send_json({"t": "host", "d": {"v": PV, "pin": pin}})
         await recv(host, "h")
         await host.send_json({"t": "start", "d": {}})
         s = await recv_state(phone, "question_active")
         await phone.send_json({"t": "a", "d": {"q": s["q"], "o": 1}})
         await recv_state(phone, "question_result")
-        for _ in range(2):
-            await host.send_json({"t": "next", "d": {}})
-        await recv_state(phone, "podium")
+        await host.send_json({"t": "next", "d": {}})   # oxirgi savol -> yakuniy ochilish
+        await recv_state(phone, "podium_intro")
+        await host.send_json({"t": "skip", "d": {}})   # ochilishni o'tkazib yuborish -> natijalar
+        await recv_state(phone, "final_results")
         await host.send_json({"t": "close", "d": {}})
         await phone.close()
         await host.close()

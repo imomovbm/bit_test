@@ -345,10 +345,13 @@ body {
 
 .pl-rank {
   margin: 0;
+  width: 100%;
+  max-width: 420px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 12px 24px;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 16px;
   border-radius: 18px;
   background: var(--oc-surface);
   border: 1px solid var(--oc-line);
@@ -356,7 +359,21 @@ body {
   font-size: 16px;
   font-variant-numeric: tabular-nums;
 }
-.pl-rank b { color: var(--oc-ink); font-size: 22px; }
+.pl-rank-score { margin: 0; display: flex; align-items: center; gap: 6px; }
+.pl-rank-score b { color: var(--oc-ink); font-size: 22px; }
+
+/* o'rin o'zgarishi: rang + strelka + son + matn (rang yolg'iz emas) */
+.pl-move { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px 8px; font-weight: 800; }
+.pl-move-mark { display: inline-flex; align-items: center; min-height: 30px; padding: 0 10px; border-radius: 99px; border: 2px solid currentColor; font-weight: 900; font-size: 17px; white-space: nowrap; }
+.pl-move-to { color: var(--oc-ink-3); }
+.pl-move-place { color: var(--oc-ink); font-size: 22px; }
+.pl-move-of { color: var(--oc-ink-3); font-size: 15px; }
+.pl-move-text { flex-basis: 100%; font-size: 15px; }
+.pl-move.up .pl-move-mark, .pl-move.up .pl-move-text { color: var(--oc-green-hi); }
+.pl-move.down .pl-move-mark, .pl-move.down .pl-move-text { color: var(--oc-red-hi); }
+.pl-move.same .pl-move-mark { color: var(--oc-ink-2); }
+.pl-move.new .pl-move-mark { background: var(--oc-warn); border-color: var(--oc-warn); color: var(--oc-warn-ink); letter-spacing: 0.05em; }
+.pl-behind { margin: 0; color: var(--oc-ink-2); font-size: 15px; overflow-wrap: anywhere; }
 
 /* ---------------------------------------------------------------------- podium */
 .pl-medal { width: clamp(120px, 34vw, 156px); color: var(--oc-medal-ink); --ring: var(--oc-ring-light); --fill: var(--oc-gold); line-height: 1; }
@@ -392,7 +409,17 @@ body {
 .pl-top3-n { width: 34px; height: 34px; display: grid; place-items: center; flex: none; font-weight: 900; color: var(--oc-medal-ink); background: var(--oc-gold); }
 .pl-top3-n.m2 { background: var(--oc-silver); }
 .pl-top3-n.m3 { background: var(--oc-bronze); }
-.pl-top3-nick { flex: 1; min-width: 0; text-align: left; overflow-wrap: anywhere; line-height: 1.2; font-weight: 800; } /* uzun ism o'raladi, kesilmaydi */
+.pl-top3-nick { flex: 1; min-width: 0; text-align: left; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; line-height: 1.2; font-weight: 800; } /* uzun ism — 2 qatorgacha, keyin «…» (to'liq ism title da) */
+.pl-top3 li { animation: oc-pop 0.3s ease-out backwards; }
+
+/* yakuniy ochilish: sir saqlanadi; o'z o'rni e'lon qilinganda — shaxsiy karta (1-o'ringa konfetti, faqat CSS) */
+.pl-suspense .pl-badge { --ring: var(--oc-accent-2); }
+.pl-suspense.intro h1 { animation: oc-breathe 1.2s ease-in-out infinite; }
+.pl-reveal-me { position: relative; overflow-x: clip; overflow-clip-margin: 4px; } /* konfetti ekran chetidan chiqmaydi */
+.pl-reveal-me .oc-burst { top: clamp(84px, 22vw, 104px); }
+.pl-reveal-me.fresh .pl-medal { animation: pl-land 0.7s cubic-bezier(.2, 1.4, .4, 1) both; }
+.pl-reveal-me.fresh h1, .pl-reveal-me.fresh .pl-place { animation: oc-rise 0.4s 0.45s ease-out both; }
+@keyframes pl-land { from { transform: translateY(40px) scale(0.5); opacity: 0; } to { transform: none; opacity: 1; } }
 .pl-top3 b { font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------------ avatarlar (emoji — rasm fayllarisiz) */

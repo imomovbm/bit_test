@@ -31,18 +31,29 @@ tested, and an illegal transition raises an error rather than being silently acc
 | `topic_intro` (1) | `TD_OCTAGON_INTRO`, 5 s, once | topic name, countdown, Skip | topic name, countdown | rejected (`early`) |
 | `question_read` (2) | `TD_OCTAGON_READ`, 5 s | question text, countdown, "open answers now" | coloured shapes, countdown, disabled | rejected (`early`) |
 | `question_active` (3) | question time (5–120 s) | question, options, answered count | shape buttons | accepted until the deadline; time measured from the start of this phase |
-| `question_result` (4) | until Next | answer distribution, correct answer | correct / wrong, points, rank | late |
-| `leaderboard` (5) | until Next | top 5 | own score and rank | — |
-| `podium` (6) | until closed | final ranking | top 3 and own place | — |
+| `question_result` (4) | until Next | answer distribution, correct answer | correct / wrong, points, rank and its change (no rank after the last question) | late |
+| `leaderboard` (5) | until Next (never after the last question) | top 5 with ▲/▼/–/NEW, points gained, rows sliding to their new place, biggest jump | same as result | — |
+| `podium_intro` (6) | `TD_OCTAGON_PODIUM_INTRO`, 3 s | "And the winners are…", empty podium | "Who made the podium?" | — |
+| `reveal_3rd` (7) | `TD_OCTAGON_REVEAL_STEP`, 3.5 s | 3rd-place bar rises, then avatar, name and score | 3rd place only on that student's phone; others: announced list | — |
+| `reveal_2nd` (8) | `TD_OCTAGON_REVEAL_STEP`, 3.5 s | 2nd place | same | — |
+| `reveal_1st` (9) | `TD_OCTAGON_REVEAL_WINNER`, 6 s | 1st place with CSS confetti | same | — |
+| `final_results` (10) | until closed | podium, full ranking (top 10 highlighted, search), CSV | own final rank, score, correct answers; top 3 | — |
 
 How the phases connect:
 
 ```
 lobby ─start─▶ topic_intro ─timer/skip─▶ question_read ─timer/skip─▶ question_active ─timer/all answered/skip─▶
-question_result ─next─▶ leaderboard ─next─▶ question_read (next question) … or podium (last question / End)
+question_result ─next─▶ leaderboard ─next─▶ question_read (next question) …
+question_result of the last question (or End) ─next─▶ podium_intro ─timer/next─▶ reveal_3rd ─▶ reveal_2nd ─▶ reveal_1st ─▶ final_results
+                                                       (skip from any reveal step ─▶ final_results)
 ```
 
-- **End** from any phase goes to `podium`, counting only questions that were opened.
+- **End** from any phase starts the reveal on the scores at that moment, counting only questions that were opened. If
+  nobody has scored yet, it goes straight to `final_results` (no podium to reveal).
+- With fewer than three players the missing steps are dropped: two players → `reveal_2nd`, `reveal_1st`; one player →
+  `reveal_1st`; nobody left → `final_results` with "nobody is left in the game".
+- After the last question there is no leaderboard and the result carries no ranks: the final standings are only
+  revealed step by step.
 - **Close** removes the game.
 - Repeated `next`/`skip`/`end` messages, from one window or two, carry the phase and question they refer to.
   A stale one is ignored, so actions are idempotent.
@@ -50,6 +61,21 @@ question_result ─next─▶ leaderboard ─next─▶ question_read (next ques
 **Time.** Decisions use the server's monotonic clock: deadlines, "too late" and points. Clients receive each phase's
 start and end as Unix milliseconds (`ps`/`pe`, `phaseStart`/`phaseEnd`). They measure the clock offset once per
 connection (`sync`, keeping the sample with the lowest round trip) and use it only to draw countdowns.
+
+**Rank changes** (`rank_changes` in `app/octagon_scoring.py`, a pure function): when a question closes, the server ranks
+the players before the question's points are added (only players who were in the previous ranking) and again after,
+with the same order as the leaderboard. `delta = previous rank − new rank`.
+
+- Question 1 has no previous ranking: no arrows.
+- A player who joined after the start has no previous rank on their first ranking: "NEW", then normal changes.
+- Disconnected players stay in the ranking; non-answerers score 0 and can drop.
+- `biggest_jump` picks the largest climb of at least two places; on a tie, the higher new rank wins.
+
+**Podium** (`podium` in `app/octagon_scoring.py`): when the questions end, the top three (fewer if there are fewer
+players) are frozen in the game. Kicking is refused from then on, and players who join during the reveal are ranked
+after everyone who played, so the announced places cannot change. `revealed_places(phase, places)` in
+`app/octagon_flow.py` is the only rule for what may be sent: 3rd place from `reveal_3rd`, 2nd from `reveal_2nd`, 1st from
+`reveal_1st`. The server applies it to every student and teacher message, including reconnects and late joins.
 
 **Scoring** (`app/octagon_scoring.py`, unchanged from v1):
 
@@ -62,7 +88,8 @@ connection (`sync`, keeping the sample with the lowest round trip) and use it on
 
 Messages are JSON objects `{"t": type, "d": data}` on `/ws/octagon`: 4 KB maximum, 60 messages per 10 s.
 
-**Versioning.** The handshake messages `check`, `join`, `resume` and `host` must carry `v: 2`.
+**Versioning.** The handshake messages `check`, `join`, `resume` and `host` must carry `v: 3` (3 added the reveal
+phases; phase indexes 6–10 changed meaning, so open v2 pages are asked to reload).
 
 - On a mismatch the server answers `reload {v}` and the page shows "the site was updated — reload".
 - A version-less (v1) page also gets an error in the old format that it can display.
@@ -85,8 +112,8 @@ Messages are JSON objects `{"t": type, "d": data}` on `/ws/octagon`: 4 KB maximu
 | Server → client | Fields |
 |---|---|
 | `w` (welcome) | `v, pin, id, nick, av, tn` (topic name), `n` (question count), `tok` (only in the first welcome after joining) |
-| `s` (student state) | `p` (phase index), `q`, `o` (option count), `ps`/`pe` (phase start/end, Unix ms), `a` (own answer), `sc` (score), plus `k`/`pl` (rank/players, result, leaderboard and podium only), `res {ok, pts, co}` (after the question closes), `top` (`[nick, score, av]` ×3, podium only). Never question text, option text or the correct answer before the reveal |
-| `h` (teacher state) | `v, pin, phase, index, total, timeLimit, settings, playerCount, connectedCount, locked, phaseStart/phaseEnd`, plus per phase: `players`, `question`, `answered`, `counts`, `leaderboard`, `ranking`. `qr, joinUrl, joinBase, topicName, createdAt` are sent once per connection (`HOST_STATIC`) |
+| `s` (student state) | `p` (phase index), `q`, `o` (option count), `ps`/`pe` (phase start/end, Unix ms), `a` (own answer), `sc` (score), `res {ok, pts, co}` (after the question closes). Result/leaderboard, not after the last question: `k`/`pl` (own rank/players), `dk` (rank change; absent after question 1), `nw` (NEW), `bh [points, nick]` (the player just above, if within 1000 points). Reveal: `top` (`[place, nick, score, av]`, announced places only) and `k` only once the student's own place is announced. Final: `k`, `pl`, `nc` (correct answers), `top`. Never question text, option text or the correct answer before the reveal |
+| `h` (teacher state) | `v, pin, phase, index, total, timeLimit, settings, playerCount, connectedCount, locked, phaseStart/phaseEnd`, plus per phase: `players`, `question`, `answered`, `counts`, `leaderboard` (top 5 with `gained`, `d`, `new`) and `jump`, and in the reveal `places` and `podium` (announced places only); `ranking` and `played` in `final_results`. `qr, joinUrl, joinBase, topicName, createdAt` are sent once per connection (`HOST_STATIC`) |
 | `e` | `c` (code: `pin`, `rate`, `nick`, `taken`, `full`, `locked`, `avatar`, `early`, `late`, `gone`, `started`, `bad`, …), `m` (Uzbek text), `status` |
 | `k` | `r`: `kicked` / `ended` / `replaced` |
 | `reload` | `v`: the server's protocol version |
@@ -156,8 +183,9 @@ default limits stop well before that:
 Raise them deliberately and watch `octagon_handle_ms` and `octagon_broadcast_ms` p95 on `/metrics`.
 
 **Restarts.** On SIGTERM the running games are written next to the database and restored by the next process,
-together with their timers. The downtime counts as a pause. Clients reconnect by themselves. See
-[runbook.md](runbook.md).
+together with their timers, including a reveal in progress. The downtime counts as a pause. Clients reconnect by
+themselves. The saved format is version 2 (frozen podium, join markers); a version-1 file from the previous release is
+still read. See [runbook.md](runbook.md).
 
 ## Observability
 

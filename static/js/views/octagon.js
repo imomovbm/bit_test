@@ -1,7 +1,9 @@
 // Octagon — o'qituvchi ekrani (proyektor yoki telefon): sozlash -> lobbi (PIN + QR) -> mavzu -> savolni o'qish -> savol
-// -> natija -> reyting -> ... -> podium. O'yin holati serverda: sahifa yangilansa yoki aloqa uzilsa, o'qituvchi o'sha
-// o'yinni boshqarishda davom etadi. Sanoqlar serverdagi mutlaq vaqtlardan (phaseStart/phaseEnd) ko'rsatiladi.
-import { h, icon, toast, confirmDialog, spinner, emptyState, beep, confetti } from '../lib.js';
+// -> natija -> reyting (o'rin o'zgarishlari bilan) -> ... -> g'oliblarni e'lon qilish (3-, 2-, 1-o'rin) -> yakuniy
+// natijalar. O'yin holati serverda: sahifa yangilansa yoki aloqa uzilsa, o'qituvchi o'sha o'yinni boshqarishda davom
+// etadi. Sanoqlar serverdagi mutlaq vaqtlardan (phaseStart/phaseEnd) ko'rsatiladi; podium o'rinlari serverdan faqat
+// e'lon qilingan paytda keladi.
+import { h, icon, toast, confirmDialog, spinner, emptyState, beep } from '../lib.js';
 import { api } from '../api.js';
 import {
   GAME_NAME, OCTAGON_RING, PROTOCOL_VERSION, SHAPES, avatarEmoji, countdownSeconds, formatPin, octagonLoader, octagonMark, serverClock,
@@ -43,7 +45,7 @@ const T = {
     ['Boshlash', 'Hamma qoʻshilgach «Boshlash» tugmasini bosing: avval mavzu nomi hamma ekranda koʻrinadi. Siz bosmaguningizcha oʻyin boshlanmaydi; kechikkanlar oʻyin davomida ham qoʻshila oladi.'],
     ['Savol', 'Har bir savol avval bir necha soniya faqat shu ekranda oʻqiladi, soʻng javoblar ochiladi: oʻquvchilar telefonida rangli shakllar. Hamma javob bersa yoki vaqt tugasa, savol yopiladi.'],
     ['Ball', 'Toʻgʻri javob: 500 ball + tezlik uchun 500 gacha. 0,5 soniyada javob — 1000 ball, vaqt oxirida — 500. Notoʻgʻri yoki javobsiz — 0.'],
-    ['Natijalar', 'Har savoldan keyin javoblar taqsimoti va eng yaxshi 5 talik, oxirida — podium.'],
+    ['Natijalar', 'Har savoldan keyin javoblar taqsimoti va eng yaxshi 5 talik (kim necha oʻrin koʻtarildi yoki tushdi). Oxirida gʻoliblar birma-bir eʼlon qilinadi: 3-, 2-, soʻng 1-oʻrin.'],
   ],
   pin: 'PIN',
   joinAt: 'Qoʻshilish:',
@@ -78,22 +80,46 @@ const T = {
   skip: 'Savolni yakunlash',
   next: 'Keyingi',
   showBoard: 'Reyting',
+  showWinners: 'Gʻoliblar',
   nextQuestion: 'Keyingi savol',
   finalResults: 'Yakuniy natijalar',
   correctCount: (c, n) => `${c} ta oʻquvchi toʻgʻri javob berdi (${n} ta javobdan)`,
   leaderboard: 'Eng yaxshi 5 talik',
   noPlayers: 'Hali oʻyinchi yoʻq',
   podium: 'Gʻoliblar',
+  rankUp: (n) => `${n} oʻringa koʻtarildi`,
+  rankDown: (n) => `${n} oʻringa tushdi`,
+  rankSame: 'Oʻrni oʻzgarmadi',
+  rankNew: 'YANGI',
+  rankNewTitle: 'Oʻyinga keyinroq qoʻshildi — reytingda birinchi marta',
+  gainedTitle: 'Shu savolda olingan ball',
+  bigJump: 'Eng katta sakrash',
+  winnersIntro: 'Va gʻoliblar…',
+  winnersSub: 'Kim podiumga chiqdi?',
+  placeName: (k) => `${k}-oʻrin`,
+  announced: (k, nick, score) => `${k}-oʻrin: ${nick}, ${fmt(score)} ball`,
+  nextPlace: 'Keyingi oʻrin',
+  showAll: 'Natijalar',
+  skipReveal: 'Natijalarga oʻtish',
+  searchNick: 'Ismni qidirish',
+  noMatch: 'Bunday ism topilmadi',
+  csv: 'CSV yuklab olish',
+  csvTitle: 'Natijalarni yuklab olish (CSV: ism, avatar, ball, oʻrin, toʻgʻri javoblar)',
+  csvHead: ['Ism', 'Avatar', 'Ball', 'Oʻrin', 'Toʻgʻri javoblar'],
+  emptyGame: 'Oʻyinda hech kim qolmadi',
+  emptyGameText: 'Natijalar yoʻq: barcha oʻquvchilar oʻyindan chiqarilgan.',
+  zeroCase: 'Hech kim ball toʻplamadi',
+  zeroCaseText: 'Oʻyin muddatidan oldin tugatildi — gʻoliblar eʼlon qilinmadi. Oʻrinlar javob vaqti boʻyicha.',
+  revealing: 'gʻoliblar eʼlon qilinmoqda',
   endedEarly: 'Oʻyin muddatidan oldin yakunlandi',
   played: (p, n) => `${p}/${n} ta savol oʻynaldi`,
-  fullRanking: 'Barcha natijalar',
   correctShort: (c) => `${c} ta toʻgʻri`,
   newGame: 'Yangi oʻyin',
   toGames: 'Oʻyinlar paneli',
   end: 'Tugatish',
   endConfirmTitle: 'Oʻyinni tugatasizmi?',
   endConfirmLobby: 'Oʻyin bekor qilinadi va oʻquvchilar undan chiqariladi.',
-  endConfirmGame: 'Hozirgacha toʻplangan ballar bilan yakuniy natijalar (podium) koʻrsatiladi.',
+  endConfirmGame: 'Hozirgacha toʻplangan ballar bilan gʻoliblar eʼlon qilinadi va yakuniy natijalar koʻrsatiladi.',
   endOk: 'Tugatish',
   fullscreen: 'Toʻliq ekran (F)',
   reconnecting: 'Aloqa uzildi — qayta ulanmoqda…',
@@ -111,6 +137,16 @@ const T = {
 };
 
 const PREFS_KEY = 'td-octagon-setup';
+const FINALE = ['podium_intro', 'reveal_3rd', 'reveal_2nd', 'reveal_1st'];   // app/octagon_flow.SHOWING
+const FINISHED = [...FINALE, 'final_results'];                              // app/octagon_flow.FINISHED
+const STEP_PLACE = { reveal_3rd: 3, reveal_2nd: 2, reveal_1st: 1 };          // shu qadamda e'lon qilinadigan o'rin
+const MOVE_MS = 700;      // reytingdagi qatorlar siljishi (FLIP), 600–800 ms
+const MOVE_DELAY = 450;   // avval eski tartib ko'rinadi, keyin qatorlar yangi joyiga suriladi
+const RISE_MS = 1200;     // podium ustuni ko'tarilishi (CSS bilan bir xil: --oc-rise-ms)
+
+function reducedMotion() {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 const TIME_PRESETS = [10, 20, 30, 60];
 const COUNT_PRESETS = [5, 10, 15, 20, 30];
 
@@ -308,14 +344,14 @@ function setupView(root, ctx) {
       return;
     }
     if (!alive) return;
-    const active = games.filter((g) => g.phase !== 'podium');
+    const active = games.filter((g) => g.phase !== 'final_results');
     activeBox.replaceChildren(active.length ? h('div.card.games-active',
       h('h2.card-title', icon('activity', 18), T.activeTitle),
       h('ul.adm-list', active.map((g) => h('li.adm-row',
         h('span.adm-act-ic', icon('octagon', 18)),
         h('div.adm-row-main',
           h('div.adm-row-title', `PIN ${formatPin(g.pin)} · ${g.topicName}`),
-          h('div.adm-row-sub', `${T.playersJoined(g.players)} · ${g.index >= 0 ? T.question(g.index + 1, g.total) : 'lobbi'}`)),
+          h('div.adm-row-sub', `${T.playersJoined(g.players)} · ${FINALE.includes(g.phase) ? T.revealing : g.index >= 0 ? T.question(g.index + 1, g.total) : 'lobbi'}`)),
         h('a.btn.primary.sm', { href: `#/games/octagon/${g.pin}` }, icon('play', 14), T.resume),
         h('button.icon-btn.danger', { type: 'button', title: T.close, 'aria-label': `${T.close}: ${g.pin}`, onclick: () => closeGame(g) }, icon('x', 16)))))) : '');
   }
@@ -597,7 +633,7 @@ function hostView(root, pinParam) {
     countPill.querySelector('b').textContent = String(g.playerCount);
     countPill.title = T.online(g.connectedCount, g.playerCount);
     joinLine.replaceChildren(h('span', T.joinAt), h('b', g.joinBase.replace(/^https?:\/\//, '') + '/play'));
-    endBtn.hidden = g.phase === 'podium';
+    endBtn.hidden = FINISHED.includes(g.phase);
     paintLock(g);
     const key = `${g.phase}:${g.index}`;
     section.className = `screen oct-host phase-${g.phase}`;
@@ -605,13 +641,15 @@ function hostView(root, pinParam) {
       update(g); // bosqich o'zgarmagan: faqat sonlarni yangilaymiz (lobbida — o'yinchilar ro'yxati)
       return;
     }
+    const finale = stage.querySelector('[data-finale]');
     lastPhaseKey = key;
     lastBoard = boardKey(g);
-    if (g.phase === 'question_active') play('tick');
-    if (g.phase === 'podium') {
-      play('win');
-      confetti(themeColors());
+    if (FINALE.includes(g.phase) && finale && prev && FINALE.includes(prev.phase)) {
+      fillFinale(finale, g, false); // podium ekrani qoladi: faqat yangi e'lon qilingan o'rin qo'shiladi
+      tick();
+      return;
     }
+    if (g.phase === 'question_active') play('tick');
     stage.replaceChildren(({
       lobby: lobbyScreen,
       topic_intro: introScreen,
@@ -619,13 +657,18 @@ function hostView(root, pinParam) {
       question_active: questionScreen,
       question_result: revealScreen,
       leaderboard: boardScreen,
-      podium: podiumScreen,
+      podium_intro: finaleScreen,
+      reveal_3rd: finaleScreen,
+      reveal_2nd: finaleScreen,
+      reveal_1st: finaleScreen,
+      final_results: finalScreen,
     }[g.phase] || (() => spinner()))(g));
+    if (g.phase === 'leaderboard') animateBoard(stage.querySelector('[data-board]'));
     tick();
   }
 
   function paintLock(g) {
-    lockBtn.hidden = g.phase === 'podium';
+    lockBtn.hidden = FINISHED.includes(g.phase);
     lockBtn.classList.toggle('on', !!g.locked);
     lockBtn.setAttribute('aria-pressed', String(!!g.locked));
     lockBtn.title = T.lockTitle(!!g.locked);
@@ -649,10 +692,13 @@ function hostView(root, pinParam) {
     } else if (g.phase === 'question_active') {
       const a = stage.querySelector('[data-answered]');
       if (a) a.textContent = T.answered(g.answered, g.connectedCount || g.playerCount);
-    } else if ((g.phase === 'podium' || g.phase === 'leaderboard') && boardKey(g) !== lastBoard) {
-      // faqat reyting o'zgarganda (kech qo'shilish, chiqarish) qayta chiziladi — animatsiyalar qaytadan o'ynamasin
+    } else if ((g.phase === 'final_results' || g.phase === 'leaderboard') && boardKey(g) !== lastBoard) {
+      // faqat reyting o'zgarganda (kech qo'shilish, chiqarish) qayta chiziladi — siljish animatsiyasi qaytadan o'ynamaydi
       lastBoard = boardKey(g);
-      stage.replaceChildren(g.phase === 'podium' ? podiumScreen(g) : boardScreen(g));
+      const query = stage.querySelector('[data-search]');
+      const keep = query ? query.value : '';
+      stage.replaceChildren(g.phase === 'final_results' ? finalScreen(g) : boardScreen(g));
+      if (keep) filterRanking(keep);
     }
   }
 
@@ -763,54 +809,209 @@ function hostView(root, pinParam) {
       qHead(g, h('span.oct-answered', T.correctCount(g.correctCount, g.answered))),
       h('div.oct-qtext.small', g.question.text),
       tiles(g, true),
-      h('div.oct-actions', h('button.btn.primary.lg', { type: 'button', onclick: () => act('next') }, T.showBoard, icon('right', 18)),
-        h('span.small.oct-dim.hide-sm', T.keysHint)));
+      h('div.oct-actions', h('button.btn.primary.lg', { type: 'button', 'data-next': '', onclick: () => act('next') },
+        g.index + 1 >= g.total ? T.showWinners : T.showBoard, icon(g.index + 1 >= g.total ? 'trophy' : 'right', 18)),
+      h('span.small.oct-dim.hide-sm', T.keysHint)));
   }
 
   function rankBadge(rank) {
     return h(`span.oct-rank-n.oc-oct${rank <= 3 ? `.m${rank}` : ''}`, String(rank));
   }
 
+  /** O'rin o'zgarishi: ▲ 2 (yuqoriga), ▼ 1 (pastga), – (o'zgarmadi), YANGI; 1-savoldan keyin — bo'sh. Rang yolg'iz emas:
+   * strelka va son har doim bor. */
+  function moveBadge(r) {
+    if (r.new) return h('span.oct-move.new', { title: T.rankNewTitle }, T.rankNew);
+    if (r.d == null) return h('span.oct-move.none', { 'aria-hidden': 'true' });
+    if (r.d === 0) return h('span.oct-move.same', { role: 'img', title: T.rankSame, 'aria-label': T.rankSame }, '–');
+    const up = r.d > 0;
+    const label = up ? T.rankUp(r.d) : T.rankDown(-r.d);
+    return h(`span.oct-move.${up ? 'up' : 'down'}`, { role: 'img', title: label, 'aria-label': label },
+      h('span.oct-move-arrow', up ? '▲' : '▼'), h('b', String(Math.abs(r.d))));
+  }
+
+  function boardRow(r) {
+    return h(`li${r.new ? '.is-new' : ''}`, { 'data-id': r.id, 'data-d': r.d == null ? '' : String(r.d) },
+      rankBadge(r.rank),
+      h('span.oct-rank-av', { 'aria-hidden': 'true' }, avatarEmoji(r.av)),
+      h('span.oct-rank-nick', { title: r.nick }, r.nick),
+      h('span.oct-rank-gain', { title: T.gainedTitle }, r.gained ? `+${fmt(r.gained)}` : ''),
+      h('b.oct-rank-score', fmt(r.score)),
+      moveBadge(r));
+  }
+
   function boardScreen(g) {
     const last = g.index + 1 >= g.total;
+    const j = g.jump;
     return h('div.oct-board',
       qHead(g),
       h('h2.oct-board-title', octagonMark(34), T.leaderboard),
       g.leaderboard.length
-        ? h('ol.oct-rank', g.leaderboard.map((r) => h('li',
-          rankBadge(r.rank),
-          h('span.oct-rank-av', { 'aria-hidden': 'true' }, avatarEmoji(r.av)),
-          h('span.oct-rank-nick', r.nick),
-          r.gained ? h('span.oct-rank-gain', `+${fmt(r.gained)}`) : null,
-          h('b.oct-rank-score', fmt(r.score)))))
+        ? h('ol.oct-rank.oct-board-list', { 'data-board': '' }, g.leaderboard.map(boardRow))
         : h('p.oct-dim', T.noPlayers),
-      h('div.oct-actions', h('button.btn.primary.lg', { type: 'button', onclick: () => act('next') }, last ? T.finalResults : T.nextQuestion, icon('right', 18)),
+      j ? h('p.oct-jump', { 'data-jump': '' },
+        h('span.oct-jump-label', icon('zap', 18), T.bigJump),
+        h('span.oct-rank-av', { 'aria-hidden': 'true' }, avatarEmoji(j.av)),
+        h('b.oct-jump-nick', { title: j.nick }, j.nick),
+        moveBadge({ d: j.d })) : null,
+      h('div.oct-actions', h('button.btn.primary.lg', { type: 'button', 'data-next': '', onclick: () => act('next') }, last ? T.showWinners : T.nextQuestion, icon('right', 18)),
         h('span.small.oct-dim.hide-sm', T.keysHint)));
   }
 
-  function podiumScreen(g) {
-    const top = g.ranking.slice(0, 3);
-    const order = [1, 0, 2].filter((i) => top[i]);
-    return h('div.oct-podium-wrap',
-      h('h2.oct-board-title', octagonMark(38), T.podium),
-      g.endedEarly ? h('p.oct-dim.center', `${T.endedEarly} · ${T.played(g.played, g.total)}`) : null,
-      top.length ? h('div.oct-podium', order.map((i) => h(`div.oct-step.place-${i + 1}`,
-        h(`div.oct-medal.oc-oct.m${i + 1}`, h('b', String(i + 1))),
-        h('span.oct-step-av', { 'aria-hidden': 'true' }, avatarEmoji(top[i].av)),
-        h('span.oct-step-nick', top[i].nick),
-        h('span.oct-step-score', `${fmt(top[i].score)} ${T.points}`),
-        h('div.oct-step-block')))) : h('p.oct-dim.center', T.noPlayers),
-      g.ranking.length > 3 ? h('details.oct-all', { open: g.ranking.length <= 12 },
-        h('summary', T.fullRanking),
-        h('ol.oct-rank.compact', g.ranking.map((r) => h('li',
+  /** FLIP: qator eski o'rnidan (o'rin + o'zgarish) yangisiga suriladi. Top 5 ga tashqaridan kirganlar ro'yxat ostidan
+   * chiqib keladi. Faqat transform (kutubxonasiz, Web Animations API); harakatni kamaytirish yoqilgan bo'lsa — yo'q. */
+  function animateBoard(list) {
+    if (!list || reducedMotion() || typeof list.animate !== 'function') return;
+    const rows = [...list.children];
+    if (!rows.length) return;
+    const tops = rows.map((li) => li.offsetTop);
+    const pitch = rows.length > 1 ? tops[1] - tops[0] : rows[0].offsetHeight + 10;
+    const below = tops[rows.length - 1] + pitch;
+    rows.forEach((li, i) => {
+      const d = li.dataset.d === '' ? 0 : Number(li.dataset.d);
+      const fresh = li.classList.contains('is-new');
+      if (!d && !fresh) return;
+      const from = fresh ? rows.length : i + d;          // eski o'rin (0 dan); 5 va undan pasti — ro'yxatdan tashqarida
+      const outside = from >= rows.length;
+      const y = (outside ? below : tops[from]) - tops[i];
+      li.style.zIndex = d > 0 || fresh ? '2' : '1';    // ko'tarilayotganlar ustidan o'tadi
+      li.animate([{ transform: `translateY(${y}px)`, opacity: outside ? 0 : 1 }, { transform: 'none', opacity: 1 }],
+        { duration: MOVE_MS, delay: MOVE_DELAY, easing: 'cubic-bezier(.2,.8,.25,1)', fill: 'backwards' });
+    });
+  }
+
+  // ------------------------------------------------------ g'oliblarni e'lon qilish
+  function finaleActions(g) {
+    const winner = g.phase === 'reveal_1st';
+    return [
+      h('button.btn.primary.lg', { type: 'button', 'data-next': '', onclick: () => act('next') },
+        winner ? T.showAll : T.nextPlace, icon('right', 18)),
+      winner ? null : h('button.btn.ghost', { type: 'button', 'data-skip': '', onclick: () => act('skip') }, icon('skip', 16), T.skipReveal),
+      h('span.small.oct-dim.hide-sm', T.keysHint),
+    ];
+  }
+
+  function podiumColumn(k) {
+    return h(`div.oct-col.place-${k}`, { 'data-place': String(k) },
+      h('div.oct-col-card', { 'data-card': '' }),
+      h('div.oct-col-bar', h(`span.oct-medal.oc-oct.m${k}`, { 'aria-label': T.placeName(k) }, h('b', String(k)))));
+  }
+
+  function podiumStand(places, extra = '') {
+    return h(`div.oct-stand.n${places}${extra}`, [2, 1, 3].filter((k) => k <= places).map(podiumColumn));
+  }
+
+  /** E'lon qilingan o'rinni ustunga yozadi. animate — hozirgina e'lon qilingan bo'lsa ustun ko'tariladi (aks holda —
+   * tayyor holatda, masalan sahifa yangilanganda oldingi qadamlar). */
+  function landPlace(col, r, animate) {
+    col.classList.add('shown', animate ? 'up' : 'landed');
+    col.querySelector('[data-card]').replaceChildren(
+      h('span.oct-step-av', { 'aria-hidden': 'true' }, avatarEmoji(r.av)),
+      h('span.oct-step-nick', { title: r.nick }, r.nick),
+      h('span.oct-step-score', `${fmt(r.score)} ${T.points}`));
+    if (r.place === 1 && animate && !reducedMotion()) {
+      col.append(h('div.oc-burst', { 'aria-hidden': 'true' }, Array.from({ length: 18 }, () => h('i'))));
+    }
+  }
+
+  function finaleScreen(g) {
+    const wrap = h('div.oct-finale', { 'data-finale': '' },
+      h('div.oct-finale-head',
+        h('h2.oct-finale-title', { 'data-finale-title': '' }),
+        h('p.oct-finale-sub', { 'data-finale-sub': '' }),
+        g.endedEarly ? h('p.oct-dim.center', `${T.endedEarly} · ${T.played(Math.max(0, g.index + 1), g.total)}`) : null),
+      h('div.oct-finale-intro', { 'aria-hidden': 'true' }, octRing('.big')),
+      podiumStand(g.places),
+      h('p.oc-sr', { 'aria-live': 'polite', 'data-announce': '' }),
+      h('div.oct-finale-progress', { 'aria-hidden': 'true' }, h('i', { 'data-progress': '' })),
+      h('div.oct-actions', { 'data-finale-actions': '' }));
+    fillFinale(wrap, g, true);
+    return wrap;
+  }
+
+  function fillFinale(wrap, g, fresh) {
+    const intro = g.phase === 'podium_intro';
+    wrap.classList.toggle('intro', intro);
+    wrap.querySelector('[data-finale-title]').textContent = intro ? T.winnersIntro : T.podium;
+    wrap.querySelector('[data-finale-sub]').textContent = intro ? T.winnersSub : '';
+    const current = STEP_PLACE[g.phase];
+    const recent = !fresh || clock.now() - (g.phaseStart || 0) < RISE_MS; // sahifa qadam o'rtasida ochilsa — ko'tarilmaydi
+    for (const r of g.podium || []) {
+      const col = wrap.querySelector(`[data-place="${r.place}"]`);
+      if (!col || col.classList.contains('shown')) continue;
+      const animate = r.place === current && recent;
+      landPlace(col, r, animate);
+      if (r.place === current) {
+        wrap.querySelector('[data-announce]').textContent = T.announced(r.place, r.nick, r.score);
+        if (animate) play(r.place === 1 ? 'win' : 'tick');
+      }
+    }
+    wrap.querySelector('[data-finale-actions]').replaceChildren(...finaleActions(g).filter(Boolean)); // null — «null» matni bo'lib qolmasin
+  }
+
+  // ----------------------------------------------------------- yakuniy natijalar
+  function finalScreen(g) {
+    const ranking = g.ranking || [];
+    const head = h('div.oct-final-head',
+      h('h2.oct-board-title', octagonMark(38), T.finalResults),
+      g.endedEarly ? h('p.oct-dim.center', `${T.endedEarly} · ${T.played(g.played, g.total)}`) : null);
+    const actions = h('div.oct-actions.oct-final-actions',
+      ranking.length ? h('button.btn.ghost', { type: 'button', 'data-csv': '', title: T.csvTitle, onclick: () => downloadCsv(g) }, icon('download', 16), T.csv) : null,
+      h('a.btn.ghost', { href: '#/games' }, T.toGames),
+      h('a.btn.primary', { href: '#/games/octagon' }, icon('sparkles', 16), T.newGame));
+    if (!ranking.length) {
+      return h('div.oct-final', head, emptyState('users', T.emptyGame, T.emptyGameText), actions);
+    }
+    const stand = g.places ? podiumStand(g.places, '.compact') : null;
+    if (stand) {
+      for (const r of g.podium) landPlace(stand.querySelector(`[data-place="${r.place}"]`), r, false);
+    }
+    const search = ranking.length > 10 ? h('label.oct-search',
+      icon('search', 16),
+      h('input', { type: 'search', 'data-search': '', placeholder: T.searchNick, 'aria-label': T.searchNick, autocomplete: 'off', oninput: (e) => filterRanking(e.target.value) })) : null;
+    return h('div.oct-final',
+      head,
+      stand || h('div.oct-zero', h('b', T.zeroCase), h('p.oct-dim', T.zeroCaseText)),
+      h('div.oct-all-box',
+        search,
+        h('ol.oct-rank.oct-final-list', { 'data-ranking': '' }, ranking.map((r) => h(`li${r.rank <= 10 ? '.top' : ''}`, { 'data-nick': r.nick.toLocaleLowerCase() },
           rankBadge(r.rank),
           h('span.oct-rank-av', { 'aria-hidden': 'true' }, avatarEmoji(r.av)),
-          h('span.oct-rank-nick', r.nick),
-          h('span.small.oct-dim', T.correctShort(r.correct)),
-          h('b.oct-rank-score', fmt(r.score)))))) : null,
-      h('div.oct-actions',
-        h('a.btn.primary', { href: '#/games/octagon' }, icon('sparkles', 16), T.newGame),
-        h('a.btn.ghost', { href: '#/games' }, T.toGames)));
+          h('span.oct-rank-nick', { title: r.nick }, r.nick),
+          h('span.small.oct-dim.oct-rank-correct', T.correctShort(r.correct)),
+          h('b.oct-rank-score', fmt(r.score))))),
+        h('p.oct-dim.center', { 'data-nomatch': '', hidden: true }, T.noMatch)),
+      actions);
+  }
+
+  function filterRanking(value) {
+    const q = value.trim().toLocaleLowerCase();
+    let shown = 0;
+    for (const li of stage.querySelectorAll('[data-ranking] > li')) {
+      const hit = !q || li.dataset.nick.includes(q);
+      li.hidden = !hit;
+      shown += hit;
+    }
+    const none = stage.querySelector('[data-nomatch]');
+    if (none) none.hidden = shown > 0;
+  }
+
+  /** CSV (Excel uchun UTF-8 BOM): ism, avatar, ball, o'rin, to'g'ri javoblar. Formula sifatida ochilmasin: =, +, -, @
+   * bilan boshlanadigan katak oldiga apostrof qo'yiladi. */
+  function downloadCsv(g) {
+    const cell = (v) => {
+      let text = String(v);
+      if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+      return /[",;\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    const lines = [T.csvHead, ...g.ranking.map((r) => [r.nick, avatarEmoji(r.av), r.score, r.rank, r.correct])];
+    const blob = new Blob([`﻿${lines.map((row) => row.map(cell).join(',')).join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: `octagon-${g.pin}-natijalar.csv`, hidden: true });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
   function showClosed() {
@@ -849,6 +1050,8 @@ function hostView(root, pinParam) {
       ring.querySelector('.bar').style.strokeDashoffset = String(100 - p * 100);
       ring.classList.toggle('low', active && left < 5000);
     }
+    const progress = stage.querySelector('[data-progress]');
+    if (progress) progress.style.transform = `scaleX(${1 - Math.min(1, left / span)})`;
   }
   const tickTimer = setInterval(tick, 200);
 
@@ -893,7 +1096,7 @@ function hostView(root, pinParam) {
       e.preventDefault();
       toggleFullscreen();
     } else if (e.key === ' ' || e.key === 'Enter') {
-      if (game.phase === 'question_result' || game.phase === 'leaderboard') {
+      if (game.phase === 'question_result' || game.phase === 'leaderboard' || FINALE.includes(game.phase)) {
         e.preventDefault();
         act('next');
       } else if (game.phase === 'topic_intro' || game.phase === 'question_read') {
@@ -920,8 +1123,3 @@ function hostView(root, pinParam) {
   };
 }
 
-/** Konfetti uchun javob ranglari — mavzu faylidagi o'zgaruvchilardan (JS da hex qiymat yo'q). */
-function themeColors() {
-  const css = getComputedStyle(document.documentElement);
-  return ['--oc-red', '--oc-blue', '--oc-yellow', '--oc-green'].map((v) => css.getPropertyValue(v).trim()).filter(Boolean);
-}

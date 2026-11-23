@@ -32,27 +32,29 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PROTO = 2  # 2 — joriy protokol (qo'shilishda versiya va avatar indeksi); --v1 — eski server bilan solishtirish uchun
+PROTO = 3  # 3 — joriy protokol (versiya, avatar indeksi, yakuniy ochilish bosqichlari); --v1 — eski server bilan solishtirish uchun
 
 # v1 (eski) va v2 bosqich nomlari -> umumiy nomlar
-PHASE = {"lobby": "lobby", "ready": "read", "question": "active", "reveal": "result", "leaderboard": "board", "podium": "podium",
-         "topic_intro": "intro", "question_read": "read", "question_active": "active", "question_result": "result"}
-# v2: o'quvchi holatida bosqich indeks bilan keladi (app/octagon_flow.py: PHASES bilan bir xil tartib)
-PHASES_V2 = ("lobby", "topic_intro", "question_read", "question_active", "question_result", "leaderboard", "podium")
+PHASE = {"lobby": "lobby", "ready": "read", "question": "active", "reveal": "result", "leaderboard": "board", "podium": "final",
+         "topic_intro": "intro", "question_read": "read", "question_active": "active", "question_result": "result",
+         "podium_intro": "podium_intro", "reveal_3rd": "reveal", "reveal_2nd": "reveal", "reveal_1st": "reveal", "final_results": "final"}
+# v2+: o'quvchi holatida bosqich indeks bilan keladi (app/octagon_flow.py: PHASES bilan bir xil tartib)
+PHASES_V3 = ("lobby", "topic_intro", "question_read", "question_active", "question_result", "leaderboard",
+             "podium_intro", "reveal_3rd", "reveal_2nd", "reveal_1st", "final_results")
 AVATAR_COUNT = 30
 
 
 def phase_of(d):
     """O'quvchi holatidagi bosqich -> umumiy nom (v2 — indeks, v1 — nom)."""
     p = d.get("p")
-    if PROTO == 2:
-        return PHASE.get(PHASES_V2[p]) if isinstance(p, int) and 0 <= p < len(PHASES_V2) else None
+    if PROTO >= 2:
+        return PHASE.get(PHASES_V3[p]) if isinstance(p, int) and 0 <= p < len(PHASES_V3) else None
     return PHASE.get(p)
 
 
 def hello(d):
     """Qo'shilish/qayta ulanish/o'qituvchi xabarlariga protokol versiyasi (v2)."""
-    return {"v": PROTO, **d} if PROTO == 2 else d
+    return {"v": PROTO, **d} if PROTO >= 2 else d
 
 
 def pct(values, p):
@@ -210,7 +212,7 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
         t0 = time.perf_counter()
         fut = p.wait(lambda t, d: t == "w")
         data = {"pin": game.pin, "nick": p.nick}
-        if opts.avatars or PROTO == 2:  # v2 da avatar majburiy
+        if opts.avatars or PROTO >= 2:  # v2 dan boshlab avatar majburiy
             data["av"] = p.avatar
         await p.send("join", hello(data))
         try:
@@ -256,7 +258,7 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
         except asyncio.TimeoutError:
             st.errors["resume_timeout"] += 1
 
-    await broadcast("start", "intro" if PROTO == 2 else "read")
+    await broadcast("start", "intro" if PROTO >= 2 else "read")
     for qi in range(opts.questions):
         # o'qish bosqichi tugashini kutamiz (server taymeri), so'ng javoblar
         actives = [p.wait(lambda t, d, q=qi: t == "s" and phase_of(d) == "active" and d.get("q") == q, timeout=40, current=True) for p in game.players]
@@ -287,13 +289,23 @@ async def run_game(game: Game, session, base, ws_url, opts, rnd):
                 st.errors["answer_timeout"] += 1
         await asyncio.gather(*(answer(p) for p in game.players))
         await host_wait(lambda h: PHASE.get(h.get("phase")) == "result", timeout=30)
+        last = qi + 1 >= opts.questions
+        if last and PROTO >= 3:
+            # oxirgi savoldan keyin reyting yo'q: g'oliblar birma-bir e'lon qilinadi (o'qituvchi «Keyingi» bilan
+            # tezlashtiradi — har bir qadam ham hamma o'yinchilarga tarqatiladi), so'ng yakuniy natijalar
+            await broadcast("next", "podium_intro")
+            while PHASE.get(game.host_state.get("phase")) != "final":
+                await host_wait(lambda h: PHASE.get(h.get("phase")) in ("podium_intro", "reveal"), timeout=30)
+                nxt = "final" if game.host_state.get("phase") in ("reveal_1st",) else "reveal"
+                await broadcast("next", nxt)
+                await host_wait(lambda h, before=game.host_state.get("phase"): h.get("phase") != before, timeout=30)
+            break
         await broadcast("next", "board")
         # o'qituvchi amali qaysi bosqichga tegishli ekanini yuboradi (eskirgan amal e'tiborsiz — ikki marta bosishdan
         # himoya): o'qituvchi ekrani reytingni ko'rmaguncha keyingi amal yuborilmaydi
         await host_wait(lambda h: PHASE.get(h.get("phase")) == "board", timeout=30)
-        last = qi + 1 >= opts.questions
-        await broadcast("next", "podium" if last else ("read"))
-    # o'yin oxiri: hamma podiumni ko'rdi; o'yinchilar soni o'zgarmagan (dublikat yo'q)
+        await broadcast("next", "final" if last else "read")
+    # o'yin oxiri: hamma yakuniy natijalarni ko'rdi; o'yinchilar soni o'zgarmagan (dublikat yo'q)
     if game.host_state.get("playerCount") != game.n:
         st.errors["player_count_changed"] += 1
     for p in game.players:
@@ -409,7 +421,7 @@ def main(argv=None):
     ap.add_argument("--env", action="append", default=[], help="server uchun qo'shimcha muhit o'zgaruvchisi KEY=VALUE")
     opts = ap.parse_args(argv)
     global PROTO
-    PROTO = 1 if opts.v1 else 2
+    PROTO = 1 if opts.v1 else 3
     tmp = Path(tempfile.mkdtemp(prefix="octagon-load-"))
     env = dict(os.environ, TD_SUPERADMIN_PASSWORD="owner123", TD_TRUST_PROXY="1")
     for kv in opts.env:
