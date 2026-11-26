@@ -3,7 +3,7 @@
 // natijalar. O'yin holati serverda: sahifa yangilansa yoki aloqa uzilsa, o'qituvchi o'sha o'yinni boshqarishda davom
 // etadi. Sanoqlar serverdagi mutlaq vaqtlardan (phaseStart/phaseEnd) ko'rsatiladi; podium o'rinlari serverdan faqat
 // e'lon qilingan paytda keladi.
-import { h, icon, toast, confirmDialog, spinner, emptyState, beep } from '../lib.js';
+import { h, icon, toast, confirmDialog, spinner, emptyState } from '../lib.js';
 import { api } from '../api.js';
 import {
   GAME_NAME, OCTAGON_RING, PROTOCOL_VERSION, SHAPES, avatarEmoji, countdownSeconds, formatPin, octagonLoader, octagonMark, serverClock,
@@ -55,8 +55,16 @@ const T = {
   stepNick: 'Ismingizni yozing — tayyor!',
   backTitle: 'Octagon: yangi oʻyin sozlamalari',
   loading: 'Yuklanmoqda…',
-  soundOn: 'Ovozni yoqish (standart — oʻchiq)',
-  soundOff: 'Ovozni oʻchirish',
+  soundOn: 'Ovozni yoqish (M)',
+  soundOff: 'Ovozni oʻchirish (M)',
+  volume: 'Ovoz balandligi',
+  enableSound: 'Ovozni yoqish',
+  enableSoundTitle: 'Brauzer ovozni faqat bosishdan keyin ochadi: musiqa va effektlarni yoqish',
+  soundTitle: 'Ovoz (faqat shu ekranda)',
+  soundToggle: 'Musiqa va effektlar',
+  soundHint: 'Savol paytida quvnoq musiqa, natija, reyting va gʻoliblar ovozlari — faqat shu ekranda (proyektorda). Oʻquvchilar telefoni jim.',
+  soundTest: 'Sinab koʻrish',
+  soundFailed: 'Ovozni yuklab boʻlmadi — internet aloqasini tekshiring',
   waitingPlayers: 'Oʻquvchilar kutilmoqda…',
   playersJoined: (n) => `${n} ta oʻquvchi`,
   online: (n, total) => `${n}/${total} onlayn`,
@@ -208,6 +216,27 @@ function setupView(root, ctx) {
   const activeBox = h('div');
   const shuffleQ = h('input', { type: 'checkbox', checked: prefs.shuffleQuestions !== false });
   const shuffleA = h('input', { type: 'checkbox', checked: prefs.shuffleAnswers !== false });
+  // ovoz: yoqish/o'chirish, balandlik va sinov — o'yin ekranidagi bilan bir xil sozlama (shu qurilmada)
+  const soundPref = loadSound();
+  let preview = null; // sinov uchun ovoz dvigateli (faqat «Sinab ko'rish» bosilganda)
+  const testBtn = h('button.btn.ghost.oct-sound-test', { type: 'button', 'data-sound-test': '', onclick: testSound }, icon('play', 16), T.soundTest);
+  const soundCtl = soundControls(soundPref, () => {
+    testBtn.disabled = !soundPref.on;
+    if (preview) {
+      preview.setVolume(soundPref.volume);
+      preview.setMuted(!soundPref.on);
+    }
+  });
+  testBtn.disabled = !soundPref.on;
+
+  function testSound() {
+    loadAudio().then((m) => {
+      if (!alive || !soundPref.on) return;
+      if (!preview) preview = m.createAudio({ volume: soundPref.volume, muted: false });
+      preview.setVolume(soundPref.volume);
+      preview.preview('cheer');
+    }).catch(() => toast(T.soundFailed, 'warning'));
+  }
 
   const customTime = h('input.oct-custom-time', { type: 'number', min: 5, max: 120, step: 1, inputmode: 'numeric', 'aria-label': `${T.time} (${T.seconds})` });
 
@@ -292,6 +321,10 @@ function setupView(root, ctx) {
     timeBox,
     h('label.check', shuffleQ, h('span', T.shuffleQ)),
     h('label.check', shuffleA, h('span', T.shuffleA)),
+    h('div.field.oct-sound-field',
+      h('span.field-label', T.soundTitle),
+      h('div.oct-sound-row', soundCtl.make('in-setup', true), testBtn),
+      h('span.field-hint', T.soundHint)),
     err,
     openBtn);
 
@@ -406,8 +439,10 @@ function setupView(root, ctx) {
 
   loadTopics();
   loadActive();
+  soundCtl.paint();
   return () => {
     alive = false;
+    if (preview) preview.dispose();
   };
 }
 
@@ -521,17 +556,101 @@ function fmt(n) {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
-const SOUND_KEY = 'td-octagon-sound';
+// Ovoz — faqat shu ekranda (proyektor); tanlov shu qurilmada saqlanadi (UI sozlamasi: o'yinga hech qanday ta'siri yo'q).
+// Standart: yoqilgan, o'rtacha balandlik. Ovoz kodi (static/js/octagon/audio.js) kerak bo'lganda alohida yuklanadi.
+const SOUND_KEY = 'td-octagon-sound';      // 'on' | 'off'
+const VOLUME_KEY = 'td-octagon-volume';    // 0–100
+const DEFAULT_VOLUME = 60;
 
-function soundOn() {
+function loadSound() {
+  const pref = { on: true, volume: DEFAULT_VOLUME };
   try {
-    return localStorage.getItem(SOUND_KEY) === 'on'; // standart — ovozsiz
+    pref.on = localStorage.getItem(SOUND_KEY) !== 'off';
+    const raw = localStorage.getItem(VOLUME_KEY);
+    const v = Number(raw);
+    if (raw !== null && raw.trim() !== '' && Number.isFinite(v)) pref.volume = Math.max(0, Math.min(100, Math.round(v)));
   } catch {
-    return false;
+    /* saqlab bo'lmasa — standart */
+  }
+  return pref;
+}
+
+function saveSound(pref) {
+  try {
+    localStorage.setItem(SOUND_KEY, pref.on ? 'on' : 'off');
+    localStorage.setItem(VOLUME_KEY, String(pref.volume));
+  } catch {
+    /* saqlab bo'lmasa ham ishlaydi */
   }
 }
 
-const HOST_STATIC = ['qr', 'joinUrl', 'joinBase', 'topicName', 'createdAt']; // app/octagon.py: HOST_STATIC
+let audioModule = null;
+
+/** Ovoz moduli: faqat Octagon o'qituvchi sahifasida, kerak bo'lganda (o'quvchi sahifasiga va boshqa sahifalarga kirmaydi). */
+function loadAudio() {
+  if (!audioModule) {
+    audioModule = import('../octagon/audio.js').catch((e) => {
+      audioModule = null; // tarmoq xatosi: keyinroq qayta urinib ko'riladi
+      throw e;
+    });
+  }
+  return audioModule;
+}
+
+/** Ovoz boshqaruvi: yoqish/o'chirish tugmasi + balandlik slayderi. Bir nechta nusxa (panel, lobbi, sozlash) bitta
+ * holatni ko'rsatadi; onChange — foydalanuvchi o'zgartirdi (bosish yoki surish — brauzer uchun ruxsat). */
+function soundControls(pref, onChange) {
+  const items = new Set();
+  function paint() {
+    for (const it of items) {
+      if (it.attached && !it.box.isConnected) items.delete(it);
+      else it.paint();
+    }
+  }
+  function commit() {
+    saveSound(pref);
+    paint();
+    onChange(pref);
+  }
+  function make(where, labelled = false) {
+    const label = labelled ? h('span', T.soundToggle) : null;
+    const btn = h('button.oct-tool.oct-sound', { type: 'button', 'data-sound': '', onclick: () => {
+      pref.on = !pref.on;
+      commit();
+    } });
+    const range = h('input.oct-volume', { type: 'range', min: 0, max: 100, step: 5, 'data-volume': '', 'aria-label': T.volume });
+    range.addEventListener('input', () => {
+      pref.volume = Number(range.value);
+      if (!pref.on && pref.volume > 0) pref.on = true; // surish — ovozni ham yoqadi
+      commit();
+    });
+    const box = h(`div.oct-sound-box.${where}`, btn, range);
+    const it = {
+      box,
+      attached: false,
+      paint() {
+        it.attached = it.attached || box.isConnected;
+        btn.setAttribute('aria-pressed', String(pref.on));
+        if (label) { // yozuvli tugma: nomi — ko'rinadigan matn, holati — aria-pressed (ovozli boshqaruv «bosish: …» deydi)
+          btn.title = T.soundToggle;
+        } else {
+          btn.title = pref.on ? T.soundOff : T.soundOn;
+          btn.setAttribute('aria-label', btn.title);
+        }
+        btn.replaceChildren(icon(pref.on ? 'volume' : 'mute', 18), label || '');
+        if (Number(range.value) !== pref.volume) range.value = String(pref.volume);
+        range.setAttribute('aria-valuetext', `${pref.volume}%`);
+        range.classList.toggle('off', !pref.on);
+      },
+    };
+    items.add(it);
+    it.paint();
+    return box;
+  }
+  return { make, paint };
+}
+
+const HOST_STATIC = ['qr', 'joinUrl', 'joinBase', 'topicName', 'createdAt', 'sounds']; // app/octagon.py: HOST_STATIC
 
 function pick(obj, keys) {
   const out = {};
@@ -546,7 +665,9 @@ function hostView(root, pinParam) {
   let lastPhaseKey = '';
   let lastBoard = '';
   let alive = true;
-  let sound = soundOn();
+  let audio = null; // ovoz dvigateli (kerak bo'lganda yuklanadi); yo'q bo'lsa — o'yin ovozsiz davom etadi
+  const pref = loadSound();
+  const sound = soundControls(pref, applySound);
   root.classList.add('wide');
 
   const pinBox = h('div.oct-pin', h('span', T.pin), h('b', formatPin(pin)));
@@ -554,17 +675,39 @@ function hostView(root, pinParam) {
   const countPill = h('span.oct-pill.oct-count', icon('users', 16), h('b', '0'));
   const connPill = h('span.oct-pill.warn', { hidden: true, role: 'status' }, icon('wifiOff', 14), h('span.hide-sm', T.reconnecting));
   const lockBtn = h('button.oct-tool.oct-lock', { type: 'button', 'aria-pressed': 'false', onclick: () => game && act('lock', { locked: !game.locked }) });
-  const soundBtn = h('button.oct-tool.oct-sound', { type: 'button', onclick: toggleSound });
+  // brauzer ovozni bloklagan (sahifa yangilandi, hali bosilmagan): suzuvchi tugma — joylashuvni surmaydi
+  const enableBtn = h('button.oct-enable-sound', { type: 'button', hidden: true, 'data-enable-sound': '', title: T.enableSoundTitle,
+    onclick: enableSound }, icon('volume', 20), h('span', T.enableSound));
   const fsBtn = h('button.oct-tool.oct-fs', { type: 'button', title: T.fullscreen, 'aria-label': T.fullscreen, onclick: toggleFullscreen }, icon('maximize', 18));
   const endBtn = h('button.oct-tool.oct-end', { type: 'button', onclick: endGame }, icon('flag', 16), h('span.hide-sm', T.end));
   const bar = h('div.oct-bar',
     h('a.oct-back', { href: '#/games/octagon', title: T.backTitle, 'aria-label': T.backTitle }, icon('left', 18), octagonMark(28), h('span.hide-sm', GAME_NAME)),
     h('div.oct-bar-pin', pinBox, joinLine),
-    h('div.oct-bar-tools', connPill, countPill, lockBtn, soundBtn, fsBtn, endBtn));
+    h('div.oct-bar-tools', connPill, countPill, lockBtn, sound.make('in-bar'), fsBtn, endBtn));
   const stage = h('div.oct-stage', h('div.oct-loading', octagonLoader(), h('span', T.loading)));
-  const section = h('section.screen.oct-host', bar, stage);
+  const section = h('section.screen.oct-host', bar, stage, enableBtn);
   root.append(section);
-  paintSound();
+  sound.paint();
+  let audioRequested = false;
+
+  /** Ovoz kodi birinchi ekran chizilgandan keyin, bo'sh paytda yuklanadi — sekin tarmoqda lobbi (PIN, QR) bilan
+   * raqobatlashmaydi. «Boshlash»gacha tayyor bo'ladi; kechiksa ham dvigatel sahifa bosilganini ko'rib o'zi ochiladi. */
+  function requestAudio() {
+    if (audioRequested || !alive) return;
+    audioRequested = true;
+    loadAudio().then((m) => {
+      if (!alive) return;
+      audio = m.createAudio({
+        volume: pref.volume,
+        muted: !pref.on,
+        now: () => clock.now(), // server soati: musiqa javob vaqti tugashi bilan birga to'xtaydi
+        onStatus: (st) => {
+          enableBtn.hidden = !st.blocked;
+        },
+      });
+      if (game) audio.sync(game);
+    }).catch(() => { /* ovoz yuklanmadi — o'yin ovozsiz davom etadi */ });
+  }
 
   const sock = hostSocket(pin, clock, {
     onStatus(s) {
@@ -580,6 +723,7 @@ function hostView(root, pinParam) {
         tick();
       } else if (t === 'reload') { // server yangilangan: eski sahifa jim buzilmasin
         sock.close();
+        if (audio) audio.stop();
         stage.replaceChildren(emptyState('refresh', T.reloadTitle, T.reloadText,
           h('button.btn.primary', { type: 'button', onclick: () => location.reload() }, icon('refresh', 16), T.reload)));
       } else if (t === 'closed') {
@@ -588,6 +732,7 @@ function hostView(root, pinParam) {
       } else if (t === 'e') {
         if (d.status === 404 || d.status === 403) {
           sock.close();
+          if (audio) audio.stop();
           stage.replaceChildren(emptyState('alert', T.notFound, d.m, h('a.btn.primary', { href: '#/games/octagon' }, T.newGame)));
           endBtn.hidden = true;
           lockBtn.hidden = true;
@@ -603,26 +748,34 @@ function hostView(root, pinParam) {
     sock.send(action, { phase: game.phase, q: game.index, ...extra });
   }
 
-  function play(kind) {
-    if (sound) beep(kind, true); // Octagon ovozi alohida, standart — o'chiq
+  /** Ovoz tugmasi yoki slayderi o'zgardi (foydalanuvchi bosdi — brauzer ovozni ochishga ruxsat beradi). */
+  function applySound() {
+    if (!audio) return;
+    audio.setVolume(pref.volume);
+    audio.setMuted(!pref.on);
+    if (pref.on) audio.unlock();
   }
 
-  function paintSound() {
-    soundBtn.setAttribute('aria-pressed', String(sound));
-    soundBtn.title = sound ? T.soundOff : T.soundOn;
-    soundBtn.setAttribute('aria-label', soundBtn.title);
-    soundBtn.replaceChildren(icon(sound ? 'volume' : 'mute', 18));
+  /** «Boshlash» va «Ovozni yoqish»: AudioContext shu bosishda yaratiladi yoki davom ettiriladi. */
+  function unlockAudio() {
+    if (audio) audio.unlock();
   }
 
-  function toggleSound() {
-    sound = !sound;
-    try {
-      localStorage.setItem(SOUND_KEY, sound ? 'on' : 'off');
-    } catch {
-      /* saqlab bo'lmasa ham ishlaydi */
+  function enableSound() {
+    if (!pref.on) {
+      pref.on = true;
+      saveSound(pref);
+      sound.paint();
+      if (audio) audio.setMuted(false);
     }
-    paintSound();
-    play('tick');
+    unlockAudio();
+  }
+
+  function toggleMute() {
+    pref.on = !pref.on;
+    saveSound(pref);
+    sound.paint();
+    applySound();
   }
 
   function render(next) {
@@ -630,6 +783,7 @@ function hostView(root, pinParam) {
     // yangilanishlarda o'zgarmas maydonlar (QR, havola, mavzu nomi) yuborilmaydi — oldingisidan olinadi
     const g = prev && prev.pin === next.pin ? { ...pick(prev, HOST_STATIC), ...next } : next;
     game = g;
+    if (audio) audio.sync(g); // musiqa va effektlar — bosqich bo'yicha (static/js/octagon/audio.js)
     countPill.querySelector('b').textContent = String(g.playerCount);
     countPill.title = T.online(g.connectedCount, g.playerCount);
     joinLine.replaceChildren(h('span', T.joinAt), h('b', g.joinBase.replace(/^https?:\/\//, '') + '/play'));
@@ -649,7 +803,6 @@ function hostView(root, pinParam) {
       tick();
       return;
     }
-    if (g.phase === 'question_active') play('tick');
     stage.replaceChildren(({
       lobby: lobbyScreen,
       topic_intro: introScreen,
@@ -665,6 +818,10 @@ function hostView(root, pinParam) {
     }[g.phase] || (() => spinner()))(g));
     if (g.phase === 'leaderboard') animateBoard(stage.querySelector('[data-board]'));
     tick();
+    if (!audioRequested) { // birinchi ekran chizildi — ovoz kodini bo'sh paytda yuklash
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(requestAudio, { timeout: 1500 });
+      else setTimeout(requestAudio, 300);
+    }
   }
 
   function paintLock(g) {
@@ -709,8 +866,10 @@ function hostView(root, pinParam) {
   // ----------------------------------------------------------------- lobbi
   function lobbyScreen(g) {
     const site = g.joinBase.replace(/^https?:\/\//, '') + '/play';
-    const startBtn = h('button.btn.accent.lg.oct-start', { type: 'button', 'data-start': '', disabled: !g.playerCount, onclick: () => act('start') },
-      icon('play', 20), T.start);
+    const startBtn = h('button.btn.accent.lg.oct-start', { type: 'button', 'data-start': '', disabled: !g.playerCount, onclick: () => {
+      unlockAudio(); // brauzer qoidasi: ovoz faqat bosishdan keyin — «Boshlash» shu bosish
+      act('start');
+    } }, icon('play', 20), T.start);
     return h('div.oct-lobby',
       h('div.oct-join',
         h('div.oct-join-steps',
@@ -730,6 +889,7 @@ function hostView(root, pinParam) {
         h('p.oct-locked-note', { 'data-locked': '', hidden: !g.locked }, icon('lock', 16), h('span', T.lockedNote)),
         h('div.oct-lobby-foot',
           lobbyTime(g),
+          sound.make('in-lobby'), // tor ekranda (panelda slayder sig'maydi) — shu yerda
           h('div.oct-start-box', startBtn, h('span.small.oct-dim', { 'data-start-hint': '', hidden: !!g.playerCount }, T.startNeedPlayers)))));
   }
 
@@ -941,10 +1101,7 @@ function hostView(root, pinParam) {
       if (!col || col.classList.contains('shown')) continue;
       const animate = r.place === current && recent;
       landPlace(col, r, animate);
-      if (r.place === current) {
-        wrap.querySelector('[data-announce]').textContent = T.announced(r.place, r.nick, r.score);
-        if (animate) play(r.place === 1 ? 'win' : 'tick');
-      }
+      if (r.place === current) wrap.querySelector('[data-announce]').textContent = T.announced(r.place, r.nick, r.score);
     }
     wrap.querySelector('[data-finale-actions]').replaceChildren(...finaleActions(g).filter(Boolean)); // null — «null» matni bo'lib qolmasin
   }
@@ -1017,6 +1174,7 @@ function hostView(root, pinParam) {
   function showClosed() {
     lastPhaseKey = '';
     game = null;
+    if (audio) audio.stop();
     endBtn.hidden = true;
     lockBtn.hidden = true;
     stage.replaceChildren(emptyState('flag', T.closedTitle, T.closedText, h('a.btn.primary', { href: '#/games/octagon' }, T.newGame)));
@@ -1095,6 +1253,9 @@ function hostView(root, pinParam) {
     if (e.key === 'f' || e.key === 'F') {
       e.preventDefault();
       toggleFullscreen();
+    } else if (e.key === 'm' || e.key === 'M') {
+      e.preventDefault();
+      toggleMute();
     } else if (e.key === ' ' || e.key === 'Enter') {
       if (game.phase === 'question_result' || game.phase === 'leaderboard' || FINALE.includes(game.phase)) {
         e.preventDefault();
@@ -1104,6 +1265,7 @@ function hostView(root, pinParam) {
         act('skip');
       } else if (game.phase === 'lobby' && game.playerCount) {
         e.preventDefault();
+        unlockAudio();
         act('start');
       }
     }
@@ -1114,6 +1276,7 @@ function hostView(root, pinParam) {
   return () => {
     alive = false;
     sock.close();
+    if (audio) audio.dispose(); // AudioContext yopiladi: tugunlar, taymerlar va tinglovchilar qolmaydi
     clearInterval(tickTimer);
     root.classList.remove('wide');
     document.removeEventListener('fullscreenchange', onFullscreenChange);

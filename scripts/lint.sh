@@ -10,6 +10,7 @@ status=0
 python3 -m pyflakes app tests scripts || status=1
 $ESLINT --no-eslintrc --env browser,es2022 --parser-options=ecmaVersion:2022,sourceType:module --rule "$RULES" static/js/ || status=1
 $ESLINT --no-eslintrc --env node,browser,es2022 --parser-options=ecmaVersion:2022 --rule "$RULES" e2e/ scripts/*.js || status=1
+$ESLINT --no-eslintrc --env node,es2022 --parser-options=ecmaVersion:2022,sourceType:module --rule "$RULES" tests/js/ || status=1
 for f in static/js/*.js static/js/views/*.js static/js/octagon/*.js; do
   node --input-type=module --check < "$f" || { echo "sintaksis: $f"; status=1; }
 done

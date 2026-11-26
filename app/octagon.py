@@ -49,7 +49,7 @@ from typing import Any
 from . import config
 from . import octagon_flow as flow
 from .observability import ERRORS, METRICS, timed
-from .octagon_scoring import MAX_POINTS, biggest_jump, calculate_score, rank_changes, standing_key
+from .octagon_scoring import MAX_POINTS, answer_shares, biggest_jump, calculate_score, rank_changes, standing_key
 from .octagon_scoring import podium as pick_podium
 from .qr import qr_path
 from .roles import is_teacher
@@ -82,7 +82,7 @@ HOST_FLUSH_BIG_FROM = config.OCTAGON_HOST_FLUSH_BIG_FROM
 BOARD_SIZE = 5                  # o'qituvchi ekranidagi reyting: eng yaxshi 5 talik
 # O'yin davomida o'zgarmaydigan maydonlar: o'qituvchi oynasi ulanganda bir marta yuboriladi, keyingi yangilanishlarda
 # takrorlanmaydi (QR kodning o'zi ~3 KB).
-HOST_STATIC = ("qr", "joinUrl", "joinBase", "topicName", "createdAt")
+HOST_STATIC = ("qr", "joinUrl", "joinBase", "topicName", "createdAt", "sounds")
 SWEEP_EVERY = config.OCTAGON_SWEEP_EVERY
 PIN_RE = re.compile(r"^[1-9][0-9]{5}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
@@ -106,6 +106,12 @@ def timings() -> dict[str, float]:
     """Bosqich vaqtlari (soniya) — har safar app/config.py dan o'qiladi (octagon_flow.duration uchun)."""
     return {"intro": config.OCTAGON_INTRO, "read": config.OCTAGON_READ, "podium": config.OCTAGON_PODIUM_INTRO,
             "reveal": config.OCTAGON_REVEAL_STEP, "winner": config.OCTAGON_REVEAL_WINNER}
+
+
+def sound_rules() -> dict[str, Any]:
+    """Natija ovozi jadvali (app/config.py) — o'qituvchi ekraniga bir marta (HOST_STATIC) yuboriladi: ovozni ekran
+    serverdagi foiz (correctPct) bo'yicha shu jadvaldan tanlaydi. O'quvchilarga yuborilmaydi."""
+    return {"bands": [[pct, name] for pct, name in config.OCTAGON_RESULT_SOUNDS], "nobody": config.OCTAGON_SOUND_NOBODY}
 
 
 def clean_avatar(value) -> int:
@@ -316,7 +322,7 @@ class Game:
     players: dict = field(default_factory=dict)  # id -> Player (qo'shilish tartibida)
     keys: dict = field(default_factory=dict)     # ism kaliti -> o'yinchi id
     hosts: set = field(default_factory=set)
-    stats: list = field(default_factory=list)    # har bir yopilgan savol: {counts, answered, correct}
+    stats: list = field(default_factory=list)    # har bir yopilgan savol: {counts, answered, correct, players}
     ended_early: bool = False
     finished_seq: int = 0                        # tugash tartibi (eski natijalarni tozalash uchun)
     locked: bool = False                         # o'qituvchi yangi o'quvchilar qo'shilishini to'xtatgan
@@ -579,7 +585,7 @@ class OctagonHub:
         changes = rank_changes(before, [self._standing(p) for p in game.players.values()])
         for p in game.players.values():
             p.last["d"] = changes[p.id][2]
-        game.stats.append({"counts": counts, "answered": answered, "correct": correct})
+        game.stats.append({"counts": counts, "answered": answered, "correct": correct, "players": len(game.players)})
         self._set_phase(game, flow.RESULT)
         self._broadcast(game)
 
@@ -1027,6 +1033,8 @@ class OctagonHub:
             "locked": game.locked,
             "createdAt": game.created_ms,
         }
+        if full:
+            d["sounds"] = sound_rules()
         times = self._times(game)
         if times:
             d["phaseStart"], d["phaseEnd"] = times
@@ -1041,6 +1049,8 @@ class OctagonHub:
             st = game.stats[game.index]
             d["question"]["correct"] = game.questions[game.index]["correct"]
             d.update(counts=st["counts"], answered=st["answered"], correctCount=st["correct"])
+            # natija ovozi uchun ulushlar — serverda, haqiqiy javoblardan (eski saqlangan o'yinlarda "players" yo'q)
+            d["correctPct"], d["answerRate"] = answer_shares(st["answered"], st["correct"], st.get("players", len(game.players)))
         if game.phase == flow.BOARD and self._ranked(game):
             order = self.standings(game)  # saralash faqat kerak bo'lganda
             d["leaderboard"] = [self._board_row(game, p, i) for i, p in enumerate(order[:BOARD_SIZE])]

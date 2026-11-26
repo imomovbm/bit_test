@@ -1,7 +1,7 @@
 // Octagon: savoldan keyingi o'rin o'zgarishi va g'oliblarni e'lon qilish — brauzerda (Playwright), haqiqiy WebSocket
 // trafigi bilan.
 //
-//   node e2e/podium.e2e.js            (FONTCONFIG_FILE=e2e/fonts-ci.conf — CI dagi shriftlar bilan)
+//   node e2e/podium.e2e.js            (FONTCONFIG_FILE=$PWD/e2e/fonts-ci.conf — CI dagi shriftlar bilan; yo'l to'liq bo'lsin)
 //
 // A server — standart ochilish vaqtlari (podium_intro 3 s, 3- va 2-o'rin 3,5 s, 1-o'rin 6 s):
 //   * 7 o'quvchi, o'rinlar savoldan savolga o'zgaradi: o'qituvchi reytingida ▲/▼/–/YANGI va son API bilan bir xil,

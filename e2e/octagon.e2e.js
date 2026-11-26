@@ -200,7 +200,7 @@ async function notClipped(page, selectors, label) {
       if (!r.width || !r.height || el.closest('[hidden]')) continue;
       const cut = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
       const outside = r.left < -0.5 || r.right > window.innerWidth + 0.5;
-      if (cut || outside) out.push(`${el.tagName.toLowerCase()}.${[...el.classList].join('.')} «${el.textContent.trim().slice(0, 24)}»`);
+      if (cut || outside) out.push(`${el.tagName.toLowerCase()}.${[...el.classList].join('.')} «${el.textContent.trim().slice(0, 24)}» (${el.scrollWidth}×${el.scrollHeight} > ${el.clientWidth}×${el.clientHeight})`);
     }
     return out;
   }, selectors);
@@ -1077,7 +1077,8 @@ async function createGame(page, body) {
       await studentPhase(sp, 'lobby');
       sPages.push([sp, w]);
     }
-    ok(await dt.getAttribute('.oct-sound', 'aria-pressed') === 'false', 'ovoz standart holatda oʻchiq (tugma bilan yoqiladi)');
+    ok(await dt.getAttribute('.oct-sound-box.in-bar .oct-sound', 'aria-pressed') === 'true' && await dt.inputValue('.oct-sound-box.in-bar [data-volume]') === '60',
+      'ovoz standart holatda yoqilgan, balandlik oʻrtacha (60%) — tugma bilan oʻchiriladi (ovoz faqat bosishdan keyin ochiladi)');
     const allWidths = async (label, hostSel, studentSel) => {
       await sleep(400);
       for (const [p, w] of tPages) {

@@ -118,8 +118,22 @@ yuklanish belgisi, o'rin nishonlari va podium medallari). Ranglar va shakl rangl
 `static/css/octagon-theme.css` (JS da rang qiymatlari yo'q); har bir rang o'z shakli bilan (rang yagona belgi emas),
 kontrast WCAG AA bo'yicha tekshiriladi (`tests/test_octagon_theme.py`). Shakllar — inline SVG, ekranni o'quvchi
 dasturlar uchun nomlari bor («Qizil sakkizburchak» va h.k.). Animatsiyalar qisqa va «kamroq harakat» sozlamasida
-o'chadi. Ovoz standart holatda o'chiq (o'qituvchi ekranidagi tugma bilan yoqiladi; faqat brauzerda yaratiladigan
-oddiy signal tovushlari).
+o'chadi.
+
+**Ovoz (faqat o'qituvchi ekranida — proyektorda; o'quvchilar telefoni jim):** savol ko'ringanda (o'qish bosqichidan)
+o'ynoqi musiqa boshlanadi va javob vaqti tugaganda yoki hamma javob berganda ~0,3 s da so'nadi; oxirgi 5 soniyada temp
+biroz tezlashadi va har zarbda yengil «tik». 5 ta trek (har xil temp, tonallik va cholg'u), tartibi har o'yinda
+aralashtiriladi, ketma-ket bir xil trek chalinmaydi va savol raqami bo'yicha aniq (sahifa yangilansa ham o'sha trek).
+Natija ovozi server haqiqiy javoblardan hisoblagan foizdan (javob berganlar orasida to'g'ri javoblar): ≥ 60 % — quvnoq
+jingl, 30–59 % — «hmm», < 30 % — o'ynoqi «oops», hech kim javob bermasa — yumshoq qo'ng'iroqcha yoki jimlik (chegaralar —
+`TD_OCTAGON_SOUND_*`). Reyting ochilishida qisqa «shuv», g'oliblar e'lonida baraban sadosi va 3 ta fanfara. Hammasi Web
+Audio API bilan kodda sintez qilinadi — audio fayllar yo'q, litsenziya talab qilinmaydi
+([docs/audio-credits.md](docs/audio-credits.md)). Ovoz tugmasi (M) va balandlik slayderi — o'qituvchi panelida (tor
+ekranda slayder lobbida) va sozlash sahifasida («Sinab ko'rish»); standart: yoqilgan, o'rtacha balandlik; tanlov shu
+qurilmada saqlanadi (o'yinga ta'siri yo'q). Brauzer qoidasi bo'yicha ovoz faqat bosishdan keyin ochiladi («Boshlash»,
+«Ovozni yoqish» yoki ekranda istalgan bosish); sahifa yangilansa yoki brauzer ruxsat bermasa — jim, «Ovozni yoqish»
+tugmasi chiqadi. Ovoz kodi faqat o'qituvchining Octagon sahifasida yuklanadi (o'quvchi sahifasi hajmi o'zgarmadi).
+Batafsil: [docs/octagon-audio.md](docs/octagon-audio.md).
 
 **4 tadan ko'p variantli savollar** (o'yinda ko'pi bilan 4 ta shakl): o'qituvchi tanlaydi — **qisqartirish**
 (standart: to'g'ri javob + tasodifiy 3 ta noto'g'ri variant) yoki **o'yinga olmaslik**. 2 variantli (ha/yo'q) savollar
@@ -322,6 +336,9 @@ ko'rish (maxfiylari yashiriladi): `python run.py --check-config`.
 | `TD_OCTAGON_PODIUM_INTRO` | `3` | Oxirgi savoldan keyin «Va g'oliblar…» ekrani (soniya) |
 | `TD_OCTAGON_REVEAL_STEP` | `3.5` | Podium: 3- va 2-o'rin ochilgandan keyingi pauza (soniya) |
 | `TD_OCTAGON_REVEAL_WINNER` | `6` | Podium: 1-o'rin ekrani, keyin to'liq natijalar (soniya) |
+| `TD_OCTAGON_SOUND_CHEER` | `60` | Natija ovozi (o'qituvchi ekrani): to'g'ri javoblar (javob berganlar orasida) shu foizdan kam bo'lmasa — quvnoq jingl |
+| `TD_OCTAGON_SOUND_HMM` | `30` | … shu foizdan kam bo'lmasa — «hmm» (neytral); undan past — «oops» (o'ynoqi). `HMM ≤ CHEER` |
+| `TD_OCTAGON_SOUND_NOBODY` | `soft` | Hech kim javob bermasa: `soft` (yumshoq ovoz) yoki `silent` (jimlik) |
 | `TD_OCTAGON_TIME_MIN` | `5` | Savol vaqti: eng kami (soniya) |
 | `TD_OCTAGON_TIME_MAX` | `120` | Savol vaqti: eng ko'pi (soniya) |
 | `TD_OCTAGON_TIME_DEFAULT` | `20` | Savol vaqti: standart (soniya) |
@@ -412,6 +429,7 @@ loginlar (masalan, kirillcha «а» bilan) ro'yxatdan o'tkazilmaydi.
 ```bash
 pip install pytest pyflakes mypy
 python -m pytest            # birlik, API, WebSocket, xavfsizlik, kesh, tamper, qayta ishga tushish testlari
+node --test 'tests/js/*.test.js'   # JS birlik testlari (Octagon ovozi: trek tanlash, natija ovozi, dvigatel — soxta AudioContext)
 bash scripts/lint.sh        # pyflakes + ESLint (npx orqali) + node --check
 mypy                        # sof modullar: bosqichlar mashinasi, ball, sozlamalar, statik fayllar, kuzatuv
 python scripts/bundle_budget.py   # JS/CSS hajmi byudjeti (o'quvchi sahifasi JS ≤ 20 KB gzip, qat'iy chegara 100 KB)
@@ -419,7 +437,8 @@ python scripts/bundle_budget.py   # JS/CSS hajmi byudjeti (o'quvchi sahifasi JS 
 
 CI (`.github/workflows/ci.yml`) har bir push va PR da: lint, tur tekshiruvi, `--check-config`, pytest, hajm byudjeti,
 `pip-audit` (zaifliklar) va brauzer E2E testlari. Kenglik tekshiruvlari shriftga bog'liq: CI dagi shrift (DejaVu Sans)
-bilan mahalliy tekshirish — `FONTCONFIG_FILE=e2e/fonts-ci.conf node e2e/octagon.e2e.js`.
+bilan mahalliy tekshirish — `FONTCONFIG_FILE=$PWD/e2e/fonts-ci.conf node e2e/octagon.e2e.js` (yo'l to'liq bo'lsin: nisbiy yo'lni fontconfig
+yuklay olmaydi va jim tizim shriftiga qaytadi).
 
 - `tests/test_octagon.py` — ball hisoblash (0,5 s, yarim/to'liq vaqt, 1 ms chegaralari, turli vaqtlar), ismlar, o'yin
   dvigateli (soxta soat bilan: lobbi, vaqt, kech qo'shilish, qayta ulanish, ikkinchi oyna, band ism, o'quvchi
@@ -434,6 +453,9 @@ bilan mahalliy tekshirish — `FONTCONFIG_FILE=e2e/fonts-ci.conf node e2e/octago
   `tests/test_observability.py`, `tests/test_i18n_strings.py` — qayta ishga tushishda saqlash, qurilmadagi
   ma'lumotlarni o'zgartirish, kesh/siqish, sozlamalar tekshiruvi, ko'rsatkichlar va jurnal, matnlar jadvali;
 - `tests/test_qr.py` — QR kod kodlovchisi;
+- `tests/test_octagon_audio.py` va `tests/js/octagon-audio.test.js` — ovoz: serverdagi foizlar va chegaralar (29/30/59/60 %,
+  hech kim, bitta o'yinchi), sozlamalar; trek tanlash (takrorsiz, aralash, savol bo'yicha aniq), dvigatel (bosishgacha
+  AudioContext yo'q, so'nish, o'chirish/balandlik, yashirin oyna, tez bosqichlar, dispose);
 - `tests/test_activity.py`, `tests/test_catalog.py`, `tests/test_lobby.py`, `tests/test_admin_topics.py`,
   `tests/test_leaderboard_stats.py` — mavzular faolligi (parallel yozish, backfill, migratsiya), reyting va «qizg'in»
   formula, lobbi va juftlash (bir vaqtda qo'shilish), boshqaruv vositalari (403/401), reyting yig'indisi.
@@ -452,6 +474,8 @@ qo'shilishni yopish), o'quvchi xabarlarini, XSS (savol/variant/ism/mavzu nomidag
 
 ```bash
 node e2e/lobby.e2e.js          # duel bosh sahifasi: jonli lobbi -> qo'shilish -> duel -> «Bugun» reytingi, poyga, boshqaruv
+node e2e/podium.e2e.js         # o'rin o'zgarishi va g'oliblar e'loni: tartib, vaqtlar, sizib chiqmaslik, qayta ulanish
+node e2e/audio.e2e.js          # ovoz: Web Audio josusi — bosishgacha jim, musiqa/so'nish, natija ovozlari, o'quvchi jim
 python3 scripts/loadtest.py    # yuklama sinovi: 5 000 mavzu, 20 000 foydalanuvchi, bir yillik duellar, 500 o'yinchi
 python3 scripts/octagon_load.py    # Octagon: 20 ta o'yin bir vaqtda, eng kattasida 300 o'quvchi (p95, xotira, xatolar)
 node scripts/perf-routes.js        # sahifalar: sekin 4G + 4x sekin protsessor, birinchi va takroriy ochilish
@@ -482,11 +506,12 @@ Natijalar va cheklovlar: [docs/scaling.md](docs/scaling.md).
 app/        backend (aiohttp): server, REST API, WebSocket, duel mexanizmi, Balloon Pop qoidalari, Octagon (app/octagon.py;
             bosqichlar — app/octagon_flow.py, ball — app/octagon_scoring.py), sozlamalar (app/config.py), statik
             fayllar va kesh (app/assets.py), kuzatuv (app/observability.py), ishlatish (app/ops.py), QR kod, rollar, SQLite
-static/     frontend (HTML/CSS/JS; Balloon Pop sahnasi — static/js/balloon-scene.js;
-            o'quvchilar sahifasi — static/play.html + static/js/play.js + static/css/play.css)
-tests/      testlar (pytest)
+static/     frontend (HTML/CSS/JS; Balloon Pop sahnasi — static/js/balloon-scene.js; Octagon ovozi —
+            static/js/octagon/audio.js; o'quvchilar sahifasi — static/play.html + static/js/play.js + static/css/play.css)
+tests/      testlar (pytest; JS birlik testlari — tests/js, node --test)
 e2e/        brauzer testlari (Playwright)
 scripts/    yuklama va tezlik sinovlari, lint, hajm byudjeti, baza zaxirasi (db_tool.py)
-docs/       hujjatlar: architecture.md, runbook.md, performance.md, octagon-v2-audit.md, octagon-audit.md, scaling.md
+docs/       hujjatlar: architecture.md, runbook.md, performance.md, octagon-v2-audit.md, octagon-audit.md, scaling.md,
+            octagon-rank-podium.md, octagon-audio.md, audio-credits.md
 run.py      ishga tushirish nuqtasi
 ```

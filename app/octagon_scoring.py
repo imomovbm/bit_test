@@ -85,3 +85,15 @@ def podium(ranked_ids: Sequence[str], has_points: bool, ended_early: bool) -> li
     if not ranked_ids or (ended_early and not has_points):
         return []
     return list(ranked_ids[:PODIUM_SIZE])
+
+
+def answer_shares(answered: int, correct: int, players: int) -> tuple[int | None, int]:
+    """Savol natijasi ulushlari (foiz, butun, pastga yaxlitlangan) — o'qituvchi ekranidagi natija ovozi uchun:
+    (to'g'ri javoblar — javob berganlar orasida | hech kim javob bermagan bo'lsa None, javob berganlar — o'yinchilardan).
+
+    Pastga yaxlitlash butun chegaralarni aniq saqlaydi: ⌊x⌋ ≥ 60 ⇔ x ≥ 60 (59,9 % — «60 % dan kam» bo'lib qoladi).
+    """
+    answered, correct, players = max(0, answered), max(0, correct), max(0, players)
+    pct = min(correct, answered) * 100 // answered if answered else None
+    rate = min(100, answered * 100 // players) if players else 0
+    return pct, rate

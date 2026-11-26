@@ -113,7 +113,7 @@ phases; phase indexes 6–10 changed meaning, so open v2 pages are asked to relo
 |---|---|
 | `w` (welcome) | `v, pin, id, nick, av, tn` (topic name), `n` (question count), `tok` (only in the first welcome after joining) |
 | `s` (student state) | `p` (phase index), `q`, `o` (option count), `ps`/`pe` (phase start/end, Unix ms), `a` (own answer), `sc` (score), `res {ok, pts, co}` (after the question closes). Result/leaderboard, not after the last question: `k`/`pl` (own rank/players), `dk` (rank change; absent after question 1), `nw` (NEW), `bh [points, nick]` (the player just above, if within 1000 points). Reveal: `top` (`[place, nick, score, av]`, announced places only) and `k` only once the student's own place is announced. Final: `k`, `pl`, `nc` (correct answers), `top`. Never question text, option text or the correct answer before the reveal |
-| `h` (teacher state) | `v, pin, phase, index, total, timeLimit, settings, playerCount, connectedCount, locked, phaseStart/phaseEnd`, plus per phase: `players`, `question`, `answered`, `counts`, `leaderboard` (top 5 with `gained`, `d`, `new`) and `jump`, and in the reveal `places` and `podium` (announced places only); `ranking` and `played` in `final_results`. `qr, joinUrl, joinBase, topicName, createdAt` are sent once per connection (`HOST_STATIC`) |
+| `h` (teacher state) | `v, pin, phase, index, total, timeLimit, settings, playerCount, connectedCount, locked, phaseStart/phaseEnd`, plus per phase: `players`, `question`, `answered`, `counts`, in `question_result` also `correctPct` (share of correct answers among those who answered, whole percent rounded down; `null` if nobody answered) and `answerRate` (share of players who answered), `leaderboard` (top 5 with `gained`, `d`, `new`) and `jump`, and in the reveal `places` and `podium` (announced places only); `ranking` and `played` in `final_results`. `qr, joinUrl, joinBase, topicName, createdAt, sounds` are sent once per connection (`HOST_STATIC`); `sounds` is the result-sound table from `app/config.py` (`{bands: [[60, "cheer"], [30, "hmm"], [0, "oops"]], nobody: "soft"}`) |
 | `e` | `c` (code: `pin`, `rate`, `nick`, `taken`, `full`, `locked`, `avatar`, `early`, `late`, `gone`, `started`, `bad`, …), `m` (Uzbek text), `status` |
 | `k` | `r`: `kicked` / `ended` / `replaced` |
 | `reload` | `v`: the server's protocol version |
@@ -142,6 +142,13 @@ combinations, and lists every problem at once. Examples of rejected combinations
 
 `python run.py --check-config` prints the effective values with secrets masked. Product rules that the client code
 depends on stay as constants in `app/octagon.py`: 4 answer shapes, 20-character names, protocol version 2.
+
+## Teacher-screen audio
+
+Music and sounds play only on the teacher screen (`static/js/octagon/audio.js`, see [octagon-audio.md](octagon-audio.md)).
+The module is loaded with `import()` only by the Octagon teacher page; the student page never loads it. The server's
+only part is data: `correctPct`/`answerRate` computed from the real answers when a question closes, and the threshold
+table (`TD_OCTAGON_SOUND_*`). The teacher screen picks the sound; nothing about audio changes game behaviour.
 
 ## What the browser may store
 

@@ -171,6 +171,14 @@ OCTAGON_READ = _setting("TD_OCTAGON_READ", 5.0, "Savolni o'qish vaqti: matn faqa
 OCTAGON_PODIUM_INTRO = _setting("TD_OCTAGON_PODIUM_INTRO", 3.0, "Oxirgi savoldan keyin «Va g'oliblar…» ekrani (soniya)", lo=0, hi=60)
 OCTAGON_REVEAL_STEP = _setting("TD_OCTAGON_REVEAL_STEP", 3.5, "Podium: 3- va 2-o'rin ochilgandan keyingi pauza (soniya)", lo=0, hi=60)
 OCTAGON_REVEAL_WINNER = _setting("TD_OCTAGON_REVEAL_WINNER", 6.0, "Podium: 1-o'rin ekrani, keyin to'liq natijalar (soniya)", lo=0, hi=60)
+# Natija ovozi (faqat o'qituvchi ekranida; ovoz — faqat ko'rinish, o'yinga ta'sir qilmaydi). Foizlarni server haqiqiy
+# javoblardan hisoblaydi (javob berganlar orasida to'g'ri javoblar ulushi), ovozni o'qituvchi ekrani shu jadval bo'yicha
+# tanlaydi: yuqoridan pastga birinchi «foiz ≥ chegara» qatori. Hech kim javob bermasa — OCTAGON_SOUND_NOBODY.
+OCTAGON_SOUND_CHEER = _setting("TD_OCTAGON_SOUND_CHEER", 60, "Natija ovozi: to'g'ri javoblar shu foizdan kam bo'lmasa — quvnoq jingl", lo=0, hi=100)
+OCTAGON_SOUND_HMM = _setting("TD_OCTAGON_SOUND_HMM", 30, "… shu foizdan kam bo'lmasa (CHEER dan past) — «hmm»; undan past — «oops»", lo=0, hi=100)
+OCTAGON_SOUND_NOBODY = _setting("TD_OCTAGON_SOUND_NOBODY", "soft", "Hech kim javob bermasa: soft (yumshoq ovoz) | silent (jimlik)",
+                                choices=("soft", "silent"))
+OCTAGON_RESULT_SOUNDS = ((OCTAGON_SOUND_CHEER, "cheer"), (OCTAGON_SOUND_HMM, "hmm"), (0, "oops"))  # (foiz ≥, ovoz)
 OCTAGON_TIME_MIN = _setting("TD_OCTAGON_TIME_MIN", 5, "Savol vaqti: eng kami (soniya)", lo=1, hi=600)
 OCTAGON_TIME_MAX = _setting("TD_OCTAGON_TIME_MAX", 120, "Savol vaqti: eng ko'pi (soniya)", lo=1, hi=600)
 OCTAGON_TIME_DEFAULT = _setting("TD_OCTAGON_TIME_DEFAULT", 20, "Savol vaqti: standart (soniya)", lo=1, hi=600)
@@ -243,6 +251,8 @@ def validate() -> list[str]:
          "TD_OCTAGON_HOST_FLUSH ≤ TD_OCTAGON_HOST_FLUSH_BIG bo'lishi kerak")
     need(g["OCTAGON_MAX_GAMES_PER_TEACHER"] <= g["OCTAGON_MAX_GAMES"],
          "TD_OCTAGON_MAX_GAMES_PER_TEACHER ≤ TD_OCTAGON_MAX_GAMES bo'lishi kerak")
+    need(g["OCTAGON_SOUND_HMM"] <= g["OCTAGON_SOUND_CHEER"],
+         "TD_OCTAGON_SOUND_HMM ≤ TD_OCTAGON_SOUND_CHEER bo'lishi kerak (natija ovozi chegaralari)")
     return problems
 
 

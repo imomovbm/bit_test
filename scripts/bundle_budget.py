@@ -26,12 +26,13 @@ PAGES = {  # sahifa: (JS byudjeti, CSS byudjeti) — gzip baytlarda
 }
 STUDENT_HARD_LIMIT = 100 * KB
 LAZY = {  # kerak bo'lganda yuklanadigan ko'rinishlar (faqat o'z hajmi)
-    "js/views/octagon.js": 16 * KB,
+    "js/views/octagon.js": 19 * KB,      # 16 -> 19: ovoz boshqaruvi (tugma, slayder, sozlash, «Ovozni yoqish»), 15,0 -> 16,9 KB
+    "js/octagon/audio.js": 13 * KB,      # ovoz (sintez + 5 trek): faqat o'qituvchining Octagon sahifasida, import() bilan
     "js/views/admin.js": 28 * KB,
     "js/views/balloon.js": 18 * KB,
     "js/views/games.js": 4 * KB,
 }
-STUDENT_FORBIDDEN = re.compile(r"^js/(views/|app\.js|api\.js|lib\.js|live\.js|topic-browser\.js|balloon-scene\.js)")
+STUDENT_FORBIDDEN = re.compile(r"^js/(views/|octagon/audio\.js|app\.js|api\.js|lib\.js|live\.js|topic-browser\.js|balloon-scene\.js)")
 
 
 def gz(store: AssetStore, rels: list[str]) -> int:

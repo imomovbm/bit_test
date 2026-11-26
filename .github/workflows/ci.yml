@@ -33,6 +33,8 @@ jobs:
         run: python run.py --check-config
       - name: Tests (pytest)
         run: python -m pytest -q
+      - name: JS unit tests (node --test; Octagon audio rules and engine with a fake AudioContext)
+        run: node --test 'tests/js/*.test.js'
       - name: Bundle-size budget
         run: python scripts/bundle_budget.py
       - name: Dependency audit (pip-audit)
@@ -61,6 +63,8 @@ jobs:
         run: node e2e/octagon.e2e.js
       - name: Octagon rank changes and podium reveal E2E (order, timing, no leaks in real frames, reconnects)
         run: node e2e/podium.e2e.js
+      - name: Octagon audio E2E (Web Audio spy, autoplay rule, fades, result sounds, mute/volume, reload, student silence)
+        run: node e2e/audio.e2e.js
       - name: Duel lobby E2E
         run: node e2e/lobby.e2e.js
       - name: Screenshots

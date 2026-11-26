@@ -58,6 +58,19 @@ in transit. The student code grew because of the v2 features: topic intro, readi
 
 The new screens use CSS animations and the Web Animations API, with no library.
 
+**After the audio release** ([octagon-audio.md](octagon-audio.md)), same method, median of 5:
+
+| Route | JS gzip | CSS gzip | Usable (cold) | Usable (repeat) |
+|---|---|---|---|---|
+| Student `/play` | 15.1 KB (unchanged: same files) | 8.1 KB (unchanged) | 575 ms | 427 ms |
+| Student `/play/PIN` | 15.1 KB (unchanged) | 8.1 KB (unchanged) | 623 ms | 438 ms |
+| Login `/` | 42.9 KB (unchanged) | 30.0 KB (+0.5) | 1244 ms | 808 ms |
+| Teacher game screen | 73.7 KB (+12.9: `octagon/audio.js` 10.7 KB, fetched after the first screen is drawn; controls +2.2 KB) | 30.0 KB (+0.5) | 1743 ms | 955 ms |
+
+The student page files are byte-for-byte the same as before. The student timings differ from the previous table only by
+run-to-run noise on this machine (±50 ms; the same files were served). The audio module is requested from an idle
+callback after the teacher's first screen is drawn, so on slow 4G it does not compete with the lobby (PIN, QR).
+
 Before that release, CSS was 6.8 KB gzipped on the student page and 26.9 KB in the main app. Layout shift (CLS) is 0 on the student pages
 (worst of 5 runs) and 0.002 on the teacher screen. The baseline showed 0.042 on the student pages in its worst run.
 
@@ -178,7 +191,7 @@ state or correct answers.
 | `localStorage` (student page) | `oct:<PIN>` | `{v: 2, id, tok, nick, av, at}`: the reconnect record for that one game | Deleted when the game ends, when the student is removed, or after 12 h | The per-game reconnect token, scoped to the PIN. The server accepts it only together with the matching player id in that running game |
 | cookie `oct_<PIN>` (`path=/play`, `SameSite=Strict`, `Secure` on HTTPS) | | The same record, only when `localStorage` is unavailable (private mode on old browsers) | 12 h | Fallback for the above |
 | `localStorage` (student page) | `oct:last` | `{v: 2, nick, av}`: last nickname and avatar, to prefill the form | Until replaced | Convenience, not secret |
-| `localStorage` (main app) | `td-theme`, `td-sound`, `td-octagon-sound`, `td-topic-tab`, `td-practice-tab`, `td-octagon-setup`, `td-balloon-setup` | UI settings and the last game-setup choices (form prefill) | Until changed | Not personal. Each value is checked before use (unknown or invalid values fall back to the defaults), and the server validates every game setting when a game is created |
+| `localStorage` (main app) | `td-theme`, `td-sound`, `td-octagon-sound`, `td-octagon-volume`, `td-topic-tab`, `td-practice-tab`, `td-octagon-setup`, `td-balloon-setup` | UI settings (Octagon: sound on/off and volume 0–100 on this device) and the last game-setup choices (form prefill) | Until changed | Not personal. Each value is checked before use (unknown or invalid values fall back to the defaults), and the server validates every game setting when a game is created. The sound settings never reach the server and never affect a game |
 | `sessionStorage` (main app) | `td-practice` | The practice session in progress (questions and the user's own answers) | The tab; **deleted on logout or session expiry**; ignored if a different user logs in | Self-study mode. Practice results are self-reported by design and appear only on the user's own stats and to admins. They never affect duel ratings, leaderboards or Octagon |
 | `sessionStorage` (main app) | `td-invite` | A duel invite code from the URL, to continue after login | The tab | Not personal |
 | cookie `td_sid` | | The session token | 30 days | `HttpOnly`, `SameSite=Lax`, `Secure` on HTTPS; the database stores only its hash |
